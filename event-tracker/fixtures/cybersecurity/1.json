@@ -1,0 +1,4 @@
+[
+  {"source_id":"vendor","external_id":"a-disclosure","url":"https://vendor.example/simulated/a","title":"Simulated: vulnerability A disclosed","content":"SIMULATED: ExampleSoft vulnerability A disclosed. A remote attacker can access private records.","published_at":"2026-11-01T09:00:00Z"},
+  {"source_id":"research","external_id":"sports","url":"https://research.example/simulated/sports","title":"Simulated: sports update","content":"SIMULATED: The local football team won a match.","published_at":"2026-11-01T10:00:00Z"}
+]

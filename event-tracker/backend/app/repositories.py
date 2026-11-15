@@ -1,0 +1,260 @@
+"""All SQL lives here. Connections are short-lived and never shared across threads."""
+import json
+import sqlite3
+from contextlib import contextmanager
+from pathlib import Path
+from .core import AppError
+from .domain import uid, now
+
+
+def dump(value):
+    return json.dumps(value, ensure_ascii=False)
+
+
+class Repository:
+    def __init__(self, path):
+        self.path = str(path)
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def connection(self, write=False):
+        db = sqlite3.connect(self.path, timeout=5)
+        db.row_factory = sqlite3.Row
+        db.execute('PRAGMA foreign_keys=ON')
+        try:
+            if write:
+                db.execute('BEGIN IMMEDIATE')
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def initialize(self, sources):
+        with self.connection() as db:
+            db.executescript('''
+            PRAGMA journal_mode=WAL;
+            CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY);
+            INSERT OR IGNORE INTO schema_versions VALUES(1);
+            CREATE TABLE IF NOT EXISTS topics(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS topic_sources(
+              topic_id TEXT REFERENCES topics(id), source_id TEXT REFERENCES sources(id),
+              approved_at TEXT NOT NULL, PRIMARY KEY(topic_id,source_id));
+            CREATE TABLE IF NOT EXISTS evidence(
+              id TEXT PRIMARY KEY, source_id TEXT REFERENCES sources(id), external_id TEXT,
+              hash TEXT NOT NULL, canonical_id TEXT REFERENCES evidence(id), data TEXT NOT NULL,
+              UNIQUE(source_id,external_id));
+            CREATE INDEX IF NOT EXISTS evidence_hash ON evidence(hash);
+            CREATE TABLE IF NOT EXISTS topic_evidence(
+              topic_id TEXT REFERENCES topics(id), evidence_id TEXT REFERENCES evidence(id),
+              status TEXT NOT NULL, assessment TEXT, error TEXT,
+              PRIMARY KEY(topic_id,evidence_id));
+            CREATE TABLE IF NOT EXISTS events(
+              id TEXT PRIMARY KEY, topic_id TEXT REFERENCES topics(id), version INTEGER NOT NULL,
+              data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS runs(
+              id TEXT PRIMARY KEY, topic_id TEXT REFERENCES topics(id), status TEXT NOT NULL,
+              request_key TEXT, request_body TEXT, data TEXT NOT NULL,
+              UNIQUE(topic_id,request_key));
+            CREATE UNIQUE INDEX IF NOT EXISTS one_active_run ON runs(topic_id)
+              WHERE status IN ('pending','running');
+            CREATE TABLE IF NOT EXISTS transitions(
+              id TEXT PRIMARY KEY, event_id TEXT REFERENCES events(id), run_id TEXT REFERENCES runs(id),
+              idempotency_key TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS event_evidence(
+              event_id TEXT REFERENCES events(id), evidence_id TEXT REFERENCES evidence(id),
+              relation TEXT CHECK(relation IN ('supporting','conflicting','duplicate')),
+              PRIMARY KEY(event_id,evidence_id));
+            CREATE TABLE IF NOT EXISTS notifications(
+              id TEXT PRIMARY KEY, topic_id TEXT REFERENCES topics(id),
+              event_id TEXT REFERENCES events(id), transition_id TEXT UNIQUE REFERENCES transitions(id),
+              data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS steps(
+              id TEXT PRIMARY KEY, run_id TEXT REFERENCES runs(id), sequence INTEGER,
+              data TEXT NOT NULL, UNIQUE(run_id,sequence));
+            ''')
+            for source in sources:
+                db.execute('INSERT OR IGNORE INTO sources VALUES(?,?)', (source['source_id'], dump(source)))
+        for run in self.active_runs():
+            self.update_run(run['run_id'], status='failed', completed_at=now(),
+                            error={'code': 'interrupted', 'message': 'Process stopped; run again safely.'})
+
+    def get(self, table, identity):
+        assert table in {'topics', 'sources', 'events', 'runs', 'evidence'}
+        with self.connection() as db:
+            row = db.execute(f'SELECT data FROM {table} WHERE id=?', (identity,)).fetchone()
+        if not row:
+            raise AppError('NOT_FOUND', f'{table} resource not found.', 404)
+        return json.loads(row['data'])
+
+    def list_topics(self):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT data FROM topics ORDER BY rowid')]
+
+    def save_topic(self, topic):
+        with self.connection(True) as db:
+            db.execute('INSERT INTO topics VALUES(?,?)', (topic['topic_id'], dump(topic)))
+        return topic
+
+    def patch_topic(self, identity, changes):
+        with self.connection(True) as db:
+            row = db.execute('SELECT data FROM topics WHERE id=?', (identity,)).fetchone()
+            if not row:
+                raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            topic = json.loads(row[0])
+            topic.update(changes, updated_at=now())
+            db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), identity))
+        return topic
+
+    def sources(self, topic_id=None):
+        with self.connection() as db:
+            if topic_id:
+                rows = db.execute('''SELECT s.data FROM sources s JOIN topic_sources t
+                    ON s.id=t.source_id WHERE t.topic_id=? ORDER BY s.id''', (topic_id,))
+            else:
+                rows = db.execute('SELECT data FROM sources ORDER BY id')
+            return [json.loads(r[0]) for r in rows]
+
+    def approve(self, topic_id, ids):
+        with self.connection(True) as db:
+            row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+            if not row:
+                raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before changing sources.')
+            known = {r[0] for r in db.execute('SELECT id FROM sources')}
+            if not set(ids) <= known:
+                raise AppError('INVALID_SOURCE', 'Only registered fixture sources can be approved.', 422)
+            db.execute('DELETE FROM topic_sources WHERE topic_id=?', (topic_id,))
+            db.executemany('INSERT INTO topic_sources VALUES(?,?,?)', [(topic_id, s, now()) for s in sorted(set(ids))])
+            topic = json.loads(row[0])
+            topic.update(status='active' if ids else 'draft', updated_at=now())
+            db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), topic_id))
+        return self.sources(topic_id)
+
+    def create_run(self, topic_id, request, key, model):
+        with self.connection(True) as db:
+            if key:
+                row = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?', (topic_id, key)).fetchone()
+                if row:
+                    if row[0] != dump(request):
+                        raise AppError('IDEMPOTENCY_CONFLICT', 'This key was used with a different request.')
+                    return json.loads(row[1]), False
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'This topic already has an active run.')
+            topic = json.loads(db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()[0])
+            sources = [json.loads(r[0]) for r in db.execute('''SELECT s.data FROM sources s JOIN topic_sources ts
+                ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
+            if not sources:
+                raise AppError('NO_APPROVED_SOURCE', 'Approve a source before running.')
+            run = dict(run_id=uid(), topic_id=topic_id, trigger_type='manual', status='pending',
+                       **request, model=model, prompt_version='assessment-v1', started_at=None,
+                       completed_at=None, counts={}, error=None, snapshot={'topic': topic, 'sources': sources})
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(request), dump(run)))
+        return run, True
+
+    def active_runs(self):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute("SELECT data FROM runs WHERE status IN ('pending','running')")]
+
+    def update_run(self, identity, **changes):
+        with self.connection(True) as db:
+            data = json.loads(db.execute('SELECT data FROM runs WHERE id=?', (identity,)).fetchone()[0])
+            data.update(changes)
+            db.execute('UPDATE runs SET status=?,data=? WHERE id=?', (data['status'], dump(data), identity))
+
+    def runs(self, topic_id):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT data FROM runs WHERE topic_id=? ORDER BY rowid DESC LIMIT 30', (topic_id,))]
+
+    def steps(self, run_id):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT data FROM steps WHERE run_id=? ORDER BY sequence', (run_id,))]
+
+    def save_step(self, step):
+        with self.connection(True) as db:
+            db.execute('INSERT INTO steps VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+                       (step['step_id'], step['run_id'], step['sequence'], dump(step)))
+
+    def events(self, topic_id):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT data FROM events WHERE topic_id=? ORDER BY rowid', (topic_id,))]
+
+    def ingest(self, topic_id, evidence):
+        with self.connection(True) as db:
+            row = db.execute('SELECT data FROM evidence WHERE source_id=? AND external_id=?',
+                             (evidence['source_id'], evidence['external_id'])).fetchone()
+            if row:
+                saved = json.loads(row[0])
+                if saved['content_hash'] != evidence['content_hash']:
+                    raise AppError('SOURCE_REVISION', 'A source item changed; use a new external revision ID.', 422)
+                saved['fetched_at'] = evidence['fetched_at']
+                evidence = saved
+                db.execute('UPDATE evidence SET data=? WHERE id=?', (dump(saved), saved['evidence_id']))
+            else:
+                canonical = db.execute('SELECT canonical_id FROM evidence WHERE hash=? LIMIT 1', (evidence['content_hash'],)).fetchone()
+                evidence['canonical_evidence_id'] = canonical[0] if canonical else evidence['evidence_id']
+                db.execute('INSERT INTO evidence VALUES(?,?,?,?,?,?)',
+                           (evidence['evidence_id'], evidence['source_id'], evidence['external_id'],
+                            evidence['content_hash'], evidence['canonical_evidence_id'], dump(evidence)))
+            db.execute("INSERT OR IGNORE INTO topic_evidence VALUES(?,?,'pending',NULL,NULL)", (topic_id, evidence['evidence_id']))
+        return evidence
+
+    def processing(self, topic_id, evidence_id):
+        with self.connection() as db:
+            row = db.execute('SELECT status FROM topic_evidence WHERE topic_id=? AND evidence_id=?', (topic_id, evidence_id)).fetchone()
+            return row[0] if row else None
+
+    def finish_evidence(self, topic_id, evidence_id, status, assessment=None, error=None, event_id=None, relation=None):
+        with self.connection(True) as db:
+            db.execute('UPDATE topic_evidence SET status=?,assessment=?,error=? WHERE topic_id=? AND evidence_id=?',
+                       (status, dump(assessment) if assessment else None, dump(error) if error else None, topic_id, evidence_id))
+            if event_id:
+                db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (event_id, evidence_id, relation))
+
+    def available_evidence(self, topic_id):
+        with self.connection() as db:
+            return {r[0]: json.loads(r[1]) for r in db.execute('''SELECT e.id,e.data FROM evidence e
+                JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=?''', (topic_id,))}
+
+    def commit_state(self, event, transition, notification, assessment, evidence, expected_version, fault=None):
+        with self.connection(True) as db:
+            if db.execute('SELECT 1 FROM transitions WHERE idempotency_key=?', (transition['idempotency_key'],)).fetchone():
+                return False
+            existing = db.execute('SELECT version FROM events WHERE id=?', (event['event_id'],)).fetchone()
+            if existing:
+                if existing[0] != expected_version:
+                    raise AppError('VERSION_CONFLICT', 'Event changed; retry with current state.')
+                db.execute('UPDATE events SET version=?,data=? WHERE id=?', (event['version'], dump(event), event['event_id']))
+            else:
+                db.execute('INSERT INTO events VALUES(?,?,?,?)', (event['event_id'], event['topic_id'], event['version'], dump(event)))
+            db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)', (transition['transition_id'], event['event_id'], transition['run_id'], transition['idempotency_key'], dump(transition)))
+            if fault:
+                fault()
+            db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)', (notification['notification_id'], event['topic_id'], event['event_id'], transition['transition_id'], dump(notification)))
+            db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (event['event_id'], evidence['evidence_id'], 'supporting'))
+            db.execute("UPDATE topic_evidence SET status='completed',assessment=?,error=NULL WHERE topic_id=? AND evidence_id=?",
+                       (dump(assessment), event['topic_id'], evidence['evidence_id']))
+        return True
+
+    def notifications(self, topic_id, action=None):
+        with self.connection() as db:
+            items = [json.loads(r[0]) for r in db.execute('SELECT data FROM notifications WHERE topic_id=? ORDER BY rowid DESC', (topic_id,))]
+        return [n for n in items if not action or n['action'] == action]
+
+    def event_detail(self, identity):
+        event = self.get('events', identity)
+        with self.connection() as db:
+            history = [json.loads(r[0]) for r in db.execute('SELECT data FROM transitions WHERE event_id=? ORDER BY rowid', (identity,))]
+            evidence = [dict(json.loads(r[0]), relation=r[1]) for r in db.execute('''SELECT e.data,ee.relation FROM evidence e
+                JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.event_id=? ORDER BY e.rowid''', (identity,))]
+        return dict(event=event, history=history, evidence=evidence, reviews=self.reviews(event['topic_id'], identity))
+
+    def reviews(self, topic_id, event_id=None):
+        with self.connection() as db:
+            items = [dict(evidence=json.loads(r[0]), assessment=json.loads(r[1])) for r in db.execute('''SELECT e.data,t.assessment
+                FROM topic_evidence t JOIN evidence e ON e.id=t.evidence_id WHERE t.topic_id=? AND t.status='review' ORDER BY e.rowid''', (topic_id,))]
+        return [i for i in items if not event_id or i['assessment']['association']['event_id'] == event_id]

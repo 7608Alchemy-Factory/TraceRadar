@@ -1,0 +1,5 @@
+[
+  {"source_id":"vendor","external_id":"a-patch","url":"https://vendor.example/simulated/a-patch","title":"Simulated: patch released for A","content":"SIMULATED: ExampleSoft vulnerability A patch released in version 1.2.","published_at":"2026-11-03T09:00:00Z"},
+  {"source_id":"research","external_id":"a-conflict","url":"https://research.example/simulated/conflict","title":"Simulated: conflicting affected-version report","content":"SIMULATED: A report about ExampleSoft vulnerability A contradicts the vendor: it claims version 1.1 is not affected.","published_at":"2026-11-03T10:00:00Z"},
+  {"source_id":"research","external_id":"unclear","url":"https://research.example/simulated/unclear","title":"Simulated: unclear clue","content":"SIMULATED: ExampleSoft may have another security issue; no identifier or reliable detail is available.","published_at":"2026-11-03T11:00:00Z"}
+]

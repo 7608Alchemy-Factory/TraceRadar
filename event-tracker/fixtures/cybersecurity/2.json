@@ -1,0 +1,5 @@
+[
+  {"source_id":"vendor","external_id":"a-versions","url":"https://vendor.example/simulated/a-versions","title":"Simulated: affected versions confirmed","content":"SIMULATED: ExampleSoft vulnerability A affects versions 1.0 and 1.1, confirmed by the vendor.","published_at":"2026-11-02T09:00:00Z"},
+  {"source_id":"research","external_id":"a-mirror","url":"https://research.example/simulated/a-mirror","title":"Simulated: mirrored version report","content":"SIMULATED: ExampleSoft vulnerability A affects versions 1.0 and 1.1, confirmed by the vendor.","published_at":"2026-11-02T10:00:00Z"},
+  {"source_id":"research","external_id":"b-disclosure","url":"https://research.example/simulated/b","title":"Simulated: independent vulnerability B","content":"SIMULATED: ExampleSoft vulnerability B disclosed. A separate input-validation flaw causes service interruption.","published_at":"2026-11-02T11:00:00Z"}
+]

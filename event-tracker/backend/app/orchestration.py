@@ -3,7 +3,8 @@ import queue
 import threading
 from .core import AppError
 from .domain import Assessment, uid, now
-from .connectors import FixtureConnector
+from .connectors import ConnectorRouter
+from .evidence_processing import find_duplicate_match, score_relevance
 from .llm import get_provider
 from .services import StateManager
 
@@ -19,7 +20,7 @@ def public_error(exc):
 class RunManager:
     def __init__(self, repo, settings):
         self.repo, self.settings = repo, settings
-        self.connector = FixtureConnector(settings.fixture_path)
+        self.connector = ConnectorRouter(settings.fixture_path, settings.corpus_root)
         self.state_manager = StateManager(repo)
         self.queue = queue.Queue()
         self.thread = threading.Thread(target=self.worker, name='topic-worker', daemon=True)
@@ -71,15 +72,25 @@ class RunManager:
             self.repo.save_step(value)
 
         provider = get_provider(run['provider'], self.settings)
+        options = run['snapshot'].get('options', {})
         inputs = []
         for source in run['snapshot']['sources']:
             trace = step('fetch_source')
             trace['input_refs'] = [source['source_id']]
             try:
-                batch = self.connector.fetch(source, run['fixture_batch_id'])
+                fetch_kwargs = {}
+                if options.get('as_of') is not None:
+                    fetch_kwargs['as_of'] = options['as_of']
+                if options.get('manual_items'):
+                    fetch_kwargs['manual_items'] = options['manual_items']
+                batch = self.connector.fetch(source, run['fixture_batch_id'], **fetch_kwargs) if fetch_kwargs else self.connector.fetch(source, run['fixture_batch_id'])
                 inputs.extend(batch)
                 counts['fetched'] += len(batch)
-                end(trace, decision={'source_id': source['source_id'], 'items': len(batch)})
+                decision = {'source_id': source['source_id'], 'items': len(batch)}
+                fetch_stats = getattr(self.connector, 'last_fetch_stats', None)
+                if fetch_stats:
+                    decision['stats'] = dict(fetch_stats)
+                end(trace, decision=decision)
                 usable += 1
             except Exception as exc:
                 error = dict(public_error(exc), code='source_error')
@@ -90,7 +101,23 @@ class RunManager:
             evidence = None
             trace = step('normalize_and_deduplicate', raw['evidence_id'])
             try:
-                evidence = self.repo.ingest(topic['topic_id'], raw)
+                existing_items = self.repo.topic_evidence_items(topic['topic_id'])
+                same_external = any(
+                    item.get('source_id') == raw['source_id'] and item.get('external_id') == raw['external_id']
+                    for item in existing_items
+                )
+                dup_match = None
+                if not same_external:
+                    dup_match = find_duplicate_match(
+                        raw,
+                        existing_items,
+                        enable_near_duplicate=options.get('near_duplicate_enabled', True),
+                    )
+                evidence = self.repo.ingest(
+                    topic['topic_id'],
+                    raw,
+                    canonical_override=dup_match['canonical_evidence_id'] if dup_match else None,
+                )
                 trace['evidence_id'] = evidence['evidence_id']
                 trace['output_refs'] = [evidence['evidence_id']]
                 canonical = evidence['canonical_evidence_id']
@@ -102,9 +129,21 @@ class RunManager:
                         self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed',
                                                   event_id=event_id, relation='duplicate')
                     counts['skipped'] += 1
-                    end(trace, 'skipped', {'reason': 'already_processed_or_exact_duplicate', 'canonical_evidence_id': canonical})
+                    dedup_decision = {'reason': dup_match['reason'] if dup_match else 'already_processed_or_exact_duplicate', 'canonical_evidence_id': canonical}
+                    if dup_match and 'similarity' in dup_match:
+                        dedup_decision['similarity'] = dup_match['similarity']
+                    end(trace, 'skipped', dedup_decision)
                     continue
                 end(trace, decision={'canonical_evidence_id': canonical})
+                if options.get('prefilter_enabled', False):
+                    prefilter = score_relevance(topic, evidence)
+                    if not prefilter['passed']:
+                        trace = step('prefilter_relevance', evidence['evidence_id'])
+                        self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed')
+                        counts['irrelevant'] += 1
+                        usable += 1
+                        end(trace, 'skipped', {'reason': 'prefilter_low_relevance', **prefilter})
+                        continue
                 trace = step('assess_evidence', evidence['evidence_id'])
                 assessment = Assessment.model_validate(provider.assess(topic, self.repo.events(topic['topic_id']), evidence, run['snapshot']['sources']))
                 trace['attempt'] = getattr(provider, 'attempt', 1)

@@ -36,11 +36,15 @@ class Topic(TopicInput):
 
 
 class Source(Model):
-    source_id: str
-    name: str
-    type: Literal['fixture'] = 'fixture'
-    endpoint: str
+    source_id: str = Field(pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
+    name: str = Field(min_length=1, max_length=200)
+    type: Literal['fixture', 'replay', 'rss', 'manual'] = 'fixture'
+    endpoint: str = Field(min_length=1, max_length=1000)
     config: dict = Field(default_factory=dict)
+
+
+class SourceRegisterInput(Source):
+    pass
 
 
 class SourceApproval(Model):
@@ -134,9 +138,22 @@ class StateUpdateProposal(Model):
     evidence_ids: list[str] = Field(min_length=1)
 
 
+class ManualEvidenceItem(Model):
+    external_id: str | None = None
+    url: str = ''
+    title: str = Field(min_length=1, max_length=500)
+    content: str = Field(min_length=1)
+    published_at: AwareDatetime | None = None
+    source_id: str | None = None
+
+
 class RunInput(Model):
-    fixture_batch_id: Literal['1', '2', '3', 'empty']
+    fixture_batch_id: str = Field(default='1', min_length=1, max_length=100)
     provider: Literal['mock', 'qwen'] | None = None
+    as_of: AwareDatetime | None = None
+    prefilter_enabled: bool = False
+    near_duplicate_enabled: bool = True
+    manual_items: list[ManualEvidenceItem] = Field(default_factory=list)
 
 
 RunStatus = Literal['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']

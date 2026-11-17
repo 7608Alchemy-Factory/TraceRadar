@@ -6,9 +6,9 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import TopicInput, TopicPatch, Topic, SourceApproval, RunInput, uid, now
+from .domain import TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, uid, now
 from .repositories import Repository
-from .connectors import SOURCES
+from .connectors import SOURCES, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
 
@@ -74,8 +74,23 @@ def create_app(settings=None):
 
     @app.post('/api/topics/{identity}/source-recommendations')
     def recommendations(identity: str):
-        repo.get('topics', identity)
-        return {'recommendation_mode': 'static', 'sources': [dict(s, reason='Registered simulated cybersecurity demo source.') for s in repo.sources()]}
+        item = repo.get('topics', identity)
+        result = recommend_sources(item, repo.sources())
+        persisted = []
+        for src in result['sources']:
+            if not src.get('registered'):
+                clean_src = {k: src[k] for k in ('source_id', 'name', 'type', 'endpoint', 'config')}
+                validated = validate_source_definition(clean_src, config.corpus_root)
+                repo.register_source(validated)
+                src = dict(src, registered=True)
+            persisted.append(src)
+        result['sources'] = persisted
+        return result
+
+    @app.post('/api/sources', status_code=201, response_model=Source)
+    def register_source(body: SourceRegisterInput):
+        validated = validate_source_definition(body.model_dump(mode='json'), config.corpus_root)
+        return repo.register_source(validated)
 
     @app.put('/api/topics/{identity}/sources')
     def approve(identity: str, body: SourceApproval):
@@ -87,7 +102,16 @@ def create_app(settings=None):
         provider = body.provider or config.provider
         get_provider(provider, config)  # Configuration errors must not create pending runs.
         request = dict(fixture_batch_id=body.fixture_batch_id, provider=provider)
-        record, created = repo.create_run(identity, request, idempotency_key, config.model if provider == 'qwen' else None)
+        options = {}
+        if body.as_of is not None:
+            options['as_of'] = body.as_of.isoformat()
+        if body.prefilter_enabled:
+            options['prefilter_enabled'] = True
+        if not body.near_duplicate_enabled:
+            options['near_duplicate_enabled'] = False
+        if body.manual_items:
+            options['manual_items'] = [item.model_dump(mode='json') for item in body.manual_items]
+        record, created = repo.create_run(identity, request, idempotency_key, config.model if provider == 'qwen' else None, options=options or None)
         if created:
             manager.submit(record['run_id'])
         return {'run_id': record['run_id'], 'status': record['status']}

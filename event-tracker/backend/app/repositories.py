@@ -118,6 +118,12 @@ class Repository:
                 rows = db.execute('SELECT data FROM sources ORDER BY id')
             return [json.loads(r[0]) for r in rows]
 
+    def register_source(self, source):
+        with self.connection(True) as db:
+            db.execute('INSERT INTO sources VALUES(?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data',
+                       (source['source_id'], dump(source)))
+        return source
+
     def approve(self, topic_id, ids):
         with self.connection(True) as db:
             row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
@@ -135,12 +141,15 @@ class Repository:
             db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), topic_id))
         return self.sources(topic_id)
 
-    def create_run(self, topic_id, request, key, model):
+    def create_run(self, topic_id, request, key, model, options=None):
         with self.connection(True) as db:
+            effective_request = dict(request)
+            if options:
+                effective_request['options'] = options
             if key:
                 row = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?', (topic_id, key)).fetchone()
                 if row:
-                    if row[0] != dump(request):
+                    if row[0] != dump(effective_request):
                         raise AppError('IDEMPOTENCY_CONFLICT', 'This key was used with a different request.')
                     return json.loads(row[1]), False
             if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
@@ -150,10 +159,13 @@ class Repository:
                 ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
             if not sources:
                 raise AppError('NO_APPROVED_SOURCE', 'Approve a source before running.')
+            snapshot = {'topic': topic, 'sources': sources}
+            if options:
+                snapshot['options'] = options
             run = dict(run_id=uid(), topic_id=topic_id, trigger_type='manual', status='pending',
                        **request, model=model, prompt_version='assessment-v1', started_at=None,
-                       completed_at=None, counts={}, error=None, snapshot={'topic': topic, 'sources': sources})
-            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(request), dump(run)))
+                       completed_at=None, counts={}, error=None, snapshot=snapshot)
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(effective_request), dump(run)))
         return run, True
 
     def active_runs(self):
@@ -183,7 +195,12 @@ class Repository:
         with self.connection() as db:
             return [json.loads(r[0]) for r in db.execute('SELECT data FROM events WHERE topic_id=? ORDER BY rowid', (topic_id,))]
 
-    def ingest(self, topic_id, evidence):
+    def topic_evidence_items(self, topic_id):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('''SELECT e.data FROM evidence e
+                JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''', (topic_id,))]
+
+    def ingest(self, topic_id, evidence, canonical_override=None):
         with self.connection(True) as db:
             row = db.execute('SELECT data FROM evidence WHERE source_id=? AND external_id=?',
                              (evidence['source_id'], evidence['external_id'])).fetchone()
@@ -196,7 +213,12 @@ class Repository:
                 db.execute('UPDATE evidence SET data=? WHERE id=?', (dump(saved), saved['evidence_id']))
             else:
                 canonical = db.execute('SELECT canonical_id FROM evidence WHERE hash=? LIMIT 1', (evidence['content_hash'],)).fetchone()
-                evidence['canonical_evidence_id'] = canonical[0] if canonical else evidence['evidence_id']
+                if canonical:
+                    evidence['canonical_evidence_id'] = canonical[0]
+                elif canonical_override and db.execute('SELECT 1 FROM evidence WHERE id=?', (canonical_override,)).fetchone():
+                    evidence['canonical_evidence_id'] = canonical_override
+                else:
+                    evidence['canonical_evidence_id'] = evidence['evidence_id']
                 db.execute('INSERT INTO evidence VALUES(?,?,?,?,?,?)',
                            (evidence['evidence_id'], evidence['source_id'], evidence['external_id'],
                             evidence['content_hash'], evidence['canonical_evidence_id'], dump(evidence)))

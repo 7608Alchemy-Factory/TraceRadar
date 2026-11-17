@@ -17,6 +17,7 @@ class Settings:
     timeout: float = float(os.getenv('MODEL_TIMEOUT_SECONDS', '30'))
     max_attempts: int = min(2, max(1, int(os.getenv('MODEL_MAX_ATTEMPTS', '2'))))
     fixture_path: Path = ROOT / 'fixtures/cybersecurity'
+    corpus_root: Path = ROOT / 'fixtures'
 
     def __post_init__(self):
         path = Path(self.database_path)

@@ -12,7 +12,7 @@ from app.llm import MockProvider, QwenProvider
 
 @pytest.fixture
 def settings(tmp_path):
-    return Settings(database_path=str(tmp_path / 'tracker.db'))
+    return Settings(database_path=str(tmp_path / 'tracker.db'), provider='mock', api_key='', base_url='', model='')
 
 
 @pytest.fixture

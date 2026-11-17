@@ -1,4 +1,7 @@
 import logging
+from threading import RLock
+from dataclasses import replace
+from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import FastAPI, Header, Request
@@ -6,11 +9,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, uid, now
+from .domain import TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
 from .repositories import Repository
 from .connectors import SOURCES, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
+from .model_settings import model_status, save_model_settings,discover_models
+from .replay_catalog import replay_catalog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
@@ -19,6 +24,7 @@ def create_app(settings=None):
     config = settings or Settings()
     repo = Repository(config.database_path)
     manager = RunManager(repo, config)
+    config_lock = RLock()
 
     @asynccontextmanager
     async def lifespan(app):
@@ -29,6 +35,18 @@ def create_app(settings=None):
 
     app = FastAPI(title='TraceRadar local tracker', lifespan=lifespan)
     app.state.repo, app.state.manager = repo, manager
+
+    @app.middleware('http')
+    async def local_model_configuration(request: Request, call_next):
+        origin=request.headers.get('origin')
+        if origin and request.url.path.startswith('/api/settings/model') and request.method in ('POST','PUT'):
+            try:
+                host=urlsplit(origin).hostname
+            except ValueError:
+                host=None
+            if not host or (host!=request.url.hostname and not {host,request.url.hostname}<={'127.0.0.1','localhost','::1'}):
+                return JSONResponse(status_code=403,content={'error':{'code':'LOCAL_SETTINGS_ONLY','message':'Configure models from the local workspace.'}})
+        return await call_next(request)
 
     def error(code, message, status, details=None):
         return JSONResponse(status_code=status, content={'error': dict(code=code, message=message, details=details or {}, run_id=None)})
@@ -53,7 +71,38 @@ def create_app(settings=None):
 
     @app.get('/api/health')
     def health():
-        return {'status': 'ok', 'default_provider': config.provider, 'data_mode': 'simulated_fixture'}
+        return {'status': 'ok', 'default_provider': config.provider, 'data_mode': 'registered_sources'}
+
+    @app.get('/api/settings/model')
+    def read_model_settings():
+        return model_status(config)
+
+    @app.put('/api/settings/model')
+    def update_model_settings(body: ModelSettingsInput):
+        with config_lock:
+            if repo.active_runs():
+                raise AppError('RUN_ACTIVE','Wait for all runs to finish before changing the model.')
+            return save_model_settings(config,body)
+
+    @app.post('/api/settings/model/models')
+    def available_models(body: ModelDiscoveryInput):
+        return discover_models(config,body)
+
+    @app.post('/api/settings/model/check')
+    def check_model():
+        with config_lock:
+            provider=get_provider('qwen',replace(config,max_attempts=1))
+            evidence_id=uid()
+            assessment=provider.assess({'title':'Connection check','description':'No substantive event is being tracked.'},[],
+                {'evidence_id':evidence_id,'title':'Connection check','content':'This is a connection test, not news.',
+                 'published_at':now(),'source_id':'connection_check'},[])
+            if assessment.evidence_id!=evidence_id:
+                raise AppError('PROVIDER_SCHEMA','The model returned an incorrect evidence reference.',502)
+            return {'status':'ok','model':config.model,'attempts':provider.attempt}
+
+    @app.get('/api/replay/corpora')
+    def corpora():
+        return replay_catalog(config)
 
     @app.post('/api/topics', status_code=201, response_model=Topic)
     def create_topic(body: TopicInput):
@@ -100,9 +149,10 @@ def create_app(settings=None):
     def run(identity: str, body: RunInput, idempotency_key: str | None = Header(default=None, max_length=200)):
         repo.get('topics', identity)
         provider = body.provider or config.provider
-        get_provider(provider, config)  # Configuration errors must not create pending runs.
         request = dict(fixture_batch_id=body.fixture_batch_id, provider=provider)
         options = {}
+        if body.source_ids is not None:
+            options['source_ids']=body.source_ids
         if body.as_of is not None:
             options['as_of'] = body.as_of.isoformat()
         if body.prefilter_enabled:
@@ -111,7 +161,9 @@ def create_app(settings=None):
             options['near_duplicate_enabled'] = False
         if body.manual_items:
             options['manual_items'] = [item.model_dump(mode='json') for item in body.manual_items]
-        record, created = repo.create_run(identity, request, idempotency_key, config.model if provider == 'qwen' else None, options=options or None)
+        with config_lock:
+            get_provider(provider, config)  # Configuration errors must not create pending runs.
+            record, created = repo.create_run(identity, request, idempotency_key, config.model if provider == 'qwen' else None, options=options or None)
         if created:
             manager.submit(record['run_id'])
         return {'run_id': record['run_id'], 'status': record['status']}
@@ -128,12 +180,21 @@ def create_app(settings=None):
     @app.get('/api/topics/{identity}/dashboard')
     def dashboard(identity: str):
         return dict(topic=repo.get('topics', identity), approved_sources=repo.sources(identity), events=repo.events(identity),
-                    recent_runs=repo.runs(identity), reviews=repo.reviews(identity),
+                    recent_runs=repo.runs(identity), reviews=repo.reviews(identity), review_resolutions=repo.review_resolutions(identity),
                     notification_counts={a: len(repo.notifications(identity, a)) for a in ('immediate', 'digest', 'record_only')})
 
     @app.get('/api/events/{identity}')
     def event(identity: str):
         return repo.event_detail(identity)
+
+    @app.get('/api/topics/{identity}/evidence')
+    def evidence_decisions(identity: str):
+        repo.get('topics',identity)
+        return repo.evidence_decisions(identity)
+
+    @app.post('/api/topics/{identity}/reviews/{evidence_id}/resolve')
+    def resolve_review(identity: str, evidence_id: str, body: ReviewResolutionInput):
+        return manager.state_manager.resolve_review(repo.get('topics',identity),evidence_id,body)
 
     @app.get('/api/topics/{identity}/notifications')
     def notifications(identity: str, action: Literal['immediate', 'digest', 'record_only'] | None = None):

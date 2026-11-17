@@ -211,7 +211,8 @@ def test_qwen_bounded_repair_auth_and_timeout(settings):
         calls.append(request)
         return httpx.Response(401)
     with httpx.Client(transport=httpx.MockTransport(auth)) as client:
-        with pytest.raises(AppError, match='authentication'): QwenProvider(settings,client).assess({},[],{},[])
+        with pytest.raises(AppError) as caught: QwenProvider(settings,client).assess({},[],{},[])
+        assert caught.value.code=='PROVIDER_AUTH'
         assert len(calls)==1
     calls.clear()
     def timeout(request):

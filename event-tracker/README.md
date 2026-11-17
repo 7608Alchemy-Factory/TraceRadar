@@ -2,7 +2,26 @@
 
 A working basic framework: create a Topic, approve sources, run simulated evidence batches, inspect multiple Events, state history, notifications and ordered execution traces. No model key is needed in Mock mode.
 
+Member D walkthrough and current branch audit (中文): [逐步开发与验收](docs/member-d-guide.zh-CN.md).
+Current v0.2 UI, model configuration and correction workflow: [工作台操作指南](docs/workspace-v2.zh-CN.md).
+Member D delivery and live replay repair results: [成员 D 交付总结](docs/member-d-delivery.zh-CN.md).
+This branch also supports C's replay/RSS/manual connectors, domain-independent model proposals,
+goal editing, manual evidence entry and audited review closure. Mock remains ExampleSoft-only.
+
 ## Start on Windows PowerShell
+
+For normal local use on Windows, double-click **Start-TraceRadar.cmd** at the repository root.
+It starts a hidden process independently of the chat terminal, serving the built UI and API
+together at http://127.0.0.1:5173. API docs are at http://127.0.0.1:5173/docs.
+Closing the launcher window does not stop the server; double-click **Stop-TraceRadar.cmd** to stop it.
+After restarting Windows, run the start launcher again. Existing topics, database and model settings remain.
+The launcher reuses an already running instance of this workspace and refuses to stop an unrelated port owner.
+It creates no startup task or system service. Logs: `data/local-workspace.log`.
+
+Backend dependencies and `frontend/dist` must exist (already prepared in the current workspace).
+After editing frontend source, rebuild it with `npm run build` before using this launcher.
+The two-terminal instructions below are the development alternative; stop the bundled server first
+because both modes use port 5173.
 
 Prerequisites verified here: Python 3.12.4, Node 24.22.1, npm 11.19.1. Other compatible Python 3.11+ / Node 22+ environments have not been checked.
 
@@ -29,9 +48,9 @@ Open http://127.0.0.1:5173. API documentation: http://127.0.0.1:8000/docs. Vite 
 
 ## Fixed demo
 
-1. Create the default **ExampleSoft security** topic. All ExampleSoft content, URLs, dates and sources are fictional simulated input.
-2. Check **both** source boxes and select **Save approved sources**.
-3. Keep **Mock** selected. Run **第一批信息**, then **后续进展**, then **补丁与冲突**, waiting for each to complete.
+1. Select **看懂这个演示** in the sidebar, then **新建一个干净的三步演示**. ExampleSoft content, URLs, dates and sources are fictional simulated input; both fixture sources are approved automatically.
+2. Keep **规则演示** selected.
+3. Run **发现事件**, **补充与归类**, then **修复与冲突**, waiting for each to complete.
 4. Expect 2 events, 4 transitions, 3 digest notifications, 1 immediate notification and 2 review records. Event A becomes patched; conflicting and unclear reports never overwrite confirmed state.
 5. Inspect Event A for the four state fields, raw evidence, duplicate/conflicting relations and before/after history. Expand Trace steps to see actual decisions, references, attempt and timestamps.
 6. Run the same batches again. Event, transition and notification counts stay unchanged. Refresh or restart to verify persistence.
@@ -61,9 +80,9 @@ With the API running, from `event-tracker/backend`, execute the repeatable API d
 
 Result: `evaluation/reports/mock-demo.json`. This script reads expected results; the agent runtime never imports evaluation data.
 
-## Optional Qwen setup
+## Model setup
 
-Copy `.env.example` to `.env` under `event-tracker/`. Set `QWEN_API_KEY`, `QWEN_BASE_URL` and `QWEN_MODEL` locally. Select the HTTPS compatible-mode base URL and a JSON-mode-capable model from **your** Model Studio workspace/region; no address or model is guessed. Restart the backend and select Qwen in the UI. Missing configuration is rejected before a run is queued. Credentials stay in the backend; `.env` is ignored by Git.
+Open **模型配置**, enter your HTTPS compatible API base URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. Alternatively copy `.env.example` to `.env`, fill the legacy `QWEN_API_KEY`, `QWEN_BASE_URL` and `QWEN_MODEL` names, and restart. The provider identifier qwen is retained for compatibility; the actual model comes from configuration. Missing configuration is rejected before queuing. Credentials remain in the backend; `.env` is ignored by Git.
 
 Adapter follows [Alibaba Cloud Chat Completions](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions) and [structured output documentation](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output). JSON mode is followed by Pydantic validation and State Manager reference/ownership checks. Network/temporary failures have at most 2 attempts; authentication fails immediately. Invalid JSON/schema has at most one repair attempt. No Mock fallback occurs.
 
@@ -73,7 +92,7 @@ An explicit optional real-call check (may incur a provider charge), from backend
 .\.venv\Scripts\python.exe ..\scripts\check_qwen.py --allow-paid-call
 ```
 
-**Real Qwen calls have not been verified.** Ordinary tests, health checks and the default demo never call a paid model.
+The configured DeepSeek service has been verified on LBJ/NBA replays with `deepseek-flash` (2026-11-17); see the delivery report for scope and limits. Qwen-specific live calls remain unverified. Ordinary tests, health checks and the default demo never call a paid model. Use **读取可用模型** in the settings dialog to obtain actual API model IDs; a service brand name is not a model ID.
 
 ## Module map
 
@@ -82,9 +101,10 @@ An explicit optional real-call check (may incur a provider charge), from backend
 | backend/app/domain.py | Shared Pydantic contracts and enums |
 | backend/app/main.py | FastAPI endpoints and consistent errors |
 | backend/app/repositories.py | SQLite schema, constraints, persistence and transactions |
-| backend/app/connectors.py | Approved registered fixture sources |
+| backend/app/connectors.py | Approved fixture/replay/RSS/manual sources (member C) |
 | backend/app/llm.py | Provider interface, content-rule Mock, Qwen adapter |
 | backend/app/services.py | State validation, atomic proposal submission and notification policy |
+| backend/app/notification_policy.py | Domain-independent deterministic notification decisions |
 | backend/app/orchestration.py | Single worker, workflow, deduplication, trace and error aggregation |
 | frontend/src | Typed HTTP client and local dashboard |
 | fixtures/cybersecurity | Runtime evidence inputs |
@@ -94,4 +114,4 @@ See `docs/decisions.md`, `data_contracts.md`, `api_contracts.md`, `progress.md` 
 
 ## Current limits
 
-Local single user, manual execution, registered fixtures only. No live website retrieval, scheduling, authentication, cloud deployment or external notifications. Mock rules cover this demo only. Review records are visible but cannot yet be resolved through the UI. Restart fails interrupted runs explicitly; run again to recover safely. Changed content at an existing source external ID requires a new revision ID. SQLite schema version 1 initializes idempotently; future schema changes need explicit migrations. Evidence reference checks establish traceability, not semantic proof of truth.
+Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. Restart fails interrupted runs explicitly; run again to recover safely. Changed content at an existing source external ID requires a new revision ID. SQLite schema version 2 adds review_resolutions without replacing existing tables. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.

@@ -19,3 +19,30 @@ Run/step status enums and Assessment/Association validation are in the canonical
 ```
 
 The fictional raw evidence fixtures are schema-validated during ingestion; deterministic expected results are exclusively in `evaluation/expected/demo.json`.
+
+## Member D additions (2026-11-17)
+
+Source.type includes fixture/replay/rss/manual. The frontend projects all four types.
+Assessment keeps the existing contract; new model runs identify prompt_version=assessment-v2,
+while deterministic demo runs use mock-demo-v1. Event association and milestone meaning are
+domain-independent. Every committed update must add a current-evidence supported_claim present
+in key_facts and a current-evidence timeline item. A major milestone must change current_status;
+schema/reference checks cannot prove its semantic importance. Existing facts and history remain
+append-only; contradiction/correction proposals stay in review.
+
+The v0.2 workspace adds an explicit human correction path. Only a reviewed accept request
+may supersede selected exact prior facts; full prior state remains in StateTransition.before_state.
+The corrected state references the reviewed evidence, and its publication time becomes the
+new timeline entry. Run.provider additionally includes human and trigger_type includes
+human_review; this completed audit Run never enters the model worker queue. Resolutions retain
+the original model assessment, human request/note, affected event, transition and superseded facts.
+
+Notification mapping remains event_created/fact_added → routine/digest,
+major_milestone → breaking/immediate, minor_update → low/record_only. digest_only suppresses
+immediate delivery. Notifications refer to persisted transitions and are committed atomically.
+
+Schema version 2 adds review_resolutions(topic_id,evidence_id,data) with a composite foreign key
+to topic_evidence. Review closure stores resolution_id, decision=dismiss, note, actor=local_user,
+resolved_at and original_assessment. For dismiss only processing status changes. For accept,
+the same transaction writes the human audit Run/Step, corrected Event, transition, notification
+and resolution. The schema does not change beyond version 2. The additive initialization is idempotent.

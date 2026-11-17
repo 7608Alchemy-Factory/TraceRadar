@@ -110,6 +110,8 @@ class Association(Model):
             raise ValueError('existing_event requires event_id')
         if self.type == 'new_event' and not self.title:
             raise ValueError('new_event requires title')
+        if self.type != 'existing_event' and self.event_id is not None:
+            raise ValueError('Only existing_event may include event_id')
         return self
 
 
@@ -147,6 +149,39 @@ class ManualEvidenceItem(Model):
     source_id: str | None = None
 
 
+class ReviewResolutionInput(Model):
+    decision: Literal['dismiss', 'accept']
+    note: str = Field(min_length=1, max_length=2000)
+    event_id: str | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+    current_status: str | None = Field(default=None, min_length=1, max_length=2000)
+    fact: str | None = Field(default=None, min_length=1, max_length=4000)
+    superseded_facts: list[Fact] = Field(default_factory=list)
+    update_kind: Literal['fact_added', 'major_milestone'] = 'fact_added'
+
+    @model_validator(mode='after')
+    def nonblank_note(self):
+        self.note = self.note.strip()
+        if not self.note:
+            raise ValueError('A review note is required')
+        if self.decision == 'accept' and not all((self.event_id, self.expected_version, self.current_status and self.current_status.strip(), self.fact and self.fact.strip())):
+            raise ValueError('Accept requires event_id, expected_version, current_status and fact')
+        if self.decision == 'dismiss' and (self.event_id or self.expected_version or self.current_status or self.fact or self.superseded_facts or self.update_kind != 'fact_added'):
+            raise ValueError('Dismiss does not accept state changes')
+        return self
+
+
+class ModelSettingsInput(Model):
+    base_url: str = Field(min_length=1, max_length=1000)
+    model: str = Field(min_length=1, max_length=200)
+    api_key: str | None = Field(default=None, max_length=4000, repr=False)
+
+
+class ModelDiscoveryInput(Model):
+    base_url: str = Field(min_length=1, max_length=1000)
+    api_key: str | None = Field(default=None, max_length=4000, repr=False)
+
+
 class RunInput(Model):
     fixture_batch_id: str = Field(default='1', min_length=1, max_length=100)
     provider: Literal['mock', 'qwen'] | None = None
@@ -154,6 +189,7 @@ class RunInput(Model):
     prefilter_enabled: bool = False
     near_duplicate_enabled: bool = True
     manual_items: list[ManualEvidenceItem] = Field(default_factory=list)
+    source_ids: list[str] | None = Field(default=None, min_length=1)
 
 
 RunStatus = Literal['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']
@@ -193,9 +229,9 @@ class Notification(Model):
 class Run(Model):
     run_id: str
     topic_id: str
-    trigger_type: Literal['manual'] = 'manual'
+    trigger_type: Literal['manual', 'human_review'] = 'manual'
     status: RunStatus
-    provider: Literal['mock', 'qwen']
+    provider: Literal['mock', 'qwen', 'human']
     fixture_batch_id: str
     model: str | None = None
     prompt_version: str = 'assessment-v1'

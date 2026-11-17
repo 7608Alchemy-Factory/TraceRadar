@@ -1,5 +1,5 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -9,9 +9,10 @@ load_dotenv(ROOT / '.env')
 
 @dataclass
 class Settings:
+    env_path: Path = ROOT / '.env'
     database_path: str = os.getenv('DATABASE_PATH', str(ROOT / 'data/tracker.db'))
     provider: str = os.getenv('MODEL_PROVIDER', 'mock')
-    api_key: str = os.getenv('QWEN_API_KEY', '')
+    api_key: str = field(default=os.getenv('QWEN_API_KEY', ''),repr=False)
     base_url: str = os.getenv('QWEN_BASE_URL', '')
     model: str = os.getenv('QWEN_MODEL', '')
     timeout: float = float(os.getenv('MODEL_TIMEOUT_SECONDS', '30'))

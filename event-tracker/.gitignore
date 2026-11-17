@@ -6,5 +6,7 @@ dist/
 __pycache__/
 .pytest_cache/
 .env
+.model-*.tmp
+evaluation/pilot/
 data/
 *.db*

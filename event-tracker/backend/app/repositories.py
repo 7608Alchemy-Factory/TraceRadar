@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from .core import AppError
 from .domain import uid, now
+from .llm import PROMPT_VERSION
 
 
 def dump(value):
@@ -75,6 +76,11 @@ class Repository:
             CREATE TABLE IF NOT EXISTS steps(
               id TEXT PRIMARY KEY, run_id TEXT REFERENCES runs(id), sequence INTEGER,
               data TEXT NOT NULL, UNIQUE(run_id,sequence));
+            CREATE TABLE IF NOT EXISTS review_resolutions(
+              topic_id TEXT, evidence_id TEXT, data TEXT NOT NULL,
+              PRIMARY KEY(topic_id,evidence_id),
+              FOREIGN KEY(topic_id,evidence_id) REFERENCES topic_evidence(topic_id,evidence_id));
+            INSERT OR IGNORE INTO schema_versions VALUES(2);
             ''')
             for source in sources:
                 db.execute('INSERT OR IGNORE INTO sources VALUES(?,?)', (source['source_id'], dump(source)))
@@ -104,6 +110,8 @@ class Repository:
             row = db.execute('SELECT data FROM topics WHERE id=?', (identity,)).fetchone()
             if not row:
                 raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (identity,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before changing the tracking goal.')
             topic = json.loads(row[0])
             topic.update(changes, updated_at=now())
             db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), identity))
@@ -159,11 +167,16 @@ class Repository:
                 ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
             if not sources:
                 raise AppError('NO_APPROVED_SOURCE', 'Approve a source before running.')
+            if options and options.get('source_ids') is not None:
+                selected=set(options['source_ids'])
+                if not selected or not selected<={s['source_id'] for s in sources}:
+                    raise AppError('INVALID_RUN_SOURCES','本次运行只能选择该主题已批准的来源。',422)
+                sources=[s for s in sources if s['source_id'] in selected]
             snapshot = {'topic': topic, 'sources': sources}
             if options:
                 snapshot['options'] = options
             run = dict(run_id=uid(), topic_id=topic_id, trigger_type='manual', status='pending',
-                       **request, model=model, prompt_version='assessment-v1', started_at=None,
+                       **request, model=model, prompt_version=PROMPT_VERSION if request['provider'] == 'qwen' else 'mock-demo-v1', started_at=None,
                        completed_at=None, counts={}, error=None, snapshot=snapshot)
             db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(effective_request), dump(run)))
         return run, True
@@ -199,6 +212,53 @@ class Repository:
         with self.connection() as db:
             return [json.loads(r[0]) for r in db.execute('''SELECT e.data FROM evidence e
                 JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''', (topic_id,))]
+
+    def evidence_decisions(self, topic_id):
+        with self.connection() as db:
+            return [dict(evidence=json.loads(r[0]),status=r[1],assessment=json.loads(r[2]) if r[2] else None,
+                         error=json.loads(r[3]) if r[3] else None) for r in db.execute('''SELECT e.data,t.status,t.assessment,t.error
+                FROM evidence e JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''',(topic_id,))]
+
+    def review_item(self, topic_id, evidence_id):
+        with self.connection() as db:
+            row=db.execute('SELECT status,assessment FROM topic_evidence WHERE topic_id=? AND evidence_id=?',(topic_id,evidence_id)).fetchone()
+        if not row:
+            raise AppError('NOT_FOUND','Review evidence not found in this topic.',404)
+        return dict(status=row[0],assessment=json.loads(row[1]) if row[1] else None)
+
+    def review_resolution(self,topic_id,evidence_id):
+        with self.connection() as db:
+            row=db.execute('SELECT data FROM review_resolutions WHERE topic_id=? AND evidence_id=?',(topic_id,evidence_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def commit_review(self, event, transition, notification, run, step, resolution, expected_version, fault=None):
+        topic_id,evidence_id=event['topic_id'],resolution['evidence_id']
+        with self.connection(True) as db:
+            prior=db.execute('SELECT data FROM review_resolutions WHERE topic_id=? AND evidence_id=?',(topic_id,evidence_id)).fetchone()
+            if prior:
+                result=json.loads(prior[0])
+                if result.get('request')!=resolution['request']:
+                    raise AppError('REVIEW_ALREADY_RESOLVED','This review already has an audit record.')
+                return result
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')",(topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE','Wait for the active run before resolving reviews.')
+            row=db.execute('SELECT status FROM topic_evidence WHERE topic_id=? AND evidence_id=?',(topic_id,evidence_id)).fetchone()
+            if not row or row[0]!='review':
+                raise AppError('NOT_PENDING_REVIEW','Evidence is not awaiting review.')
+            changed=db.execute('UPDATE events SET version=?,data=? WHERE id=? AND topic_id=? AND version=?',
+                (event['version'],dump(event),event['event_id'],topic_id,expected_version))
+            if changed.rowcount!=1:
+                raise AppError('VERSION_CONFLICT','Event changed; reopen the review with current state.')
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)',(run['run_id'],topic_id,'completed',None,None,dump(run)))
+            db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)',(transition['transition_id'],event['event_id'],run['run_id'],transition['idempotency_key'],dump(transition)))
+            if fault:
+                fault()
+            db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)',(notification['notification_id'],topic_id,event['event_id'],transition['transition_id'],dump(notification)))
+            db.execute('INSERT INTO steps VALUES(?,?,?,?)',(step['step_id'],run['run_id'],1,dump(step)))
+            db.execute('INSERT INTO review_resolutions VALUES(?,?,?)',(topic_id,evidence_id,dump(resolution)))
+            db.execute("INSERT INTO event_evidence VALUES(?,?,'supporting') ON CONFLICT(event_id,evidence_id) DO UPDATE SET relation='supporting'",(event['event_id'],evidence_id))
+            db.execute("UPDATE topic_evidence SET status='completed',error=NULL WHERE topic_id=? AND evidence_id=?",(topic_id,evidence_id))
+        return resolution
 
     def ingest(self, topic_id, evidence, canonical_override=None):
         with self.connection(True) as db:
@@ -280,3 +340,31 @@ class Repository:
             items = [dict(evidence=json.loads(r[0]), assessment=json.loads(r[1])) for r in db.execute('''SELECT e.data,t.assessment
                 FROM topic_evidence t JOIN evidence e ON e.id=t.evidence_id WHERE t.topic_id=? AND t.status='review' ORDER BY e.rowid''', (topic_id,))]
         return [i for i in items if not event_id or i['assessment']['association']['event_id'] == event_id]
+
+    def resolve_review(self, topic_id, evidence_id, decision, note):
+        with self.connection(True) as db:
+            row = db.execute('SELECT status,assessment FROM topic_evidence WHERE topic_id=? AND evidence_id=?',
+                             (topic_id, evidence_id)).fetchone()
+            if not row:
+                raise AppError('NOT_FOUND', 'Review evidence not found in this topic.', 404)
+            prior = db.execute('SELECT data FROM review_resolutions WHERE topic_id=? AND evidence_id=?',
+                               (topic_id, evidence_id)).fetchone()
+            if prior:
+                result = json.loads(prior[0])
+                if (result['decision'], result['note']) != (decision, note):
+                    raise AppError('REVIEW_ALREADY_RESOLVED', 'This review already has an audit record.')
+                return result
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before resolving reviews.')
+            if row['status'] != 'review':
+                raise AppError('NOT_PENDING_REVIEW', 'Evidence is not awaiting review.')
+            result = dict(resolution_id=uid(), topic_id=topic_id, evidence_id=evidence_id,
+                          decision=decision, note=note, actor='local_user', resolved_at=now(),
+                          original_assessment=json.loads(row['assessment']))
+            db.execute('INSERT INTO review_resolutions VALUES(?,?,?)', (topic_id, evidence_id, dump(result)))
+            db.execute("UPDATE topic_evidence SET status='completed' WHERE topic_id=? AND evidence_id=?", (topic_id, evidence_id))
+        return result
+
+    def review_resolutions(self, topic_id):
+        with self.connection() as db:
+            return [json.loads(r[0]) for r in db.execute('SELECT data FROM review_resolutions WHERE topic_id=? ORDER BY rowid DESC', (topic_id,))]

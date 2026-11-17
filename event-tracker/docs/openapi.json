@@ -21,6 +21,124 @@
         }
       }
     },
+    "/api/settings/model": {
+      "get": {
+        "summary": "Read Model Settings",
+        "operationId": "read_model_settings_api_settings_model_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Model Settings",
+        "operationId": "update_model_settings_api_settings_model_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelSettingsInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/model/models": {
+      "post": {
+        "summary": "Available Models",
+        "operationId": "available_models_api_settings_model_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelDiscoveryInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings/model/check": {
+      "post": {
+        "summary": "Check Model",
+        "operationId": "check_model_api_settings_model_check_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/replay/corpora": {
+      "get": {
+        "summary": "Corpora",
+        "operationId": "corpora_api_replay_corpora_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/topics": {
       "get": {
         "summary": "Topics",
@@ -184,6 +302,44 @@
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sources": {
+      "post": {
+        "summary": "Register Source",
+        "operationId": "register_source_api_sources_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SourceRegisterInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Source"
+                }
               }
             }
           },
@@ -457,6 +613,99 @@
         }
       }
     },
+    "/api/topics/{identity}/evidence": {
+      "get": {
+        "summary": "Evidence Decisions",
+        "operationId": "evidence_decisions_api_topics__identity__evidence_get",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/topics/{identity}/reviews/{evidence_id}/resolve": {
+      "post": {
+        "summary": "Resolve Review",
+        "operationId": "resolve_review_api_topics__identity__reviews__evidence_id__resolve_post",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          },
+          {
+            "name": "evidence_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Evidence Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewResolutionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/topics/{identity}/notifications": {
       "get": {
         "summary": "Notifications",
@@ -518,6 +767,29 @@
   },
   "components": {
     "schemas": {
+      "Fact": {
+        "properties": {
+          "fact": {
+            "type": "string",
+            "title": "Fact"
+          },
+          "evidence_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Evidence Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "fact",
+          "evidence_ids"
+        ],
+        "title": "Fact"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -531,17 +803,228 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "ManualEvidenceItem": {
+        "properties": {
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Content"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "source_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "content"
+        ],
+        "title": "ManualEvidenceItem"
+      },
+      "ModelDiscoveryInput": {
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Base Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_url"
+        ],
+        "title": "ModelDiscoveryInput"
+      },
+      "ModelSettingsInput": {
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Base Url"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Model"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "base_url",
+          "model"
+        ],
+        "title": "ModelSettingsInput"
+      },
+      "ReviewResolutionInput": {
+        "properties": {
+          "decision": {
+            "type": "string",
+            "enum": [
+              "dismiss",
+              "accept"
+            ],
+            "title": "Decision"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Note"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
+          },
+          "current_status": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Status"
+          },
+          "fact": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fact"
+          },
+          "superseded_facts": {
+            "items": {
+              "$ref": "#/components/schemas/Fact"
+            },
+            "type": "array",
+            "title": "Superseded Facts"
+          },
+          "update_kind": {
+            "type": "string",
+            "enum": [
+              "fact_added",
+              "major_milestone"
+            ],
+            "title": "Update Kind",
+            "default": "fact_added"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision",
+          "note"
+        ],
+        "title": "ReviewResolutionInput"
+      },
       "RunInput": {
         "properties": {
           "fixture_batch_id": {
             "type": "string",
-            "enum": [
-              "1",
-              "2",
-              "3",
-              "empty"
-            ],
-            "title": "Fixture Batch Id"
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Fixture Batch Id",
+            "default": "1"
           },
           "provider": {
             "anyOf": [
@@ -557,14 +1040,100 @@
               }
             ],
             "title": "Provider"
+          },
+          "as_of": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "As Of"
+          },
+          "prefilter_enabled": {
+            "type": "boolean",
+            "title": "Prefilter Enabled",
+            "default": false
+          },
+          "near_duplicate_enabled": {
+            "type": "boolean",
+            "title": "Near Duplicate Enabled",
+            "default": true
+          },
+          "manual_items": {
+            "items": {
+              "$ref": "#/components/schemas/ManualEvidenceItem"
+            },
+            "type": "array",
+            "title": "Manual Items"
+          },
+          "source_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RunInput"
+      },
+      "Source": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+            "title": "Source Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "fixture",
+              "replay",
+              "rss",
+              "manual"
+            ],
+            "title": "Type",
+            "default": "fixture"
+          },
+          "endpoint": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Endpoint"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "fixture_batch_id"
+          "source_id",
+          "name",
+          "endpoint"
         ],
-        "title": "RunInput"
+        "title": "Source"
       },
       "SourceApproval": {
         "properties": {
@@ -582,6 +1151,51 @@
           "approved_source_ids"
         ],
         "title": "SourceApproval"
+      },
+      "SourceRegisterInput": {
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$",
+            "title": "Source Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "fixture",
+              "replay",
+              "rss",
+              "manual"
+            ],
+            "title": "Type",
+            "default": "fixture"
+          },
+          "endpoint": {
+            "type": "string",
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Endpoint"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "source_id",
+          "name",
+          "endpoint"
+        ],
+        "title": "SourceRegisterInput"
       },
       "Topic": {
         "properties": {

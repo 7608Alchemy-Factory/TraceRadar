@@ -97,7 +97,7 @@ class RunManager:
                 errors.append(error)
                 counts['errors'] += 1
                 end(trace, 'failed', error=error)
-        for raw in sorted(inputs, key=lambda e: (e['published_at'], e['external_id'], e['source_id'])):
+        for position,raw in enumerate(sorted(inputs, key=lambda e: (e['published_at'], e['external_id'], e['source_id']))):
             evidence = None
             trace = step('normalize_and_deduplicate', raw['evidence_id'])
             try:
@@ -147,7 +147,7 @@ class RunManager:
                 trace = step('assess_evidence', evidence['evidence_id'])
                 assessment = Assessment.model_validate(provider.assess(topic, self.repo.events(topic['topic_id']), evidence, run['snapshot']['sources']))
                 trace['attempt'] = getattr(provider, 'attempt', 1)
-                end(trace, decision={'assessment': assessment.model_dump(mode='json'), 'usage': getattr(provider, 'usage', None)})
+                end(trace, decision={'assessment': assessment.model_dump(mode='json'), 'usage': getattr(provider, 'usage', None),'state_assembly':getattr(provider,'state_assembly',None)})
                 trace = step('validate_and_commit', evidence['evidence_id'])
                 outcome = self.state_manager.apply(topic, identity, evidence, assessment)
                 counts[outcome if outcome in counts else 'skipped'] += 1
@@ -162,6 +162,9 @@ class RunManager:
                 if evidence and self.repo.processing(topic['topic_id'], evidence['evidence_id']) not in ('completed', 'review'):
                     self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'failed', error=error)
                 end(trace, 'failed', error=error)
+                if error['code'] in {'PROVIDER_AUTH','PROVIDER_MODEL','PROVIDER_BALANCE','PROVIDER_REQUEST','PROVIDER_UNAVAILABLE'}:
+                    counts['unprocessed']=len(inputs)-position-1
+                    break
         # Successful fetches alone do not make a completely failed processing run partial success.
         outcomes = sum(counts[k] for k in ('committed', 'skipped', 'review', 'irrelevant', 'no_change'))
         status = ('completed_with_errors' if outcomes or (not inputs and usable) else 'failed') if errors else 'completed'

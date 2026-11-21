@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, json } from "./api";
 import type {
@@ -22,6 +22,9 @@ import {
 } from "./member-d";
 import { Icon, Modal, Empty } from "./ui";
 import { EventView, EvidenceView } from "./event-view";
+import { RadarChapter, RadarStory } from "./radar-story";
+import "@fontsource-variable/host-grotesk/wght.css";
+import "@fontsource/ibm-plex-mono/latin-400.css";
 import {
   active,
   pretty,
@@ -36,6 +39,7 @@ import {
   localInput,
 } from "./display";
 import "./style.css";
+import "./workspace-v11.css";
 
 const tabs = [
   ["overview", "概览", "grid"],
@@ -46,6 +50,9 @@ const tabs = [
   ["activity", "运行记录", "activity"],
 ] as const;
 type Tab = (typeof tabs)[number][0];
+const fixtureOnly = (sources: Source[]) =>
+  sources.some((source) => source.type === "fixture") &&
+  sources.every((source) => ["fixture", "manual"].includes(source.type));
 type Dialog =
   | "new"
   | "goal"
@@ -104,10 +111,13 @@ function App() {
     [newDescription, setNewDescription] = useState("");
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const viewedRun = useRef("");
+  const actionPending = useRef(false);
+  const tabStrip = useRef<HTMLDivElement>(null);
+  const dashboardReady = Boolean(dashboard);
   const running = active(dashboard?.recent_runs[0]?.status);
   const replay = dashboard?.approved_sources.some((s) => s.type === "replay");
-  const fixture =
-    !replay && dashboard?.approved_sources.some((s) => s.type === "fixture");
+  const fixture = fixtureOnly(dashboard?.approved_sources ?? []);
   const replayCorpora = corpora.filter((c) =>
     dashboard?.approved_sources.some(
       (s) => s.type === "replay" && s.config.corpus_path === c.corpus_path,
@@ -119,12 +129,38 @@ function App() {
     (s) => s.type === "replay" && s.config.corpus_path === corpus?.corpus_path,
   );
   const currentEvidence = evidence.filter((v) =>
-    replaySource
-      ? v.evidence.source_id === replaySource.source_id
-      : dashboard?.approved_sources.some(
-          (s) => s.source_id === v.evidence.source_id,
-        ),
+    dashboard?.approved_sources.some(
+      (s) => s.source_id === v.evidence.source_id,
+    ),
   );
+  const manualAvailable = dashboard?.approved_sources.some(
+    (s) => s.type === "manual",
+  );
+
+  useLayoutEffect(() => {
+    const strip = tabStrip.current;
+    const target = strip?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!strip || !target) return;
+    const moveIndicator = () => {
+      strip.style.setProperty("--tab-x", `${target.offsetLeft + 8}px`);
+      strip.style.setProperty("--tab-width", `${target.offsetWidth - 16}px`);
+    };
+    const resize = new ResizeObserver(moveIndicator);
+    Array.from(strip.children).forEach((child) => resize.observe(child));
+    moveIndicator();
+    return () => resize.disconnect();
+  }, [tab, dashboardReady]);
+
+  function openTab(id: Tab, focus = false) {
+    setTab(id);
+    if (focus) {
+      requestAnimationFrame(() => {
+        const panel = document.getElementById("workspace-panel");
+        panel?.focus({ preventScroll: true });
+        document.querySelector(".tabbar")?.scrollIntoView({ block: "start" });
+      });
+    }
+  }
 
   function selectTopic(id: string) {
     if (id === selectedRef.current) {
@@ -136,8 +172,10 @@ function App() {
     setDashboard(null);
     setLoading(!!id);
     setRun(null);
+    viewedRun.current = "";
     setEvidence([]);
     setSources([]);
+    setNotices([]);
     localStorage.setItem("traceradar-topic", id);
     const address = new URL(location.href);
     if (id) address.searchParams.set("topic", id);
@@ -207,12 +245,7 @@ function App() {
         setBatch(
           d.approved_sources.some((s) => s.type === "replay") ? "all" : "1",
         );
-        setProvider(
-          !d.approved_sources.some((s) => s.type === "replay") &&
-            d.approved_sources.some((s) => s.type === "fixture")
-            ? "mock"
-            : "qwen",
-        );
+        setProvider(fixtureOnly(d.approved_sources) ? "mock" : "qwen");
         const availableCorpora = corpora.filter((c) =>
           d.approved_sources.some(
             (s) =>
@@ -235,7 +268,7 @@ function App() {
         if (latest) {
           const detail = await api<RunDetail>(`/runs/${latest.run_id}`);
           if (disposed) return;
-          setRun(detail);
+          if (!viewedRun.current) setRun(detail);
           if (active(latest.status)) setWatchId(latest.run_id);
         }
       })
@@ -250,7 +283,7 @@ function App() {
     };
   }, [selected]);
 
-  async function refresh() {
+  async function refresh(sourceSettingsChanged = false) {
     const id = selected;
     const [d, n, e] = await Promise.all([
       api<Dashboard>(`/topics/${id}/dashboard`),
@@ -261,6 +294,19 @@ function App() {
     setDashboard(d);
     setNotices(n);
     setEvidence(e);
+    if (sourceSettingsChanged) {
+      setApproved(d.approved_sources.map((s) => s.source_id));
+      setProvider(fixtureOnly(d.approved_sources) ? "mock" : "qwen");
+      const replaySources = d.approved_sources.filter(
+        (s) => s.type === "replay",
+      );
+      const nextCorpus = corpora.find((c) =>
+        replaySources.some((s) => s.config.corpus_path === c.corpus_path),
+      );
+      setReplayCorpus(nextCorpus?.corpus_id ?? "");
+      setAsOf(nextCorpus?.cutoffs[0] ? localInput(nextCorpus.cutoffs[0]) : "");
+      setBatch(nextCorpus ? "all" : "1");
+    }
   }
   async function refreshSources() {
     const s = await api<{ sources: Source[] }>(
@@ -270,6 +316,8 @@ function App() {
     setSources(s.sources);
   }
   async function action(task: () => Promise<void>) {
+    if (actionPending.current) return;
+    actionPending.current = true;
     setBusy(true);
     setError("");
     setToast("");
@@ -278,6 +326,7 @@ function App() {
     } catch (e) {
       setError(String(e));
     } finally {
+      actionPending.current = false;
       setBusy(false);
     }
   }
@@ -291,16 +340,30 @@ function App() {
     if (!watchId || !selected) return;
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
+    let retries = 0;
     async function poll() {
       try {
         const detail = await api<RunDetail>(`/runs/${watchId}`);
         if (disposed || detail.run.topic_id !== selected) return;
-        setRun(detail);
+        if (!viewedRun.current || viewedRun.current === detail.run.run_id)
+          setRun(detail);
         await refresh();
-        if (!disposed && active(detail.run.status))
-          timer = setTimeout(poll, 900);
+        retries = 0;
+        if (!disposed) {
+          if (active(detail.run.status)) timer = setTimeout(poll, 900);
+          else {
+            setWatchId("");
+            setToast(
+              detail.run.status === "completed"
+                ? "检查已完成，工作区已更新。"
+                : "检查已结束。请在运行记录中查看处理结果。",
+            );
+          }
+        }
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (disposed) return;
+        if (retries++ < 3) timer = setTimeout(poll, 1200);
+        else setError(String(e));
       }
     }
     void poll();
@@ -314,39 +377,47 @@ function App() {
     options: {
       batch?: string;
       provider?: "mock" | "qwen";
-      asOf?: string;
       manualItems?: Record<string, string>[];
     } = {},
   ) {
-    const engine = options.provider ?? provider,
-      cutoff = options.asOf ?? asOf;
+    const manual = Boolean(options.manualItems?.length);
+    const engine = options.provider ?? provider;
+    const cutoff = replay && !manual ? asOf : "";
+    const sourceIds = manual
+      ? options.manualItems!.map((item) => item.source_id)
+      : replaySource
+        ? [replaySource.source_id]
+        : undefined;
     if (engine === "qwen" && !model?.configured) {
       setDialog("settings");
       throw Error("请先填写模型服务配置。");
     }
-    if (replay && !cutoff) throw Error("请选择回放截止时间。");
+    if (replay && !manual && !replaySource)
+      throw Error("请选择可用的回放语料。");
+    if (replay && !manual && !cutoff) throw Error("请选择回放截止时间。");
     const result = await api<{ run_id: string }>(
       `/topics/${selected}/runs`,
       json("POST", {
-        fixture_batch_id: replay ? "all" : (options.batch ?? batch),
-        ...(replaySource
-          ? {
-              source_ids: [
-                ...new Set([
-                  replaySource.source_id,
-                  ...(options.manualItems ?? []).map((item) => item.source_id),
-                ]),
-              ],
-            }
-          : {}),
+        fixture_batch_id: manual
+          ? "empty"
+          : replay
+            ? "all"
+            : (options.batch ?? batch),
+        ...(sourceIds ? { source_ids: [...new Set(sourceIds)] } : {}),
         provider: engine,
         ...(cutoff ? { as_of: new Date(cutoff).toISOString() } : {}),
         ...(options.manualItems ? { manual_items: options.manualItems } : {}),
       }),
     );
     setEvent(null);
+    viewedRun.current = result.run_id;
     setWatchId(result.run_id);
     setDialog(null);
+    setToast(
+      manual
+        ? "新闻已提交，正在处理。"
+        : "检查已启动，可在运行记录中查看进度。",
+    );
     await refresh();
   }
   async function openEvent(id: string) {
@@ -380,16 +451,17 @@ function App() {
   const selectedEvidence = evidence.find(
     (e) => e.evidence.evidence_id === evidenceId,
   );
+  const search = query.trim().toLowerCase();
   const events = (dashboard?.events ?? []).filter((e) =>
-    `${e.title} ${e.state.current_status}`
+    `${e.title} ${eventTitle(e.title)} ${e.state.current_status} ${status(e.state.current_status)} ${e.state.key_facts.map((fact) => text(fact.fact)).join(" ")}`
       .toLowerCase()
-      .includes(query.toLowerCase()),
+      .includes(search),
   );
   const evidenceRows = (showHistorySources ? evidence : currentEvidence).filter(
     (e) =>
-      `${e.evidence.title} ${e.evidence.content}`
+      `${e.evidence.title} ${headline(e.evidence.title)} ${e.evidence.source_id} ${e.evidence.content}`
         .toLowerCase()
-        .includes(query.toLowerCase()),
+        .includes(search),
   );
   const latest = dashboard?.recent_runs[0];
   const done = (id: string) =>
@@ -408,6 +480,7 @@ function App() {
           <button
             className="event-row"
             key={e.event_id}
+            disabled={busy}
             onClick={() => void openEvent(e.event_id)}
           >
             <span className="row-index">{String(i + 1).padStart(2, "0")}</span>
@@ -430,11 +503,13 @@ function App() {
         ))
       ) : (
         <Empty
-          title="事件会在这里逐步形成"
+          title={search ? "没有符合筛选条件的事件" : "事件会在这里逐步形成"}
           detail={
-            fixture
-              ? "运行第一批演示新闻，查看漏洞 A 如何被建档。"
-              : "批准来源并运行检查。系统会按独立事项组织事件。"
+            search
+              ? "试试事件名称、状态或事实中的其他关键词。"
+              : fixture
+                ? "运行第一批演示新闻，查看漏洞 A 如何被建档。"
+                : "批准来源并运行检查。系统会按独立事项组织事件。"
           }
         />
       )}
@@ -460,7 +535,12 @@ function App() {
           disabled={busy || running}
           onChange={(e) => setProvider(e.target.value as "mock" | "qwen")}
         >
-          <option value="mock">规则演示 · ExampleSoft</option>
+          <option
+            value="mock"
+            disabled={!fixtureOnly(dashboard?.approved_sources ?? [])}
+          >
+            规则演示 · ExampleSoft
+          </option>
           <option value="qwen">真实模型分析</option>
         </select>
       </label>
@@ -540,31 +620,36 @@ function App() {
               </button>
             ))}
           </div>
-          {provider === "mock" && (
-            <p className="hint warning-text">
-              这套体育语料需要真实模型；演示规则不会识别 NBA 事件。
-            </p>
-          )}
         </>
       )}
       <button
         className="primary full"
         disabled={busy || running || !dashboard?.approved_sources.length}
-        onClick={() => void action(() => startRun())}
+        onClick={() =>
+          provider === "qwen" && !model?.configured
+            ? showDialog("settings")
+            : void action(() => startRun())
+        }
       >
         <Icon name="play" size={14} />
         {running
           ? "正在检查…"
           : provider === "qwen" && !model?.configured
-            ? "配置模型后开始"
+            ? "打开模型配置"
             : "开始检查"}
       </button>
       <button
         className="text-button full"
         disabled={busy || running}
-        onClick={() => showDialog("manual")}
+        onClick={() => {
+          if (!manualAvailable) openTab("sources", true);
+          else if (provider === "qwen" && !model?.configured)
+            showDialog("settings");
+          else showDialog("manual");
+        }}
       >
-        <Icon name="plus" size={15} /> 手动提交新闻
+        <Icon name="plus" size={15} />{" "}
+        {manualAvailable ? "手动提交新闻" : "管理手动来源"}
       </button>
       <div className="run-footnote">
         {replaySource ? 1 : (dashboard?.approved_sources.length ?? 0)}{" "}
@@ -600,7 +685,6 @@ function App() {
           <span>
             Group 65<small>研究工作台</small>
           </span>
-          <span className="sidebar-chevron">⌄</span>
         </div>
         <div className="sidebar-section-label">工作区</div>
         <nav className="side-nav">
@@ -610,7 +694,7 @@ function App() {
               <button
                 key={id}
                 className={tab === id ? "selected" : ""}
-                onClick={() => setTab(id)}
+                onClick={() => openTab(id, true)}
               >
                 <Icon name={icon} />
                 {label}
@@ -653,19 +737,23 @@ function App() {
           <Icon name="arrow" size={14} />
         </button>
         <div className="sidebar-bottom">
-          <button onClick={() => showDialog("help")}>
+          <button aria-label="看懂这个演示" onClick={() => showDialog("help")}>
             <Icon name="help" />
             看懂这个演示
           </button>
-          <button onClick={() => showDialog("settings")}>
+          <button aria-label="模型配置" onClick={() => showDialog("settings")}>
             <Icon name="settings" />
             模型配置
             <span className={`tiny-dot ${model?.configured ? "online" : ""}`} />
           </button>
           <div className="sidebar-status">
             <span className={`status-dot ${health ? "online" : ""}`} />
-            {health ? "本地服务在线" : "正在连接本地服务"}
-            <span>v0.2</span>
+            {health
+              ? "本地服务在线"
+              : loading
+                ? "正在连接本地服务"
+                : "本地服务不可用"}
+            <span>v1.1</span>
           </div>
         </div>
       </aside>
@@ -676,7 +764,13 @@ function App() {
             {dashboard ? eventTitle(dashboard.topic.title) : "追踪主题"}
           </div>
           <div className="topbar-actions">
-            <span className="local-label">LOCAL EDITION</span>
+            <button
+              className="icon-button mobile-replay"
+              aria-label="准备语料回放"
+              onClick={() => showDialog("replay")}
+            >
+              <Icon name="play" />
+            </button>
             <button
               className="icon-button mobile-new"
               aria-label="新建主题"
@@ -697,7 +791,7 @@ function App() {
         <main>
           <div className="page-heading">
             <div>
-              <span className="kicker">A CONTINUOUS VIEW OF WHAT MATTERS</span>
+              <span className="kicker">TRACERADAR / WORKSPACE</span>
               <h1>
                 {dashboard
                   ? eventTitle(dashboard.topic.title)
@@ -776,15 +870,38 @@ function App() {
                   {latest ? providerLabel(latest.provider) : "尚未分析"}
                 </span>
               </div>
-              <div className="tabbar" role="tablist" aria-label="主题视图">
-                {tabs.map(([id, label]) => (
+              <div
+                className="tabbar"
+                ref={tabStrip}
+                role="tablist"
+                aria-label="主题视图"
+                onKeyDown={(e) => {
+                  const index = tabs.findIndex(([id]) => id === tab);
+                  const next = {
+                    ArrowLeft: (index + tabs.length - 1) % tabs.length,
+                    ArrowRight: (index + 1) % tabs.length,
+                    Home: 0,
+                    End: tabs.length - 1,
+                  }[e.key];
+                  if (next === undefined) return;
+                  e.preventDefault();
+                  const [id] = tabs[next];
+                  openTab(id);
+                  document.getElementById(`tab-${id}`)?.focus();
+                }}
+              >
+                {tabs.map(([id, label, icon]) => (
                   <button
                     role="tab"
+                    id={`tab-${id}`}
+                    aria-controls="workspace-panel"
                     aria-selected={tab === id}
+                    tabIndex={tab === id ? 0 : -1}
                     className={tab === id ? "selected" : ""}
                     key={id}
-                    onClick={() => setTab(id)}
+                    onClick={() => openTab(id)}
                   >
+                    <Icon name={icon} size={15} />
                     {label}
                     {id === "review" && !!dashboard.reviews.length && (
                       <span className="tab-count">
@@ -793,483 +910,552 @@ function App() {
                     )}
                   </button>
                 ))}
+                <span className="tab-indicator" aria-hidden="true" />
+              </div>
+              {(["overview", "events", "evidence"] as Tab[]).includes(tab) && (
                 <label className="search-box">
-                  <Icon name="search" size={15} />
+                  <Icon name="search" size={17} />
                   <input
-                    aria-label="筛选当前主题"
-                    placeholder="筛选事件或证据"
+                    type="search"
+                    aria-label={tab === "evidence" ? "筛选证据" : "筛选事件"}
+                    placeholder={
+                      tab === "evidence"
+                        ? "筛选标题、来源或内容"
+                        : "筛选事件、状态或事实"
+                    }
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </label>
-              </div>
-              {tab === "overview" && (
-                <div className="overview-layout">
-                  <div className="overview-main">
-                    <div className="summary-line">
-                      <div>
-                        <b>
-                          {dashboard.events.length.toString().padStart(2, "0")}
-                        </b>
-                        <span>持续追踪的事件</span>
-                      </div>
-                      <div>
-                        <b>
-                          {currentEvidence.length.toString().padStart(2, "0")}
-                        </b>
-                        <span>当前来源的证据</span>
-                      </div>
-                      <div>
-                        <b>
-                          {dashboard.reviews.length.toString().padStart(2, "0")}
-                        </b>
-                        <span>等待人工判断</span>
-                      </div>
-                    </div>
-                    {fixture && (
-                      <div className="demo-strip">
-                        <div className="demo-strip-icon">
-                          <Icon name="help" size={19} />
-                        </div>
-                        <div>
-                          <strong>你现在看到的是模拟演示</strong>
-                          <p>
-                            ExampleSoft
-                            及三批新闻来自同学提交的仓库；“D验收”是开发验证主题。这些新闻可用规则演示，无需调用大模型。
-                          </p>
-                        </div>
-                        <button
-                          className="text-button"
-                          onClick={() => showDialog("help")}
+              )}
+              <div
+                key={tab}
+                className="workspace-panel"
+                data-view={tab}
+                id="workspace-panel"
+                role="tabpanel"
+                aria-labelledby={`tab-${tab}`}
+                tabIndex={0}
+              >
+                {tab === "overview" && (
+                  <div className="overview-layout">
+                    <div className="overview-main">
+                      <RadarStory
+                        metrics={[
+                          {
+                            value: dashboard.events.length,
+                            label: "追踪事件",
+                            open: () => openTab("events", true),
+                          },
+                          {
+                            value: currentEvidence.length,
+                            label: "当前来源证据",
+                            open: () => openTab("evidence", true),
+                          },
+                          {
+                            value: dashboard.reviews.length,
+                            label: "待审核",
+                            open: () => openTab("review", true),
+                          },
+                        ]}
+                      >
+                        <RadarChapter
+                          tone="signal"
+                          title="事件一览"
+                          label="查看全部事件"
+                          onOpen={() => openTab("events", true)}
                         >
-                          展开说明 <Icon name="arrow" size={14} />
-                        </button>
-                      </div>
-                    )}
-                    <section className="section-block">
-                      <div className="section-title">
-                        <h2>事件一览</h2>
-                        <span className="meta">同一事件的后续报道持续归档</span>
-                      </div>
-                      {eventList}
-                    </section>
-                    {fixture && (
-                      <section className="section-block">
-                        <div className="section-title">
-                          <h2>跟着演示走一遍</h2>
-                          <span className="meta">
-                            三批输入，观察状态如何演化
-                          </span>
-                        </div>
-                        <ol className="demo-steps">
-                          {demoSteps.map((s, i) => (
-                            <li
-                              key={s.id}
-                              className={
-                                done(s.id)
-                                  ? "done"
-                                  : nextDemo.id === s.id
-                                    ? "next"
-                                    : ""
-                              }
-                            >
-                              <span className="step-number">
-                                {done(s.id) ? (
-                                  <Icon name="check" size={15} />
-                                ) : (
-                                  String(i + 1).padStart(2, "0")
-                                )}
-                              </span>
-                              <div>
-                                <h3>{s.name}</h3>
-                                <p>{s.description}</p>
-                              </div>
+                          {eventList}
+                        </RadarChapter>
+                        <RadarChapter
+                          tone="evidence"
+                          title="近期证据"
+                          label="进入证据库"
+                          onOpen={() => openTab("evidence", true)}
+                        >
+                          {currentEvidence.length ? (
+                            [...currentEvidence]
+                              .sort(
+                                (a, b) =>
+                                  Date.parse(b.evidence.published_at) -
+                                  Date.parse(a.evidence.published_at),
+                              )
+                              .slice(0, 3)
+                              .map(
+                                ({
+                                  evidence: item,
+                                  status: evidenceStatus,
+                                }) => (
+                                  <button
+                                    className="story-evidence"
+                                    key={item.evidence_id}
+                                    onClick={() =>
+                                      setEvidenceId(item.evidence_id)
+                                    }
+                                  >
+                                    <Icon name="evidence" size={17} />
+                                    <span>
+                                      <strong>{headline(item.title)}</strong>
+                                      <small>
+                                        {item.source_id} ·{" "}
+                                        {date(item.published_at, false)}
+                                      </small>
+                                    </span>
+                                    {evidenceStatus === "review" && (
+                                      <span className="tag amber">待审核</span>
+                                    )}
+                                  </button>
+                                ),
+                              )
+                          ) : (
+                            <p className="blank-line">
+                              开始检查后，最新读入的证据会出现在这里。
+                            </p>
+                          )}
+                        </RadarChapter>
+                        <RadarChapter
+                          tone="review"
+                          title="变化与提醒"
+                          label="查看审核队列"
+                          onOpen={() => openTab("review", true)}
+                        >
+                          {!!dashboard.reviews.length && (
+                            <p className="review-callout">
+                              {dashboard.reviews.length} 条证据等待人工判断
+                            </p>
+                          )}
+                          {!notices.length ? (
+                            <p className="blank-line">
+                              有新的状态变化后，提醒会出现在这里。
+                            </p>
+                          ) : (
+                            notices.slice(0, 5).map((n) => (
                               <button
-                                disabled={busy || running}
-                                onClick={() =>
-                                  void action(() =>
-                                    startRun({ batch: s.id, provider: "mock" }),
-                                  )
+                                className="notification-row"
+                                key={n.notification_id}
+                                disabled={busy}
+                                onClick={() => void openEvent(n.event_id)}
+                              >
+                                <span
+                                  className={`notice-indicator ${n.action}`}
+                                />
+                                <span>
+                                  <strong>
+                                    {eventTitle(
+                                      dashboard.events.find(
+                                        (e) => e.event_id === n.event_id,
+                                      )?.title ?? "事件更新",
+                                    )}
+                                  </strong>
+                                  <small>{actionLabel(n.action)}</small>
+                                </span>
+                                <span className="meta">
+                                  {date(n.created_at)}
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </RadarChapter>
+                      </RadarStory>
+                      {fixture && (
+                        <section className="section-block">
+                          <div className="section-title">
+                            <h2>跟着演示走一遍</h2>
+                            <button
+                              className="text-button"
+                              onClick={() => showDialog("help")}
+                            >
+                              模拟演示说明
+                            </button>
+                          </div>
+                          <ol className="demo-steps">
+                            {demoSteps.map((s, i) => (
+                              <li
+                                key={s.id}
+                                className={
+                                  done(s.id)
+                                    ? "done"
+                                    : nextDemo.id === s.id
+                                      ? "next"
+                                      : ""
                                 }
                               >
-                                {done(s.id) ? "再次运行" : "运行这一步"}{" "}
-                                <Icon name="arrow" size={14} />
-                              </button>
-                            </li>
-                          ))}
-                        </ol>
-                      </section>
+                                <span className="step-number">
+                                  {done(s.id) ? (
+                                    <Icon name="check" size={15} />
+                                  ) : (
+                                    String(i + 1).padStart(2, "0")
+                                  )}
+                                </span>
+                                <div>
+                                  <h3>{s.name}</h3>
+                                  <p>{s.description}</p>
+                                </div>
+                                <button
+                                  disabled={busy || running}
+                                  onClick={() =>
+                                    void action(() =>
+                                      startRun({
+                                        batch: s.id,
+                                        provider: "mock",
+                                      }),
+                                    )
+                                  }
+                                >
+                                  {done(s.id) ? "再次运行" : "运行这一步"}{" "}
+                                  <Icon name="arrow" size={14} />
+                                </button>
+                              </li>
+                            ))}
+                          </ol>
+                        </section>
+                      )}
+                    </div>
+                    {runControls}
+                  </div>
+                )}
+                {tab === "events" && (
+                  <section className="section-block">
+                    <div className="section-title">
+                      <h2>全部事件</h2>
+                      <span className="meta">
+                        选择一行查看事实、时间线与依据
+                      </span>
+                    </div>
+                    {eventList}
+                  </section>
+                )}
+                {tab === "evidence" && (
+                  <section className="section-block">
+                    <div className="section-title">
+                      <h2>证据库</h2>
+                      <span className="meta">包括被排除、重复与待审的信息</span>
+                    </div>
+                    <label className="check-row">
+                      <input
+                        type="checkbox"
+                        checked={showHistorySources}
+                        onChange={(e) =>
+                          setShowHistorySources(e.target.checked)
+                        }
+                      />
+                      显示全部来源的历史记录
+                    </label>
+                    {!evidenceRows.length ? (
+                      <Empty
+                        title={
+                          search ? "没有符合筛选条件的证据" : "还没有读入的新闻"
+                        }
+                        detail={
+                          search
+                            ? "试试其他关键词，或查阅全部来源的历史记录。"
+                            : "运行一次检查，或手动提交一条新闻。"
+                        }
+                      />
+                    ) : (
+                      <div className="evidence-table">
+                        {evidenceRows.map((v, i) => {
+                          const duplicate =
+                            v.evidence.canonical_evidence_id !==
+                              v.evidence.evidence_id &&
+                            !v.assessment &&
+                            v.status === "completed";
+                          const label =
+                            v.status === "review"
+                              ? "待审核"
+                              : v.status === "failed"
+                                ? "失败"
+                                : duplicate
+                                  ? "重复报道"
+                                  : v.assessment?.is_relevant === false
+                                    ? "已排除"
+                                    : "已处理";
+                          return (
+                            <button
+                              className="evidence-row"
+                              key={v.evidence.evidence_id}
+                              onClick={() =>
+                                setEvidenceId(v.evidence.evidence_id)
+                              }
+                            >
+                              <span className="row-index">
+                                {String(i + 1).padStart(2, "0")}
+                              </span>
+                              <span>
+                                <strong>{headline(v.evidence.title)}</strong>
+                                <small>
+                                  {v.evidence.source_id} ·{" "}
+                                  {date(v.evidence.published_at)}
+                                </small>
+                              </span>
+                              <span
+                                className={`tag ${v.status === "review" ? "amber" : ""}`}
+                              >
+                                {label}
+                              </span>
+                              <Icon name="arrow" size={15} />
+                            </button>
+                          );
+                        })}
+                      </div>
                     )}
+                  </section>
+                )}
+                {tab === "review" && (
+                  <ReviewPanel
+                    key={selected}
+                    topicId={selected}
+                    reviews={dashboard.reviews}
+                    resolutions={dashboard.review_resolutions}
+                    events={dashboard.events}
+                    disabled={busy || running}
+                    action={action}
+                    onSaved={async () => {
+                      await refresh();
+                      setToast("审核已记录，事件与历史已刷新。");
+                    }}
+                  />
+                )}
+                {tab === "sources" && (
+                  <div className="sources-layout">
                     <section className="section-block">
                       <div className="section-title">
-                        <h2>最近的提醒</h2>
-                        <span className="meta">只在状态保存后生成</span>
+                        <h2>信息来源</h2>
+                        <button
+                          disabled={busy || running}
+                          onClick={() => showDialog("source")}
+                        >
+                          <Icon name="plus" size={15} /> 添加来源
+                        </button>
                       </div>
-                      {!notices.length ? (
-                        <p className="blank-line">
-                          有新的状态变化后，提醒会出现在这里。
-                        </p>
-                      ) : (
-                        notices.slice(0, 5).map((n) => (
-                          <button
-                            className="notification-row"
-                            key={n.notification_id}
-                            onClick={() => void openEvent(n.event_id)}
-                          >
-                            <span className={`notice-indicator ${n.action}`} />
-                            <span>
-                              <strong>
-                                {eventTitle(
-                                  dashboard.events.find(
-                                    (e) => e.event_id === n.event_id,
-                                  )?.title ?? "事件更新",
-                                )}
-                              </strong>
-                              <small>
-                                {n.reason_codes.includes("human_review")
-                                  ? "人工审核后更新"
-                                  : n.reason_codes.includes("major_milestone")
-                                    ? "事件状态出现重大进展"
-                                    : n.reason_codes.includes("event_created")
-                                      ? "发现一个独立事件"
-                                      : "补充了新的事件信息"}
-                              </small>
-                            </span>
+                      <p className="section-description">
+                        只有你勾选并保存的来源会进入这个主题的检查流程。
+                      </p>
+                      <div className="source-list">
+                        {sources
+                          .filter(
+                            (s) =>
+                              !s.source_id.startsWith("gnews_") ||
+                              s.source_id === `gnews_${selected.slice(0, 8)}` ||
+                              approved.includes(s.source_id),
+                          )
+                          .map((s) => (
+                            <label
+                              className={`source-row ${approved.includes(s.source_id) ? "checked" : ""}`}
+                              key={s.source_id}
+                            >
+                              <input
+                                type="checkbox"
+                                disabled={busy || running}
+                                checked={approved.includes(s.source_id)}
+                                onChange={(e) =>
+                                  setApproved(
+                                    e.target.checked
+                                      ? [...approved, s.source_id]
+                                      : approved.filter(
+                                          (id) => id !== s.source_id,
+                                        ),
+                                  )
+                                }
+                              />
+                              <span className="source-icon">
+                                <Icon
+                                  name={
+                                    s.type === "rss"
+                                      ? "sources"
+                                      : s.type === "manual"
+                                        ? "plus"
+                                        : "evidence"
+                                  }
+                                  size={19}
+                                />
+                              </span>
+                              <span>
+                                <strong>{s.name}</strong>
+                                <small>{s.endpoint}</small>
+                                <small className="source-id">
+                                  {s.source_id}
+                                </small>
+                              </span>
+                              <span className="tag">
+                                {
+                                  {
+                                    fixture: "模拟来源",
+                                    replay: "离线回放",
+                                    rss: "RSS",
+                                    manual: "手动录入",
+                                  }[s.type]
+                                }
+                              </span>
+                            </label>
+                          ))}
+                      </div>
+                      <div className="section-actions">
+                        <button
+                          className="primary"
+                          disabled={busy || running}
+                          onClick={() =>
+                            void action(async () => {
+                              await api(
+                                `/topics/${selected}/sources`,
+                                json("PUT", { approved_source_ids: approved }),
+                              );
+                              await refresh(true);
+                              setTopics(await api<Topic[]>("/topics"));
+                              setToast("已保存这个主题的信息来源。");
+                            })
+                          }
+                        >
+                          保存批准来源 <Icon name="check" size={15} />
+                        </button>
+                      </div>
+                    </section>
+                    <aside className="context-panel">
+                      <span className="kicker">YOUR PREFERENCES</span>
+                      <h3>提醒偏好</h3>
+                      <label>
+                        何时提醒
+                        <select
+                          value={dashboard.topic.notification_preferences}
+                          disabled={busy || running}
+                          onChange={(e) =>
+                            void action(async () => {
+                              await api(
+                                `/topics/${selected}`,
+                                json("PATCH", {
+                                  notification_preferences: e.target.value,
+                                }),
+                              );
+                              await refresh();
+                            })
+                          }
+                        >
+                          <option value="standard">重大进展即时提醒</option>
+                          <option value="digest_only">全部进入更新汇总</option>
+                        </select>
+                      </label>
+                      <p className="hint">
+                        普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。
+                      </p>
+                      <div className="context-divider" />
+                      <h3>想测试体育语料？</h3>
+                      <p className="hint">
+                        单独创建回放主题，避免混入模拟新闻和实时订阅。
+                      </p>
+                      <button
+                        className="text-button"
+                        onClick={() => showDialog("replay")}
+                      >
+                        准备回放工作区 <Icon name="arrow" size={14} />
+                      </button>
+                    </aside>
+                  </div>
+                )}
+                {tab === "activity" && (
+                  <div className="activity-layout">
+                    <section className="run-list">
+                      <span className="kicker">SESSIONS</span>
+                      <h2>检查历史</h2>
+                      {dashboard.recent_runs.map((r) => (
+                        <button
+                          className={`session-row ${run?.run.run_id === r.run_id ? "selected" : ""}`}
+                          aria-pressed={run?.run.run_id === r.run_id}
+                          disabled={busy}
+                          key={r.run_id}
+                          onClick={() =>
+                            void action(async () => {
+                              const detail = await api<RunDetail>(
+                                `/runs/${r.run_id}`,
+                              );
+                              viewedRun.current = r.run_id;
+                              setRun(detail);
+                            })
+                          }
+                        >
+                          <span
+                            className={`status-dot ${r.status === "completed" ? "online" : active(r.status) ? "working" : ""}`}
+                          />
+                          <span>
+                            <strong>{providerLabel(r.provider)}</strong>
+                            <small>
+                              {date(r.started_at)} · {status(r.status)}
+                            </small>
+                          </span>
+                          <Icon name="arrow" size={14} />
+                        </button>
+                      ))}
+                    </section>
+                    <section className="run-detail">
+                      {run ? (
+                        <>
+                          <div className="section-title">
+                            <h2>
+                              {providerLabel(run.run.provider)}{" "}
+                              <span className="tag">
+                                {status(run.run.status)}
+                              </span>
+                            </h2>
                             <span className="meta">
-                              {actionLabel(n.action)}
-                              <small>{date(n.created_at)}</small>
+                              {date(run.run.started_at)}
                             </span>
-                          </button>
-                        ))
+                          </div>
+                          <div className="run-summary">
+                            读取 <b>{run.run.counts.fetched ?? 0}</b> · 状态更新{" "}
+                            <b>{run.run.counts.committed ?? 0}</b> · 跳过{" "}
+                            <b>{run.run.counts.skipped ?? 0}</b> · 待审{" "}
+                            <b>{run.run.counts.review ?? 0}</b>
+                          </div>
+                          {run.run.error != null && (
+                            <pre className="error">{pretty(run.run.error)}</pre>
+                          )}
+                          <ol className="trace-list">
+                            {run.steps.map((s) => (
+                              <li key={s.step_id}>
+                                <span className={`trace-dot ${s.status}`} />
+                                <details>
+                                  <summary>
+                                    <span>{stepLabel(s.step_name)}</span>
+                                    <span className="meta">
+                                      {status(s.status)} · {s.attempt} 次
+                                    </span>
+                                  </summary>
+                                  <div className="trace-human">
+                                    {s.evidence_id && (
+                                      <button
+                                        className="text-button"
+                                        onClick={() =>
+                                          setEvidenceId(s.evidence_id!)
+                                        }
+                                      >
+                                        查看处理的新闻{" "}
+                                        <Icon name="arrow" size={13} />
+                                      </button>
+                                    )}
+                                    <small>
+                                      {date(s.started_at)} →{" "}
+                                      {date(s.completed_at)}
+                                    </small>
+                                    <pre>{pretty(s.error ?? s.decision)}</pre>
+                                  </div>
+                                </details>
+                              </li>
+                            ))}
+                          </ol>
+                          <details className="quiet-details">
+                            <summary>完整运行记录</summary>
+                            <pre>{pretty(run.run)}</pre>
+                          </details>
+                        </>
+                      ) : (
+                        <Empty
+                          title="还没有运行记录"
+                          detail="每次检查都会留下有顺序的步骤、处理结果和错误。"
+                        />
                       )}
                     </section>
                   </div>
-                  {runControls}
-                </div>
-              )}
-              {tab === "events" && (
-                <section className="section-block">
-                  <div className="section-title">
-                    <h2>全部事件</h2>
-                    <span className="meta">选择一行查看事实、时间线与依据</span>
-                  </div>
-                  {eventList}
-                </section>
-              )}
-              {tab === "evidence" && (
-                <section className="section-block">
-                  <div className="section-title">
-                    <h2>证据库</h2>
-                    <span className="meta">包括被排除、重复与待审的信息</span>
-                  </div>
-                  <label className="check-row">
-                    <input
-                      type="checkbox"
-                      checked={showHistorySources}
-                      onChange={(e) => setShowHistorySources(e.target.checked)}
-                    />
-                    显示全部来源的历史记录
-                  </label>
-                  {!evidenceRows.length ? (
-                    <Empty
-                      title="还没有读入的新闻"
-                      detail="运行一次检查，或手动提交一条新闻。"
-                    />
-                  ) : (
-                    <div className="evidence-table">
-                      {evidenceRows.map((v, i) => {
-                        const duplicate =
-                          v.evidence.canonical_evidence_id !==
-                            v.evidence.evidence_id &&
-                          !v.assessment &&
-                          v.status === "completed";
-                        const label =
-                          v.status === "review"
-                            ? "待审核"
-                            : v.status === "failed"
-                              ? "失败"
-                              : duplicate
-                                ? "重复报道"
-                                : v.assessment?.is_relevant === false
-                                  ? "已排除"
-                                  : "已处理";
-                        return (
-                          <button
-                            className="evidence-row"
-                            key={v.evidence.evidence_id}
-                            onClick={() =>
-                              setEvidenceId(v.evidence.evidence_id)
-                            }
-                          >
-                            <span className="row-index">
-                              {String(i + 1).padStart(2, "0")}
-                            </span>
-                            <span>
-                              <strong>{headline(v.evidence.title)}</strong>
-                              <small>
-                                {v.evidence.source_id} ·{" "}
-                                {date(v.evidence.published_at)}
-                              </small>
-                            </span>
-                            <span
-                              className={`tag ${v.status === "review" ? "amber" : ""}`}
-                            >
-                              {label}
-                            </span>
-                            <Icon name="arrow" size={15} />
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              )}
-              {tab === "review" && (
-                <ReviewPanel
-                  key={selected}
-                  topicId={selected}
-                  reviews={dashboard.reviews}
-                  resolutions={dashboard.review_resolutions}
-                  events={dashboard.events}
-                  disabled={busy || running}
-                  action={action}
-                  onSaved={async () => {
-                    await refresh();
-                    setToast("审核已记录，事件与历史已刷新。");
-                  }}
-                />
-              )}
-              {tab === "sources" && (
-                <div className="sources-layout">
-                  <section className="section-block">
-                    <div className="section-title">
-                      <h2>信息来源</h2>
-                      <button
-                        disabled={busy || running}
-                        onClick={() => showDialog("source")}
-                      >
-                        <Icon name="plus" size={15} /> 添加来源
-                      </button>
-                    </div>
-                    <p className="section-description">
-                      只有你勾选并保存的来源会进入这个主题的检查流程。
-                    </p>
-                    <div className="source-list">
-                      {sources
-                        .filter(
-                          (s) =>
-                            !s.source_id.startsWith("gnews_") ||
-                            s.source_id === `gnews_${selected.slice(0, 8)}` ||
-                            approved.includes(s.source_id),
-                        )
-                        .map((s) => (
-                          <label
-                            className={`source-row ${approved.includes(s.source_id) ? "checked" : ""}`}
-                            key={s.source_id}
-                          >
-                            <input
-                              type="checkbox"
-                              disabled={busy || running}
-                              checked={approved.includes(s.source_id)}
-                              onChange={(e) =>
-                                setApproved(
-                                  e.target.checked
-                                    ? [...approved, s.source_id]
-                                    : approved.filter(
-                                        (id) => id !== s.source_id,
-                                      ),
-                                )
-                              }
-                            />
-                            <span className="source-icon">
-                              <Icon
-                                name={
-                                  s.type === "rss"
-                                    ? "sources"
-                                    : s.type === "manual"
-                                      ? "plus"
-                                      : "evidence"
-                                }
-                                size={19}
-                              />
-                            </span>
-                            <span>
-                              <strong>{s.name}</strong>
-                              <small>{s.endpoint}</small>
-                              <small className="source-id">{s.source_id}</small>
-                            </span>
-                            <span className="tag">
-                              {
-                                {
-                                  fixture: "模拟来源",
-                                  replay: "离线回放",
-                                  rss: "RSS",
-                                  manual: "手动录入",
-                                }[s.type]
-                              }
-                            </span>
-                          </label>
-                        ))}
-                    </div>
-                    <div className="section-actions">
-                      <button
-                        className="primary"
-                        disabled={busy || running}
-                        onClick={() =>
-                          void action(async () => {
-                            await api(
-                              `/topics/${selected}/sources`,
-                              json("PUT", { approved_source_ids: approved }),
-                            );
-                            await refresh();
-                            setTopics(await api<Topic[]>("/topics"));
-                            setToast("已保存这个主题的信息来源。");
-                          })
-                        }
-                      >
-                        保存批准来源 <Icon name="check" size={15} />
-                      </button>
-                    </div>
-                  </section>
-                  <aside className="context-panel">
-                    <span className="kicker">YOUR PREFERENCES</span>
-                    <h3>提醒偏好</h3>
-                    <label>
-                      何时提醒
-                      <select
-                        value={dashboard.topic.notification_preferences}
-                        disabled={busy || running}
-                        onChange={(e) =>
-                          void action(async () => {
-                            await api(
-                              `/topics/${selected}`,
-                              json("PATCH", {
-                                notification_preferences: e.target.value,
-                              }),
-                            );
-                            await refresh();
-                          })
-                        }
-                      >
-                        <option value="standard">重大进展即时提醒</option>
-                        <option value="digest_only">全部进入更新汇总</option>
-                      </select>
-                    </label>
-                    <p className="hint">
-                      普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。
-                    </p>
-                    <div className="context-divider" />
-                    <h3>想测试体育语料？</h3>
-                    <p className="hint">
-                      单独创建回放主题，避免混入模拟新闻和实时订阅。
-                    </p>
-                    <button
-                      className="text-button"
-                      onClick={() => showDialog("replay")}
-                    >
-                      准备回放工作区 <Icon name="arrow" size={14} />
-                    </button>
-                  </aside>
-                </div>
-              )}
-              {tab === "activity" && (
-                <div className="activity-layout">
-                  <section className="run-list">
-                    <span className="kicker">SESSIONS</span>
-                    <h2>检查历史</h2>
-                    {dashboard.recent_runs.map((r) => (
-                      <button
-                        className={`session-row ${run?.run.run_id === r.run_id ? "selected" : ""}`}
-                        key={r.run_id}
-                        onClick={() =>
-                          void action(async () =>
-                            setRun(await api<RunDetail>(`/runs/${r.run_id}`)),
-                          )
-                        }
-                      >
-                        <span
-                          className={`status-dot ${r.status === "completed" ? "online" : active(r.status) ? "working" : ""}`}
-                        />
-                        <span>
-                          <strong>{providerLabel(r.provider)}</strong>
-                          <small>
-                            {date(r.started_at)} · {status(r.status)}
-                          </small>
-                        </span>
-                        <Icon name="arrow" size={14} />
-                      </button>
-                    ))}
-                  </section>
-                  <section className="run-detail">
-                    {run ? (
-                      <>
-                        <div className="section-title">
-                          <h2>
-                            {providerLabel(run.run.provider)}{" "}
-                            <span className="tag">
-                              {status(run.run.status)}
-                            </span>
-                          </h2>
-                          <span className="meta">
-                            {date(run.run.started_at)}
-                          </span>
-                        </div>
-                        <div className="run-summary">
-                          读取 <b>{run.run.counts.fetched ?? 0}</b> · 状态更新{" "}
-                          <b>{run.run.counts.committed ?? 0}</b> · 跳过{" "}
-                          <b>{run.run.counts.skipped ?? 0}</b> · 待审{" "}
-                          <b>{run.run.counts.review ?? 0}</b>
-                        </div>
-                        {run.run.error != null && (
-                          <pre className="error">{pretty(run.run.error)}</pre>
-                        )}
-                        <ol className="trace-list">
-                          {run.steps.map((s) => (
-                            <li key={s.step_id}>
-                              <span className={`trace-dot ${s.status}`} />
-                              <details>
-                                <summary>
-                                  <span>{stepLabel(s.step_name)}</span>
-                                  <span className="meta">
-                                    {status(s.status)} · {s.attempt} 次
-                                  </span>
-                                </summary>
-                                <div className="trace-human">
-                                  {s.evidence_id && (
-                                    <button
-                                      className="text-button"
-                                      onClick={() =>
-                                        setEvidenceId(s.evidence_id!)
-                                      }
-                                    >
-                                      查看处理的新闻{" "}
-                                      <Icon name="arrow" size={13} />
-                                    </button>
-                                  )}
-                                  <small>
-                                    {date(s.started_at)} →{" "}
-                                    {date(s.completed_at)}
-                                  </small>
-                                  <pre>{pretty(s.error ?? s.decision)}</pre>
-                                </div>
-                              </details>
-                            </li>
-                          ))}
-                        </ol>
-                        <details className="quiet-details">
-                          <summary>完整运行记录</summary>
-                          <pre>{pretty(run.run)}</pre>
-                        </details>
-                      </>
-                    ) : (
-                      <Empty
-                        title="还没有运行记录"
-                        detail="每次检查都会留下有顺序的步骤、处理结果和错误。"
-                      />
-                    )}
-                  </section>
-                </div>
-              )}
+                )}
+              </div>
             </>
           )}
           <footer>
@@ -1381,7 +1567,6 @@ function App() {
                 action(() =>
                   startRun({
                     manualItems: [item],
-                    batch: replay ? "all" : "empty",
                   }),
                 )
               }

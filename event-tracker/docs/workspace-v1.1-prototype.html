@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TraceRadar v1.1 · 分镜与原型</title>
+<style>
+  :root { color-scheme: dark; --ink: #edf8f0; --muted: #acc3b7; --line: #345347; --green: #a7f1bc; font: 16px/1.6 "Segoe UI", "Microsoft YaHei", sans-serif; background:#0d201a; color:var(--ink); }
+  * { box-sizing:border-box; }
+  body { max-width:1440px; margin:auto; padding:clamp(18px,5vw,72px); }
+  header { max-width:900px; }
+  header p { max-width:68ch; }
+  h1,h2,h3,p { margin:0; }
+  h1 { font-size:clamp(2.2rem,7vw,4.8rem); line-height:1.1; letter-spacing:-.055em; margin:9px 0 14px; }
+  h2 { font-size:clamp(1.35rem,3vw,2rem); margin-bottom:12px; }
+  h3 { font-size:1.05rem; }
+  p { color:var(--muted); }
+  small,.mono { font-family:ui-monospace,monospace; color:var(--green); }
+  a { color:var(--green); }
+  nav { display:flex; gap:12px 22px; flex-wrap:wrap; border-block:1px solid var(--line); margin:30px 0; padding:14px 0; }
+  section { margin-block:34px; scroll-margin-top:12px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%, 285px),1fr)); gap:16px; }
+  article { border:1px solid var(--line); border-radius:12px; padding:16px; background:#122a22; display:grid; gap:10px; }
+  .frame { min-height:180px; display:grid; grid-template-columns:16% 1fr; border-radius:8px; overflow:hidden; border:1px solid #89a999; background:#edf2ef; color:#102923; position:relative; }
+  .rail { background:#15362b; display:flex; gap:9px; flex-direction:column; padding:11px 7px; }
+  .rail i,.line { height:5px; border-radius:4px; background:#86ac99; }
+  .rail i:nth-child(2) { background:var(--green); }
+  .scene { padding:10px; display:grid; align-content:start; gap:6px; min-width:0; }
+  .scene > b { font-size:.82rem; }
+  .mock-tabs { display:flex; gap:5px; border-bottom:1px solid #aabfb3; padding-bottom:4px; }
+  .mock-tabs i { flex:1; height:4px; background:#b3c7bc; border-radius:4px; }
+  .mock-tabs i.active { background:#20745a; }
+  .row { display:flex; align-items:stretch; gap:6px; min-height:25px; }
+  .block { flex:1; min-width:0; display:grid; gap:5px; padding:5px; border:1px solid #bdcec4; background:#fbfdfa; border-radius:4px; font-size:.64rem; }
+  .block b { font-weight:650; }
+  .block.dark { color:white; background:#194236; border-color:#194236; }
+  .block.dark .line { background:#579479; }
+  .block.dim { background:#dce9e1; }
+  .block.amber { border-color:#b69759; background:#f7edd7; }
+  .w2 { flex:2; }
+  .w3 { flex:3; }
+  .terminal { display:grid; place-items:center; background:#193e33; border-radius:5px; min-height:65px; }
+  .radar { border:1px solid #a7f1bc; border-radius:50%; width:58px; aspect-ratio:1; display:grid; place-items:center; background:repeating-radial-gradient(circle,transparent 0 7px,#92ccaa55 8px 9px); }
+  .dot { width:10px; height:10px; background:var(--green); border:2px solid #1b6149; border-radius:3px; display:block; }
+  .trace { border-left:2px solid #6d9984; margin-left:4px; padding:3px 0 3px 7px; }
+  .trace .dot { float:left; margin:4px 5px 0 -13px; }
+  .scrim { position:absolute; inset:0; background:#10292370; display:grid; place-items:center; }
+  .scrim .block { width:67%; padding:9px; box-shadow:0 10px 20px #10292355; }
+  .scrim.sheet { justify-items:end; }
+  .scrim.sheet .block { height:100%; border-radius:0; width:75%; padding:10px; }
+  .sheet .block .row { align-self:start; }
+  .tag { background:#daede0; color:#185b43; border-radius:3px; font-size:.64rem; padding:2px 5px; width:max-content; }
+  .notes { font-size:.875rem; }
+  #intro .frame { max-width:720px; }
+  .timing { color:#d4f5df; font-size:.8125rem; }
+  ul { padding-inline-start:24px; color:var(--muted); }
+  footer { border-top:1px solid var(--line); padding-top:16px; }
+</style>
+
+<header>
+  <small>TRACERADAR / v1.1</small>
+  <h1>把信号追成证据</h1>
+  <p>滚动依次看清追踪目标、发生的事件、判断依据和需要人工确认的变化。任务视图延续同一条绿色定位线，抽屉从列表打开单条档案。</p>
+</header>
+<nav aria-label="原型目录"><a href="#intro">开始使用</a><a href="#story">概览四镜</a><a href="#tabs">工作视图</a><a href="#overlays">详情和表单</a><a href="#motion">转场参数</a></nav>
+
+<section id="intro">
+  <h2>开始使用</h2>
+  <div class="grid">
+    <article>
+      <h3>空工作区</h3>
+      <div class="frame" aria-label="左侧主题栏，右侧演示和新建主题入口">
+        <div class="rail"><i></i><i></i></div><div class="scene"><b>让进展，有迹可循。</b><div class="block dark"><b>从一条信息开始</b><i class="line"></i><span class="tag">创建三步演示</span><span>新建主题</span></div></div>
+      </div>
+      <p class="notes">新建主题成功后定位到信息源。模拟演示直接进入概览并准备第一批新闻。</p>
+    </article>
+  </div>
+</section>
+
+<section id="story">
+  <h2>概览 · 四个连续镜头</h2>
+  <div class="grid">
+    <article>
+      <h3>追踪概况</h3>
+      <div class="frame" aria-label="主题标题、三项计数、雷达图盘和检查表单">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>ExampleSoft · 三步演示</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="row"><div class="block dark w3"><b>追踪概况</b><div class="terminal"><div class="radar"><i class="dot"></i></div></div><span>02 事件　07 证据　02 待审</span></div><div class="block"><b>检查新进展</b><i class="line"></i><span class="tag">开始检查</span></div></div></div>
+      </div>
+      <p class="notes">计数同时是导航入口。右侧是运行控制，手机端移到概览图盘前。</p>
+      <span class="timing">进入概览 · 360 ms · 扫描弧掠过图盘</span>
+    </article>
+    <article>
+      <h3>事件一览</h3>
+      <div class="frame" aria-label="垂直定位线连接事件标题和两条事件摘要">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>事件一览</b><div class="trace"><i class="dot"></i><div class="block"><b>事件 A</b><span class="tag">已修复</span></div><div class="block"><b>事件 B</b><i class="line"></i></div></div></div>
+      </div>
+      <p class="notes">标记脱离图盘并缩至左侧轨道。事件标题先出现，记录随后跟上。点击一行打开档案。</p>
+      <span class="timing">图盘 → 圆点 · 随滚动 · 可逆</span>
+    </article>
+    <article>
+      <h3>近期证据</h3>
+      <div class="frame" aria-label="方形定位点后列出新闻标题和来源">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>近期证据</b><div class="trace"><i class="dot"></i><div class="block"><b>官方补丁公告</b><i class="line"></i></div><div class="block"><b>最新研究报告</b><i class="line"></i></div></div></div>
+      </div>
+      <p class="notes">信号沿轨道转入方形定位点。证据预览保留标题、来源、日期和待审核状态。</p>
+      <span class="timing">圆点 → 方点 · 65 ms 层间错峰</span>
+    </article>
+    <article>
+      <h3>变化与提醒</h3>
+      <div class="frame" aria-label="菱形定位点、待审核计数和提醒列表">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>变化与提醒</b><div class="trace"><i class="dot" style="rotate:45deg"></i><div class="block amber"><b>2 条证据等待人工判断</b></div><div class="block"><b>事件 A · 重大进展</b><i class="line"></i></div></div></div>
+      </div>
+      <p class="notes">信号抵达琥珀色定位点。待审提示在通知前出现，点击通知回到对应事件档案。</p>
+      <span class="timing">方点 → 菱形定位 · 同一滚动进度</span>
+    </article>
+  </div>
+</section>
+
+<section id="tabs">
+  <h2>工作视图</h2>
+  <div class="grid">
+    <article><h3>事件</h3>
+      <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i class="active"></i><i></i><i></i><i></i><i></i></div><b>全部事件</b><div class="block dim">按名称、状态或事实筛选</div><div class="block">事件 A　已修复</div><div class="block">事件 B　已披露</div></div></div>
+      <p class="notes">保留编号、事实摘要与状态。空匹配显示换词提示。</p></article>
+    <article><h3>证据库</h3>
+      <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i></i><i class="active"></i><i></i><i></i><i></i></div><b>证据库</b><div class="block dim">□ 显示全部来源历史</div><div class="block">新闻标题　已处理</div><div class="block amber">矛盾报道　待审核</div></div></div>
+      <p class="notes">筛选标题、来源和内容。每条记录可查看原文和处理判断。</p></article>
+    <article><h3>待审核</h3>
+      <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i></i><i></i><i class="active"></i><i></i><i></i></div><b>待审核</b><div class="row"><div class="block amber w2"><b>冲突证据</b><i class="line"></i><span>保留原状态　采纳修正</span></div><div class="block">历史决定</div></div></div></div>
+      <p class="notes">琥珀色标记冲突。保存后同步更新队列、事件事实和历史。</p></article>
+    <article><h3>信息源</h3>
+      <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i></i><i></i><i></i><i class="active"></i><i></i></div><b>信息来源</b><div class="row"><div class="block w2"><span>☑ RSS　☐ 手动来源</span><span class="tag">保存批准来源</span></div><div class="block">提醒偏好<br>准备回放</div></div></div></div>
+      <p class="notes">来源注册和批准分成两个操作。保存后更新概览运行方式。</p></article>
+    <article><h3>运行记录</h3>
+      <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i></i><i></i><i></i><i></i><i class="active"></i></div><b>运行记录</b><div class="row"><div class="block dim">本次会话<br>历史会话</div><div class="block w2"><b>读取 → 评估 → 保存</b><i class="line"></i><i class="line"></i></div></div></div></div>
+      <p class="notes">左侧切换会话，右侧展开步骤与输入证据。轮询保留用户选中的历史会话。</p></article>
+    <article><h3>手机布局</h3>
+      <div class="frame" style="grid-template-columns:1fr"><div class="rail" style="flex-direction:row"><i style="width:30%"></i><i style="width:14%"></i></div><div class="scene"><b>主题标题</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="block dim">筛选事件</div><div class="block">检查控制</div><div class="block dark">雷达概况</div></div></div>
+      <p class="notes">主题和标签可横滑，筛选改为独立一行，顶栏提供新建与回放入口。</p></article>
+  </div>
+</section>
+
+<section id="overlays">
+  <h2>详情、配置与表单</h2>
+  <div class="grid">
+    <article><h3>事件档案</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>事件列表</b><div class="block">事件 A</div></div><div class="scrim sheet"><div class="block"><b>事件档案　　　　　 ×</b><div class="row"><div class="block w2">事实<br>时间线<br>历史</div><div class="block dim">证据索引</div></div></div></div></div><p class="notes">抽屉从右侧进入，保留列表位置。按事实编号打开对应证据。</p></article>
+    <article><h3>新闻与判断依据</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>证据库 / 事件档案</b></div><div class="scrim"><div class="block"><b>新闻与判断依据　×</b><span>来源 · 发布时间</span><i class="line"></i><span>原始链接　处理理由</span></div></div></div><p class="notes">居中浮层支持从证据库或档案进入。关闭后回到上一层。</p></article>
+    <article><h3>新建主题</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>主题工作区</b></div><div class="scrim"><div class="block"><b>新建追踪主题</b><span>名称　________________</span><span>你想持续了解什么？</span><span class="tag">创建主题</span></div></div></div><p class="notes">定义要追踪的问题，随后选择来源。</p></article>
+    <article><h3>编辑追踪目标</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>已有追踪主题</b></div><div class="scrim"><div class="block"><b>编辑追踪目标</b><span>主题名称</span><span>现有追踪目标与关注范围</span><span class="tag">保存追踪目标</span></div></div></div><p class="notes">保存后刷新主题标题和描述。</p></article>
+    <article><h3>添加信息来源</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>信息来源</b></div><div class="scrim"><div class="block"><b>添加信息来源</b><span>类型 · 来源标识</span><span>名称 · RSS 地址</span><span class="tag">添加来源</span></div></div></div><p class="notes">返回信息源列表勾选批准。</p></article>
+    <article><h3>手动提交新闻</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>检查控制面板</b></div><div class="scrim"><div class="block"><b>提交一条新闻</b><span>已批准的手动来源</span><span>标题 · 时间 · 链接 · 原文</span><span class="tag">提交并分析</span></div></div></div><p class="notes">提交新闻的运行只读取对应手动来源。</p></article>
+    <article><h3>模型配置</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>回放工作区</b></div><div class="scrim"><div class="block"><b>配置真实模型</b><span>服务地址 · API Key · 模型</span><span class="tag">保存配置</span></div></div></div><p class="notes">先保存服务配置，再启动真实模型分析。</p></article>
+    <article><h3>准备语料回放</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>主题工作区</b></div><div class="scrim"><div class="block"><b>准备新闻回放</b><span>◉ LBJ　○ NBA</span><span>回放主题的追踪目标</span><span class="tag">准备回放工作区</span></div></div></div><p class="notes">进入独立的回放主题，通过截止时间推进。</p></article>
+    <article><h3>演示说明</h3><div class="frame"><div class="rail"><i></i><i></i></div><div class="scene"><b>ExampleSoft</b></div><div class="scrim"><div class="block"><b>模拟演示</b><div class="row"><span class="tag">发现</span><span class="tag">补充</span><span class="tag">修复</span></div><span>新建干净的演示</span></div></div></div><p class="notes">三批模拟输入分别验证建档、关联更新和冲突审核。</p></article>
+  </div>
+</section>
+
+<section id="motion">
+  <h2>转场参数</h2>
+  <ul>
+    <li>概览使用 ScrollTrigger 驱动同一个雷达标记。定位以窗口高度的 56% 为参考，按各段位置计算。段落标题和内容在进入视口时错峰 65 ms，单项 480 ms。</li>
+    <li>工作视图共享一个标签下划线，320 ms 内移动至目标。正文同步在 360 ms 内落位。键盘可用左右键、Home 和 End 切换。</li>
+    <li>事件抽屉水平移入，表单和证据弹层垂直移入，均为 280 ms。遮罩独立淡入 240 ms。手动关闭时沿原方向退出，耗时 170 ms。</li>
+    <li>窄屏使用静态定位点。开启减少动态效果时保留静态图盘、标签和全部入口。</li>
+    <li>标题和拉丁界面文字用 Host Grotesk，数字与时间戳用 IBM Plex Mono，中文回退到系统无衬线字体。</li>
+  </ul>
+</section>
+<footer><p>动效参考 <a href="https://tympanus.net/codrops/2024/11/20/consecutive-scroll-animations-with-one-element/">Codrops · Consecutive Scroll Animations with One Element</a>。字体参考 <a href="https://fontesk.com/host-grotesk-typeface/">Fontesk · Host Grotesk</a> 和 <a href="https://github.com/IBM/plex">IBM Plex</a>。</p></footer>
+</html>

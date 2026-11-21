@@ -4,8 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 from app.core import Settings,AppError
 from app.domain import ModelDiscoveryInput,ModelSettingsInput,Assessment,Association
-from app.llm import QwenProvider,MockProvider,provider_error
-from app.model_settings import discover_models,save_model_settings
+from app.llm import QwenProvider,MockProvider,get_provider,provider_error
+from app.model_settings import discover_models,save_model_settings,validate_address
 from app.main import create_app
 from test_workflow import topic,run
 from test_connectors_and_pipeline import _wait_run
@@ -42,6 +42,21 @@ def test_deepseek_service_label_is_rejected_before_save(tmp_path):
         save_model_settings(settings,ModelSettingsInput(base_url='https://api.deepseek.com',model='Deepseek'))
     assert caught.value.code=='INVALID_MODEL_CONFIG'
     assert not settings.env_path.exists()
+
+
+@pytest.mark.parametrize('address', ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1'])
+def test_local_ollama_loopback_is_allowed(address):
+    assert validate_address(address) == address
+    settings = Settings(api_key='ollama', base_url=address, model='qwen3:4b')
+    assert isinstance(get_provider('qwen', settings), QwenProvider)
+
+
+@pytest.mark.parametrize('address', ['http://example.com/v1', 'http://localhost.example.com/v1',
+                                      'http://user:pass@localhost:11434/v1'])
+def test_nonlocal_or_credentialed_http_model_url_is_rejected(address):
+    with pytest.raises(AppError) as caught:
+        validate_address(address)
+    assert caught.value.code == 'INVALID_MODEL_CONFIG'
 
 
 def test_invalid_references_get_targeted_repair_instead_of_weakened_validation():

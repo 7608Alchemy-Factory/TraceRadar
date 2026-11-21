@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from dotenv import set_key
 import httpx
 from .core import AppError
-from .llm import provider_error
+from .llm import is_local_model_url, provider_error
 
 
 def model_status(settings):
@@ -20,11 +20,11 @@ def validate_address(address):
     try:
         url = urlsplit(address)
         _ = url.port
-        valid = url.scheme == 'https' and url.hostname and not (url.username or url.password or url.query or url.fragment) and not url.path.rstrip('/').endswith('/chat/completions')
+        valid = (url.scheme == 'https' or is_local_model_url(address)) and url.hostname and not (url.username or url.password or url.query or url.fragment) and not url.path.rstrip('/').endswith('/chat/completions')
     except ValueError:
         valid = False
     if not valid or any(c in address for c in '\r\n'):
-        raise AppError('INVALID_MODEL_CONFIG', 'Use an HTTPS API base URL and a nonblank model name.', 422)
+        raise AppError('INVALID_MODEL_CONFIG', 'Use an HTTPS API base URL or a local Ollama loopback URL.', 422)
     return address
 
 
@@ -34,7 +34,8 @@ def discover_models(settings,body,client=None):
     if not key or any(c in key for c in '\r\n'):
         raise AppError('INVALID_MODEL_CONFIG','请先填写 API Key。',422)
     try:
-        response=(client or httpx).get(address+'/models',headers={'Authorization':'Bearer '+key},timeout=settings.timeout)
+        response=(client or httpx).get(address+'/models',headers={'Authorization':'Bearer '+key},timeout=settings.timeout,
+                                       **({'trust_env': False} if client is None and is_local_model_url(address) else {}))
         if response.is_error:
             raise provider_error(response)
         models=response.json()['data']

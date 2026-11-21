@@ -16,6 +16,15 @@ class AssessmentProvider(Protocol):
 PROMPT_VERSION = 'assessment-v4'
 
 
+def is_local_model_url(address):
+    """Allow plain HTTP only for a model server on this machine."""
+    try:
+        parsed = urlsplit(address)
+        return parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')
+    except ValueError:
+        return False
+
+
 def provider_error(response):
     """Expose actionable categories, never raw provider bodies or credentials."""
     code=response.status_code
@@ -174,6 +183,8 @@ class QwenProvider:
         if urlsplit(self.settings.base_url).hostname=='api.deepseek.com':
             # Structured classification does not need a private reasoning transcript.
             options={'reasoning_effort':'none','max_tokens':16384}
+        elif is_local_model_url(self.settings.base_url):
+            options={'reasoning_effort':'none','temperature':0,'seed':0}
         for attempt in range(1, self.settings.max_attempts + 1):
             self.attempt = attempt
             assessment=None
@@ -182,7 +193,8 @@ class QwenProvider:
                 response = client.post(self.settings.base_url.rstrip('/') + '/chat/completions',
                                        headers={'Authorization': f'Bearer {self.settings.api_key}'},
                                        json={'model': self.settings.model, 'messages': messages,
-                                             'response_format': {'type': 'json_object'},**options}, timeout=self.settings.timeout)
+                                             'response_format': {'type': 'json_object'},**options}, timeout=self.settings.timeout,
+                                       **({'trust_env': False} if self.client is None and is_local_model_url(self.settings.base_url) else {}))
                 if response.status_code == 429 or response.status_code >= 500:
                     raise httpx.TimeoutException('Temporary provider failure')
                 if response.is_error:
@@ -214,6 +226,6 @@ def get_provider(name, settings):
         raise AppError('INVALID_PROVIDER', 'Provider must be mock or qwen.', 422)
     if not all((settings.api_key, settings.base_url, settings.model)):
         raise AppError('QWEN_NOT_CONFIGURED', 'Set QWEN_API_KEY, QWEN_BASE_URL and QWEN_MODEL on the backend.', 422)
-    if not settings.base_url.startswith('https://'):
-        raise AppError('QWEN_CONFIG', 'Use the HTTPS regional base URL from your Model Studio workspace.', 422)
+    if not (settings.base_url.startswith('https://') or is_local_model_url(settings.base_url)):
+        raise AppError('QWEN_CONFIG', 'Use an HTTPS model URL or a local Ollama loopback URL.', 422)
     return QwenProvider(settings)

@@ -352,6 +352,11 @@ function App() {
   async function openEvent(id: string) {
     await action(async () => setEvent(await api<EventDetail>(`/events/${id}`)));
   }
+  async function resumeRun(id: string) {
+    const result = await api<{ run_id: string }>(`/runs/${id}/resume`, json("POST", {}));
+    setWatchId(result.run_id);
+    await refresh();
+  }
   function showDialog(d: Dialog) {
     setError("");
     setDialog(d);
@@ -392,6 +397,9 @@ function App() {
         .includes(query.toLowerCase()),
   );
   const latest = dashboard?.recent_runs[0];
+  const unfinished = run?.evidence.filter((item) =>
+    ["failed", "failed_retryable", "not_attempted"].includes(item.status),
+  ) ?? [];
   const done = (id: string) =>
     dashboard?.recent_runs.some(
       (r) =>
@@ -986,8 +994,8 @@ function App() {
                         const label =
                           v.status === "review"
                             ? "待审核"
-                            : v.status === "failed"
-                              ? "失败"
+                            : ["failed", "failed_retryable", "pending"].includes(v.status)
+                              ? status(v.status)
                               : duplicate
                                 ? "重复报道"
                                 : v.assessment?.is_relevant === false
@@ -1222,6 +1230,32 @@ function App() {
                         </div>
                         {run.run.error != null && (
                           <pre className="error">{pretty(run.run.error)}</pre>
+                        )}
+                        {unfinished.length > 0 && !active(run.run.status) && (
+                          <>
+                            <div className="section-title">
+                              <h3>失败或未处理的证据</h3>
+                              <button
+                                disabled={running || busy}
+                                onClick={() => void action(() => resumeRun(run.run.run_id))}
+                              >
+                                续跑未完成证据
+                              </button>
+                            </div>
+                            <ul>
+                              {unfinished.map((item) => (
+                                <li key={`${item.source_id}:${item.external_id}`}>
+                                  <strong>{item.title}</strong>{" "}
+                                  <span className="meta">
+                                    {item.external_id} ·{" "}
+                                    {status(item.status)}
+                                    {" · "}{item.attempts} 次尝试
+                                    {item.error && ` · ${item.error.message}`}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </>
                         )}
                         <ol className="trace-list">
                           {run.steps.map((s) => (

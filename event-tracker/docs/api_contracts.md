@@ -13,7 +13,8 @@ Responses directly contain domain data, except composite views below.
 | PUT | /api/topics/{id}/sources | approved_source_ids → {approved_sources} |
 | POST | /api/topics/{id}/runs | fixture_batch_id, provider, optional as_of/prefilter_enabled/near_duplicate_enabled/manual_items → 202 {run_id, status} |
 | GET | /api/topics/{id}/runs | newest first, latest 30 Run records |
-| GET | /api/runs/{id} | {run, steps}, ordered by sequence |
+| GET | /api/runs/{id} | {run, steps, evidence}, with steps and fetched inputs in processing order |
+| POST | /api/runs/{id}/resume | Resume a finished run with errors from its saved inputs, returning 202 {run_id, status} |
 | GET | /api/topics/{id}/dashboard | topic, approved_sources, events, recent_runs, reviews, review_resolutions, notification_counts |
 | POST | /api/topics/{id}/reviews/{evidence_id}/resolve | decision=dismiss or accept; required note; accept also requires event_id, expected_version, current_status, fact; optional superseded_facts and update_kind |
 | GET | /api/topics/{id}/evidence | All ingested evidence with processing status, assessment and error, including excluded/duplicate inputs |
@@ -28,15 +29,32 @@ Replay UI chooses one source for the selected corpus, excluding unrelated RSS/fi
 duplicate registrations. All historical runs/evidence remain available; the evidence library
 defaults to currently approved sources and can include inactive sources explicitly.
 
-Provider errors distinguish invalid model IDs, authentication, insufficient balance, generic
-request rejection and network failure. Fatal provider errors stop the remaining batch;
-counts.unprocessed records inputs not attempted, without mislabeling them as irrelevant.
+Model discovery, connection checks and assessment use the same provider error codes.
+`PROVIDER_TIMEOUT` covers request timeouts, `PROVIDER_NETWORK` covers network errors,
+`PROVIDER_RATE_LIMIT` covers upstream HTTP 429, and `PROVIDER_SERVER_ERROR` covers upstream HTTP 5xx.
+Both settings endpoints make one attempt and return HTTP 502 for these errors. Assessment retries
+temporary failures within the configured attempt limit, then records `failed_retryable` and continues.
+Authentication, invalid model, insufficient balance and rejected requests stop the batch. The run
+report lists each remaining input as `not_attempted` with zero attempts and the blocking error.
+Each report row includes `source_id`, `external_id`, `evidence_id`, `status`, `attempts`, `error`
+and `event_outcomes`. Older runs may have no per-input report.
+
+Resume creates a new run linked by `snapshot.resume_of`. It reuses the original fetched evidence,
+replay cutoff and topic options, with the current provider configuration. Completed or reviewed
+inputs are skipped, including those completed by a later run. Original sources must still be
+approved. An optional `Idempotency-Key` can be used for repeated requests. If there are no eligible
+inputs, the endpoint returns `NO_RESUMABLE_EVIDENCE` (409).
 Structured output has at most two attempts, with exact contract feedback for repair. Model
 supported_claims is the canonical new-fact delta; deterministic code copies prior state,
 appends those exact claims, and uses the input title/publication timestamp for the new timeline
 entry. Raw references are checked before assembly; unknown IDs are never silently discarded.
-StateManager still independently checks the complete assembled proposal. Trace records
-state_assembly=evidence_delta_v1. Current prompt version: assessment-v4.
+When the model omits proposed_state or returns null, a committed new event starts at `new` and a
+fact update keeps the existing status. A major milestone requires an explicit new status.
+Updates still require update_kind, evidence-backed new claims and the current version for an existing event.
+StateManager independently checks the complete assembled proposal before it is stored. Trace records
+state_assembly=evidence_delta_v1. Current prompt version is `assessment-v6`.
+An assessment may include multiple `event_decisions` under one `evidence_id`. The legacy
+single-decision response is still accepted. `counts.committed` counts state transitions.
 | GET | /api/events/{id} | event, history, evidence with relation, reviews |
 | GET | /api/topics/{id}/notifications | Notification[], optional action filter |
 

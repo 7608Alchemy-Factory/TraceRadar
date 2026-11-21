@@ -68,7 +68,16 @@ export type Assessment = {
   update_kind: string | null;
   expected_version: number | null;
 };
-export type Review = { evidence: Evidence; assessment: Assessment };
+export type EvidenceAssessment = {
+  evidence_id: string;
+  is_relevant: boolean;
+  event_decisions: Omit<Assessment, "evidence_id" | "is_relevant">[];
+};
+export type Review = {
+  evidence: Evidence;
+  assessment: Assessment;
+  event_decisions?: EvidenceAssessment["event_decisions"];
+};
 export type ReviewResolution = {
   resolution_id: string;
   evidence_id: string;
@@ -76,7 +85,7 @@ export type ReviewResolution = {
   note: string;
   actor: string;
   resolved_at: string;
-  original_assessment: Assessment;
+  original_assessment: Assessment | EvidenceAssessment;
   event_id?: string;
   run_id?: string;
   superseded_facts?: Fact[];
@@ -92,14 +101,14 @@ export type Run = {
     | "failed"
     | "cancelled";
   provider: "mock" | "qwen" | "human";
-  trigger_type: "manual" | "human_review";
+  trigger_type: "manual" | "resume" | "human_review";
   fixture_batch_id: string;
   model?: string;
   started_at: string | null;
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string } };
+  snapshot: { options?: { as_of?: string }; resume_of?: string };
 };
 export type Step = {
   step_id: string;
@@ -115,7 +124,16 @@ export type Step = {
   started_at: string;
   completed_at: string | null;
 };
-export type RunDetail = { run: Run; steps: Step[] };
+export type RunEvidence = {
+  source_id: string;
+  external_id: string;
+  evidence_id: string;
+  title: string;
+  status: string;
+  attempts: number;
+  error: { code: string; message: string } | null;
+};
+export type RunDetail = { run: Run; steps: Step[]; evidence: RunEvidence[] };
 export type Notification = {
   notification_id: string;
   event_id: string;
@@ -150,7 +168,7 @@ export type Dashboard = {
 export type EvidenceDecision = {
   evidence: Evidence;
   status: string;
-  assessment: Assessment | null;
+  assessment: Assessment | EvidenceAssessment | null;
   error: unknown;
 };
 export type ModelStatus = {

@@ -132,7 +132,8 @@ def test_generic_prompt_and_wire_contract():
     assert 'ExampleSoft' not in prompt
     assert 'untrusted data' in prompt and 'Conflicting evidence' in prompt
     assert captured[0]['response_format']=={'type':'json_object'}
-    assert PROMPT_VERSION=='assessment-v4'
+    assert 'event_decisions' in prompt
+    assert PROMPT_VERSION=='assessment-v6'
 
 
 @pytest.mark.parametrize('corrupt,code', [('claims','UNGROUNDED_UPDATE'),('timeline','INVALID_TIMELINE'),

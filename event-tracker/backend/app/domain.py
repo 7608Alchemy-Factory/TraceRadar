@@ -118,18 +118,53 @@ class Association(Model):
 UpdateKind = Literal['event_created', 'fact_added', 'major_milestone', 'minor_update']
 
 
-class Assessment(Model):
-    evidence_id: str
-    is_relevant: bool
+class EventDecision(Model):
     association: Association
     novelty: Literal['new_fact', 'confirmation', 'conflict', 'no_change']
     supported_claims: list[Fact] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
-    proposed_state: EventState | None = None
+    proposed_state: EventState | None = Field(
+        default=None,
+        description=(
+            'May be null or omitted when no state is committed, when creating an event with the default status, '
+            'or when preserving an existing status. A committed major_milestone requires an explicit new status.'
+        ),
+    )
     requires_review: bool = False
     reason_codes: list[str]
     update_kind: UpdateKind | None = None
     expected_version: int | None = None
+
+
+class Assessment(EventDecision):
+    """Legacy single-event assessment, still accepted from providers and old records."""
+    evidence_id: str
+    is_relevant: bool
+
+
+class EvidenceAssessment(Model):
+    evidence_id: str
+    is_relevant: bool
+    event_decisions: list[EventDecision]
+
+    @model_validator(mode='after')
+    def check_decisions(self):
+        if self.is_relevant != bool(self.event_decisions):
+            raise ValueError('Relevant evidence needs event decisions; irrelevant evidence needs an empty list.')
+        targets = [
+            (a.type, a.event_id or ' '.join(a.title.casefold().split()))
+            for d in self.event_decisions for a in [d.association] if a.type != 'unresolved'
+        ]
+        if len(targets) != len(set(targets)):
+            raise ValueError('Include at most one decision per Event.')
+        return self
+
+
+def assessment_items(assessment: Assessment | EvidenceAssessment) -> list[Assessment]:
+    if isinstance(assessment, Assessment):
+        return [assessment]
+    return [Assessment(**decision.model_dump(), evidence_id=assessment.evidence_id,
+                       is_relevant=assessment.is_relevant) for decision in assessment.event_decisions]
 
 
 class StateUpdateProposal(Model):
@@ -199,8 +234,8 @@ StepStatus = Literal['pending', 'running', 'completed', 'skipped', 'failed']
 class TopicEvidence(Model):
     topic_id: str
     evidence_id: str
-    status: Literal['pending', 'completed', 'review', 'failed']
-    assessment: Assessment | None = None
+    status: Literal['pending', 'completed', 'review', 'failed', 'failed_retryable']
+    assessment: EvidenceAssessment | Assessment | None = None
     error: dict | None = None
 
 
@@ -229,7 +264,7 @@ class Notification(Model):
 class Run(Model):
     run_id: str
     topic_id: str
-    trigger_type: Literal['manual', 'human_review'] = 'manual'
+    trigger_type: Literal['manual', 'resume', 'human_review'] = 'manual'
     status: RunStatus
     provider: Literal['mock', 'qwen', 'human']
     fixture_batch_id: str

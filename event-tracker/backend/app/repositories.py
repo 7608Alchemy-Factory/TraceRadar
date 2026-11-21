@@ -81,6 +81,10 @@ class Repository:
               PRIMARY KEY(topic_id,evidence_id),
               FOREIGN KEY(topic_id,evidence_id) REFERENCES topic_evidence(topic_id,evidence_id));
             INSERT OR IGNORE INTO schema_versions VALUES(2);
+            CREATE TABLE IF NOT EXISTS run_inputs(
+              run_id TEXT REFERENCES runs(id), position INTEGER, evidence TEXT NOT NULL, outcome TEXT,
+              PRIMARY KEY(run_id,position));
+            INSERT OR IGNORE INTO schema_versions VALUES(3);
             ''')
             for source in sources:
                 db.execute('INSERT OR IGNORE INTO sources VALUES(?,?)', (source['source_id'], dump(source)))
@@ -180,6 +184,54 @@ class Repository:
                        completed_at=None, counts={}, error=None, snapshot=snapshot)
             db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(effective_request), dump(run)))
         return run, True
+
+    def resume_run(self, original, model, key=None):
+        topic_id, original_id = original['topic_id'], original['run_id']
+        request = {'resume_of': original_id}
+        with self.connection(True) as db:
+            if key:
+                prior = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?',
+                                   (topic_id, key)).fetchone()
+                if prior:
+                    if prior[0] != dump(request):
+                        raise AppError('IDEMPOTENCY_CONFLICT', 'This key was used with a different request.')
+                    return json.loads(prior[1]), False
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'This topic already has an active run.')
+            rows = db.execute('''SELECT i.position,i.evidence,i.outcome,t.status AS topic_status
+                FROM run_inputs i LEFT JOIN evidence e
+                  ON e.source_id=json_extract(i.evidence,'$.source_id') AND e.external_id=json_extract(i.evidence,'$.external_id')
+                LEFT JOIN topic_evidence t ON t.topic_id=? AND t.evidence_id=e.id
+                WHERE i.run_id=? ORDER BY i.position''', (topic_id, original_id))
+            work = [(row['position'], row['evidence']) for row in rows
+                    if row['topic_status'] not in ('completed', 'review')
+                    and (not row['outcome'] or json.loads(row['outcome'])['status'] in ('failed', 'failed_retryable'))]
+            if not work:
+                raise AppError('NO_RESUMABLE_EVIDENCE', 'There is no failed or unattempted evidence to resume.')
+            approved = {row[0] for row in db.execute('SELECT source_id FROM topic_sources WHERE topic_id=?', (topic_id,))}
+            if any(json.loads(raw)['source_id'] not in approved for _, raw in work):
+                raise AppError('UNAPPROVED_SOURCE', 'Approve the original sources before resuming.')
+            run = dict(original, run_id=uid(), trigger_type='resume', status='pending', model=model,
+                       prompt_version=PROMPT_VERSION if original['provider'] == 'qwen' else original['prompt_version'],
+                       started_at=None, completed_at=None, counts={}, error=None,
+                       snapshot=dict(original['snapshot'], resume_of=original_id))
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(request), dump(run)))
+            db.executemany('INSERT INTO run_inputs VALUES(?,?,?,NULL)', [(run['run_id'], *row) for row in work])
+        return run, True
+
+    def save_run_inputs(self, run_id, evidence_items):
+        with self.connection(True) as db:
+            db.executemany('INSERT INTO run_inputs VALUES(?,?,?,NULL)',
+                           [(run_id, position, dump(evidence)) for position, evidence in enumerate(evidence_items)])
+
+    def run_inputs(self, run_id):
+        with self.connection() as db:
+            return [(row[0], json.loads(row[1]), json.loads(row[2]) if row[2] else None) for row in db.execute(
+                'SELECT position,evidence,outcome FROM run_inputs WHERE run_id=? ORDER BY position', (run_id,))]
+
+    def record_run_input(self, run_id, position, outcome):
+        with self.connection(True) as db:
+            db.execute('UPDATE run_inputs SET outcome=? WHERE run_id=? AND position=?', (dump(outcome), run_id, position))
 
     def active_runs(self):
         with self.connection() as db:
@@ -290,37 +342,61 @@ class Repository:
             row = db.execute('SELECT status FROM topic_evidence WHERE topic_id=? AND evidence_id=?', (topic_id, evidence_id)).fetchone()
             return row[0] if row else None
 
-    def finish_evidence(self, topic_id, evidence_id, status, assessment=None, error=None, event_id=None, relation=None):
+    def finish_evidence(self, topic_id, evidence_id, status, error=None, links=()):
         with self.connection(True) as db:
             db.execute('UPDATE topic_evidence SET status=?,assessment=?,error=? WHERE topic_id=? AND evidence_id=?',
-                       (status, dump(assessment) if assessment else None, dump(error) if error else None, topic_id, evidence_id))
-            if event_id:
-                db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (event_id, evidence_id, relation))
+                       (status, None, dump(error) if error else None, topic_id, evidence_id))
+            db.executemany('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)',
+                           [(event_id, evidence_id, relation) for event_id, relation in links])
+
+    def linked_events(self, topic_id, evidence_id):
+        with self.connection() as db:
+            return [row[0] for row in db.execute('''SELECT ee.event_id FROM event_evidence ee JOIN events e ON e.id=ee.event_id
+                WHERE e.topic_id=? AND ee.evidence_id=?''', (topic_id, evidence_id))]
 
     def available_evidence(self, topic_id):
         with self.connection() as db:
             return {r[0]: json.loads(r[1]) for r in db.execute('''SELECT e.id,e.data FROM evidence e
                 JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=?''', (topic_id,))}
 
-    def commit_state(self, event, transition, notification, assessment, evidence, expected_version, fault=None):
+    def commit_assessment(self, topic_id, evidence_id, assessment, changes, run_id, position, attempts, fault=None):
+        results = []
         with self.connection(True) as db:
-            if db.execute('SELECT 1 FROM transitions WHERE idempotency_key=?', (transition['idempotency_key'],)).fetchone():
-                return False
-            existing = db.execute('SELECT version FROM events WHERE id=?', (event['event_id'],)).fetchone()
-            if existing:
-                if existing[0] != expected_version:
-                    raise AppError('VERSION_CONFLICT', 'Event changed; retry with current state.')
-                db.execute('UPDATE events SET version=?,data=? WHERE id=?', (event['version'], dump(event), event['event_id']))
-            else:
-                db.execute('INSERT INTO events VALUES(?,?,?,?)', (event['event_id'], event['topic_id'], event['version'], dump(event)))
-            db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)', (transition['transition_id'], event['event_id'], transition['run_id'], transition['idempotency_key'], dump(transition)))
-            if fault:
-                fault()
-            db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)', (notification['notification_id'], event['topic_id'], event['event_id'], transition['transition_id'], dump(notification)))
-            db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (event['event_id'], evidence['evidence_id'], 'supporting'))
-            db.execute("UPDATE topic_evidence SET status='completed',assessment=?,error=NULL WHERE topic_id=? AND evidence_id=?",
-                       (dump(assessment), event['topic_id'], evidence['evidence_id']))
-        return True
+            for change in changes:
+                event_id = change['event_id']
+                result = dict(outcome=change['outcome'], event_id=event_id)
+                if 'event' in change:
+                    event, transition, notification = change['event'], change['transition'], change['notification']
+                    prior = db.execute('SELECT 1 FROM transitions WHERE event_id=? AND idempotency_key IN (?,?)',
+                                       (event_id, transition['idempotency_key'], change['legacy_key'])).fetchone()
+                    if prior:
+                        result['outcome'] = 'duplicate'
+                    else:
+                        if transition['before_state'] is None:
+                            db.execute('INSERT INTO events VALUES(?,?,?,?)', (event_id, topic_id, event['version'], dump(event)))
+                        else:
+                            updated = db.execute('UPDATE events SET version=?,data=? WHERE id=? AND topic_id=? AND version=?',
+                                                 (event['version'], dump(event), event_id, topic_id, change['expected_version']))
+                            if updated.rowcount != 1:
+                                raise AppError('VERSION_CONFLICT', 'Event changed; retry with current state.')
+                        db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)',
+                                   (transition['transition_id'], event_id, transition['run_id'], transition['idempotency_key'], dump(transition)))
+                        if fault:
+                            fault()
+                        db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)',
+                                   (notification['notification_id'], topic_id, event_id, transition['transition_id'], dump(notification)))
+                        result['transition_id'] = transition['transition_id']
+                if event_id and change['relation']:
+                    db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (event_id, evidence_id, change['relation']))
+                results.append(result)
+            outcomes = {result['outcome'] for result in results}
+            outcome = next((name for name in ('review', 'committed', 'no_change', 'duplicate') if name in outcomes), 'irrelevant')
+            status = 'review' if outcome == 'review' else 'completed'
+            db.execute('UPDATE topic_evidence SET status=?,assessment=?,error=NULL WHERE topic_id=? AND evidence_id=?',
+                       (status, dump(assessment), topic_id, evidence_id))
+            report = dict(status=outcome, evidence_id=evidence_id, attempts=attempts, error=None, event_outcomes=results)
+            db.execute('UPDATE run_inputs SET outcome=? WHERE run_id=? AND position=?', (dump(report), run_id, position))
+        return report
 
     def notifications(self, topic_id, action=None):
         with self.connection() as db:
@@ -339,7 +415,21 @@ class Repository:
         with self.connection() as db:
             items = [dict(evidence=json.loads(r[0]), assessment=json.loads(r[1])) for r in db.execute('''SELECT e.data,t.assessment
                 FROM topic_evidence t JOIN evidence e ON e.id=t.evidence_id WHERE t.topic_id=? AND t.status='review' ORDER BY e.rowid''', (topic_id,))]
-        return [i for i in items if not event_id or i['assessment']['association']['event_id'] == event_id]
+        reviews = []
+        for item in items:
+            assessment = item['assessment']
+            if 'event_decisions' not in assessment:
+                if not event_id or assessment['association']['event_id'] == event_id:
+                    reviews.append(item)
+                continue
+            pending = [decision for decision in assessment['event_decisions'] if decision['requires_review']
+                       or decision['conflicts'] or decision['novelty'] == 'conflict' or decision['association']['type'] == 'unresolved']
+            if event_id:
+                pending = [decision for decision in pending if decision['association']['event_id'] == event_id]
+            if pending:
+                reviews.append(dict(evidence=item['evidence'], event_decisions=pending,
+                                    assessment=dict(pending[0], evidence_id=assessment['evidence_id'], is_relevant=True)))
+        return reviews
 
     def resolve_review(self, topic_id, evidence_id, decision, note):
         with self.connection(True) as db:

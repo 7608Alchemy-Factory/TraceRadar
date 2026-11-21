@@ -167,6 +167,7 @@ export function EventView({
 export function EvidenceView({ value }: { value: EvidenceDecision }) {
   const { evidence: e, assessment: a } = value;
   const url = safeUrl(e.url);
+  const decisions = a ? ("event_decisions" in a ? a.event_decisions : [a]) : [];
   return (
     <article className="evidence-full">
       <div className="row-between">
@@ -201,13 +202,15 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
               ? "待审核"
               : value.status === "failed"
                 ? "处理失败"
-                : a?.is_relevant === false
-                  ? "已排除"
-                  : e.canonical_evidence_id !== e.evidence_id &&
-                      !a &&
-                      value.status === "completed"
-                    ? "重复报道"
-                    : "已处理"}
+                : value.status === "failed_retryable"
+                  ? "服务故障，可重试"
+                  : value.status === "pending"
+                    ? "未处理"
+                    : a?.is_relevant === false
+                      ? "已排除"
+                      : e.canonical_evidence_id !== e.evidence_id && !a
+                        ? "重复报道"
+                        : "已处理"}
           </dd>
         </div>
       </dl>
@@ -221,12 +224,13 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
       {a && (
         <div className="assessment-note">
           <h3>为什么这样处理</h3>
-          <p>
-            {a.is_relevant ? "与追踪目标相关。" : "判断为与追踪目标无关。"}{" "}
-            {a.association.reason}
-          </p>
-          {a.conflicts.map((c, i) => (
-            <p key={i}>{text(c)}</p>
+          <p>{a.is_relevant ? "与追踪目标相关。" : "判断为与追踪目标无关。"}</p>
+          {decisions.map((decision, i) => (
+            <div key={i}>
+              {decision.association.title && <strong>{decision.association.title}</strong>}
+              <p>{decision.association.reason}</p>
+              {decision.conflicts.map((conflict, j) => <p key={j}>{text(conflict)}</p>)}
+            </div>
           ))}
         </div>
       )}

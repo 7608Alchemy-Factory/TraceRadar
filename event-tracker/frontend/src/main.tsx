@@ -22,7 +22,7 @@ import {
 } from "./member-d";
 import { Icon, Modal, Empty } from "./ui";
 import { EventView, EvidenceView } from "./event-view";
-import { RadarChapter, RadarStory } from "./radar-story";
+import { OverviewSection, OverviewSummary } from "./overview";
 import "@fontsource-variable/host-grotesk/wght.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import {
@@ -673,7 +673,7 @@ function App() {
             setTab("overview");
           }}
         >
-          <span className="brand-mark">
+          <span className="brand-mark" aria-hidden="true">
             <i />
             <i />
             <i />
@@ -940,7 +940,7 @@ function App() {
                 {tab === "overview" && (
                   <div className="overview-layout">
                     <div className="overview-main">
-                      <RadarStory
+                      <OverviewSummary
                         metrics={[
                           {
                             value: dashboard.events.length,
@@ -958,17 +958,16 @@ function App() {
                             open: () => openTab("review", true),
                           },
                         ]}
-                      >
-                        <RadarChapter
-                          tone="signal"
+                      />
+                      <div className="overview-sections">
+                        <OverviewSection
                           title="事件一览"
                           label="查看全部事件"
                           onOpen={() => openTab("events", true)}
                         >
                           {eventList}
-                        </RadarChapter>
-                        <RadarChapter
-                          tone="evidence"
+                        </OverviewSection>
+                        <OverviewSection
                           title="近期证据"
                           label="进入证据库"
                           onOpen={() => openTab("evidence", true)}
@@ -987,7 +986,7 @@ function App() {
                                   status: evidenceStatus,
                                 }) => (
                                   <button
-                                    className="story-evidence"
+                                    className="recent-evidence"
                                     key={item.evidence_id}
                                     onClick={() =>
                                       setEvidenceId(item.evidence_id)
@@ -1012,9 +1011,8 @@ function App() {
                               开始检查后，最新读入的证据会出现在这里。
                             </p>
                           )}
-                        </RadarChapter>
-                        <RadarChapter
-                          tone="review"
+                        </OverviewSection>
+                        <OverviewSection
                           title="变化与提醒"
                           label="查看审核队列"
                           onOpen={() => openTab("review", true)}
@@ -1055,8 +1053,8 @@ function App() {
                               </button>
                             ))
                           )}
-                        </RadarChapter>
-                      </RadarStory>
+                        </OverviewSection>
+                      </div>
                       {fixture && (
                         <section className="section-block">
                           <div className="section-title">

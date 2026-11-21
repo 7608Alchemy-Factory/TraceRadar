@@ -38,11 +38,10 @@
   .block.amber { border-color:#b69759; background:#f7edd7; }
   .w2 { flex:2; }
   .w3 { flex:3; }
-  .terminal { display:grid; place-items:center; background:#193e33; border-radius:5px; min-height:65px; }
-  .radar { border:1px solid #a7f1bc; border-radius:50%; width:58px; aspect-ratio:1; display:grid; place-items:center; background:repeating-radial-gradient(circle,transparent 0 7px,#92ccaa55 8px 9px); }
-  .dot { width:10px; height:10px; background:var(--green); border:2px solid #1b6149; border-radius:3px; display:block; }
-  .trace { border-left:2px solid #6d9984; margin-left:4px; padding:3px 0 3px 7px; }
-  .trace .dot { float:left; margin:4px 5px 0 -13px; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); border-top:1px solid #bdcec4; }
+  .stats span { display:grid; gap:2px; padding:4px; }
+  .stats span + span { border-left:1px solid #bdcec4; }
+  .stats strong { font:1rem ui-monospace,monospace; }
   .scrim { position:absolute; inset:0; background:#10292370; display:grid; place-items:center; }
   .scrim .block { width:67%; padding:9px; box-shadow:0 10px 20px #10292355; }
   .scrim.sheet { justify-items:end; }
@@ -51,17 +50,16 @@
   .tag { background:#daede0; color:#185b43; border-radius:3px; font-size:.64rem; padding:2px 5px; width:max-content; }
   .notes { font-size:.875rem; }
   #intro .frame { max-width:720px; }
-  .timing { color:#d4f5df; font-size:.8125rem; }
   ul { padding-inline-start:24px; color:var(--muted); }
   footer { border-top:1px solid var(--line); padding-top:16px; }
 </style>
 
 <header>
   <small>TRACERADAR / v1.1</small>
-  <h1>把信号追成证据</h1>
-  <p>滚动依次看清追踪目标、发生的事件、判断依据和需要人工确认的变化。任务视图延续同一条绿色定位线，抽屉从列表打开单条档案。</p>
+  <h1>TraceRadar 工作台原型</h1>
+  <p>概览上方显示事件、证据和待审核的数量，下方按事件、近期证据和提醒分区。点击一项即可进入相应视图。</p>
 </header>
-<nav aria-label="原型目录"><a href="#intro">开始使用</a><a href="#story">概览四镜</a><a href="#tabs">工作视图</a><a href="#overlays">详情和表单</a><a href="#motion">转场参数</a></nav>
+<nav aria-label="原型目录"><a href="#intro">开始使用</a><a href="#story">概览</a><a href="#tabs">工作视图</a><a href="#overlays">详情和表单</a><a href="#motion">转场参数</a></nav>
 
 <section id="intro">
   <h2>开始使用</h2>
@@ -77,39 +75,35 @@
 </section>
 
 <section id="story">
-  <h2>概览 · 四个连续镜头</h2>
+  <h2>概览 · 摘要与记录</h2>
   <div class="grid">
     <article>
       <h3>追踪概况</h3>
-      <div class="frame" aria-label="主题标题、三项计数、雷达图盘和检查表单">
-        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>ExampleSoft · 三步演示</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="row"><div class="block dark w3"><b>追踪概况</b><div class="terminal"><div class="radar"><i class="dot"></i></div></div><span>02 事件　07 证据　02 待审</span></div><div class="block"><b>检查新进展</b><i class="line"></i><span class="tag">开始检查</span></div></div></div>
+      <div class="frame" aria-label="主题标题、三项计数和检查表单">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>ExampleSoft · 三步演示</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="row"><div class="block w3"><b>追踪概况</b><div class="stats"><span>事件<strong>2</strong></span><span>证据<strong>7</strong></span><span>待审<strong>2</strong></span></div></div><div class="block"><b>检查新进展</b><i class="line"></i><span class="tag">开始检查</span></div></div></div>
       </div>
-      <p class="notes">计数同时是导航入口。右侧是运行控制，手机端移到概览图盘前。</p>
-      <span class="timing">进入概览 · 360 ms · 扫描弧掠过图盘</span>
+      <p class="notes">点击计数打开对应视图。运行控制在右侧，手机端移到摘要上方。</p>
     </article>
     <article>
       <h3>事件一览</h3>
-      <div class="frame" aria-label="垂直定位线连接事件标题和两条事件摘要">
-        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>事件一览</b><div class="trace"><i class="dot"></i><div class="block"><b>事件 A</b><span class="tag">已修复</span></div><div class="block"><b>事件 B</b><i class="line"></i></div></div></div>
+      <div class="frame" aria-label="事件标题和两条事件摘要">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>事件一览</b><div class="block"><b>事件 A</b><span class="tag">已修复</span></div><div class="block"><b>事件 B</b><i class="line"></i></div></div>
       </div>
-      <p class="notes">标记脱离图盘并缩至左侧轨道。事件标题先出现，记录随后跟上。点击一行打开档案。</p>
-      <span class="timing">图盘 → 圆点 · 随滚动 · 可逆</span>
+      <p class="notes">列表展示事件状态和事实摘要。点击一行打开档案。</p>
     </article>
     <article>
       <h3>近期证据</h3>
-      <div class="frame" aria-label="方形定位点后列出新闻标题和来源">
-        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>近期证据</b><div class="trace"><i class="dot"></i><div class="block"><b>官方补丁公告</b><i class="line"></i></div><div class="block"><b>最新研究报告</b><i class="line"></i></div></div></div>
+      <div class="frame" aria-label="新闻标题和来源列表">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>近期证据</b><div class="block"><b>官方补丁公告</b><i class="line"></i></div><div class="block"><b>最新研究报告</b><i class="line"></i></div></div>
       </div>
-      <p class="notes">信号沿轨道转入方形定位点。证据预览保留标题、来源、日期和待审核状态。</p>
-      <span class="timing">圆点 → 方点 · 65 ms 层间错峰</span>
+      <p class="notes">证据预览显示标题、来源、日期和待审核状态。</p>
     </article>
     <article>
       <h3>变化与提醒</h3>
-      <div class="frame" aria-label="菱形定位点、待审核计数和提醒列表">
-        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>变化与提醒</b><div class="trace"><i class="dot" style="rotate:45deg"></i><div class="block amber"><b>2 条证据等待人工判断</b></div><div class="block"><b>事件 A · 重大进展</b><i class="line"></i></div></div></div>
+      <div class="frame" aria-label="待审核计数和提醒列表">
+        <div class="rail"><i></i><i></i><i></i></div><div class="scene"><b>变化与提醒</b><div class="block amber"><b>2 条证据等待人工判断</b></div><div class="block"><b>事件 A · 重大进展</b><i class="line"></i></div></div>
       </div>
-      <p class="notes">信号抵达琥珀色定位点。待审提示在通知前出现，点击通知回到对应事件档案。</p>
-      <span class="timing">方点 → 菱形定位 · 同一滚动进度</span>
+      <p class="notes">待审提示显示在通知列表上方。点击通知可打开对应事件。</p>
     </article>
   </div>
 </section>
@@ -133,7 +127,7 @@
       <div class="frame"><div class="rail"><i></i><i></i><i></i></div><div class="scene"><div class="mock-tabs"><i></i><i></i><i></i><i></i><i></i><i class="active"></i></div><b>运行记录</b><div class="row"><div class="block dim">本次会话<br>历史会话</div><div class="block w2"><b>读取 → 评估 → 保存</b><i class="line"></i><i class="line"></i></div></div></div></div>
       <p class="notes">左侧切换会话，右侧展开步骤与输入证据。轮询保留用户选中的历史会话。</p></article>
     <article><h3>手机布局</h3>
-      <div class="frame" style="grid-template-columns:1fr"><div class="rail" style="flex-direction:row"><i style="width:30%"></i><i style="width:14%"></i></div><div class="scene"><b>主题标题</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="block dim">筛选事件</div><div class="block">检查控制</div><div class="block dark">雷达概况</div></div></div>
+      <div class="frame" style="grid-template-columns:1fr"><div class="rail" style="flex-direction:row"><i style="width:30%"></i><i style="width:14%"></i></div><div class="scene"><b>主题标题</b><div class="mock-tabs"><i class="active"></i><i></i><i></i><i></i><i></i><i></i></div><div class="block dim">筛选事件</div><div class="block">检查控制</div><div class="block">追踪概况</div></div></div>
       <p class="notes">主题和标签可横滑，筛选改为独立一行，顶栏提供新建与回放入口。</p></article>
   </div>
 </section>
@@ -156,12 +150,12 @@
 <section id="motion">
   <h2>转场参数</h2>
   <ul>
-    <li>概览使用 ScrollTrigger 驱动同一个雷达标记。定位以窗口高度的 56% 为参考，按各段位置计算。段落标题和内容在进入视口时错峰 65 ms，单项 480 ms。</li>
+    <li>概览使用原生滚动，摘要和记录按正文顺序排列。</li>
     <li>工作视图共享一个标签下划线，320 ms 内移动至目标。正文同步在 360 ms 内落位。键盘可用左右键、Home 和 End 切换。</li>
     <li>事件抽屉水平移入，表单和证据弹层垂直移入，均为 280 ms。遮罩独立淡入 240 ms。手动关闭时沿原方向退出，耗时 170 ms。</li>
-    <li>窄屏使用静态定位点。开启减少动态效果时保留静态图盘、标签和全部入口。</li>
+    <li>开启减少动态效果时，标签能直接切换，弹层直接开合。</li>
     <li>标题和拉丁界面文字用 Host Grotesk，数字与时间戳用 IBM Plex Mono，中文回退到系统无衬线字体。</li>
   </ul>
 </section>
-<footer><p>动效参考 <a href="https://tympanus.net/codrops/2024/11/20/consecutive-scroll-animations-with-one-element/">Codrops · Consecutive Scroll Animations with One Element</a>。字体参考 <a href="https://fontesk.com/host-grotesk-typeface/">Fontesk · Host Grotesk</a> 和 <a href="https://github.com/IBM/plex">IBM Plex</a>。</p></footer>
+<footer><p>字体参考 <a href="https://fontesk.com/host-grotesk-typeface/">Fontesk · Host Grotesk</a> 和 <a href="https://github.com/IBM/plex">IBM Plex</a>。</p></footer>
 </html>

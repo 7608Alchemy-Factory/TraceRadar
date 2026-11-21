@@ -126,8 +126,8 @@ class EventDecision(Model):
     proposed_state: EventState | None = Field(
         default=None,
         description=(
-            'May be null or omitted when no state is committed, when creating an event with the default status, '
-            'or when preserving an existing status. A committed major_milestone requires an explicit new status.'
+            'A new_fact decision requires an explicit resulting status. '
+            'A confirmation or no_change decision leaves this field null or omitted.'
         ),
     )
     requires_review: bool = False

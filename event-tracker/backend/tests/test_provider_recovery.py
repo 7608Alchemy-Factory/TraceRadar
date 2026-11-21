@@ -147,12 +147,12 @@ def test_model_delta_assembly_preserves_history_and_uses_canonical_claims():
     assert state['sources']==['old','new']
 
 
-@pytest.mark.parametrize('state_fields,update_kind,expected_status', [
-    ({'proposed_state': None}, 'event_created', 'new'),
-    ({}, 'fact_added', 'investigating'),
-    ({'proposed_state': None}, 'minor_update', 'investigating'),
+@pytest.mark.parametrize('update_kind,expected_status', [
+    ('event_created', 'announced'),
+    ('fact_added', 'investigating'),
+    ('minor_update', 'investigating'),
 ])
-def test_qwen_assembles_updates_without_proposed_state(state_fields, update_kind, expected_status):
+def test_qwen_assembles_updates_with_explicit_state(update_kind, expected_status):
     settings = Settings(base_url='https://provider.example', max_attempts=1)
     old_fact = {'fact': 'The vendor is investigating.', 'evidence_ids': ['old']}
     old_entry = {'occurred_at': '2026-04-01T09:00:00Z', 'description': 'Investigation', 'evidence_ids': ['old']}
@@ -164,16 +164,18 @@ def test_qwen_assembles_updates_without_proposed_state(state_fields, update_kind
     fact = {'fact': 'The vendor published an update.', 'evidence_ids': ['ev']}
     association = ({'type': 'new_event', 'title': 'CedarDesk', 'reason': 'First report'} if creating else
                    {'type': 'existing_event', 'event_id': 'event', 'reason': 'Same matter'})
-    reply = dict(evidence_id='ev', is_relevant=True, novelty='new_fact', reason_codes=['report'],
-                 association=association, expected_version=None if creating else 1,
-                 supported_claims=[fact], update_kind=update_kind, **state_fields)
+    decision = dict(novelty='new_fact', reason_codes=['report'], association=association,
+                    expected_version=None if creating else 1, supported_claims=[fact], update_kind=update_kind,
+                    proposed_state=dict(current_status=expected_status, timeline=[], key_facts=[], sources=['ev']))
+    reply = dict(is_relevant=True, event_decisions=[decision])
     response = httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(reply)}}]})
 
     with httpx.Client(transport=httpx.MockTransport(lambda request: response)) as client:
         provider = QwenProvider(settings, client)
         result = provider.assess({}, [] if creating else [prior], evidence, [])
 
-    state = result.proposed_state.model_dump(mode='json')
+    assert result.evidence_id == 'ev'
+    state = result.event_decisions[0].proposed_state.model_dump(mode='json')
     assert state['current_status'] == expected_status
     assert state['key_facts'] == ([fact] if creating else [old_fact, fact])
     assert state['sources'] == (['ev'] if creating else ['old', 'ev'])
@@ -181,12 +183,26 @@ def test_qwen_assembles_updates_without_proposed_state(state_fields, update_kind
     assert state['timeline'] == ([entry] if creating else [old_entry, entry])
 
 
-def test_qwen_requires_explicit_status_for_milestone():
+@pytest.mark.parametrize('novelty,field,value', [
+    ('new_fact', 'proposed_state', None),
+    ('new_fact', 'proposed_state', {'current_status': '  ', 'timeline': [], 'key_facts': [], 'sources': ['ev']}),
+    ('new_fact', 'update_kind', None),
+    ('new_fact', 'supported_claims', []),
+    ('new_fact', 'supported_claims', [{'fact': '  ', 'evidence_ids': ['ev']}]),
+    ('no_change', 'update_kind', 'event_created'),
+    ('no_change', 'proposed_state', {'current_status': 'announced', 'timeline': [], 'key_facts': [], 'sources': ['ev']}),
+    ('confirmation', 'supported_claims', [{'fact': 'Update published.', 'evidence_ids': ['ev']}]),
+])
+def test_qwen_requires_fields_based_on_novelty(novelty, field, value):
     settings = Settings(base_url='https://provider.example', max_attempts=1)
-    reply = dict(evidence_id='ev', is_relevant=True, novelty='new_fact', reason_codes=['milestone'],
-                 association={'type': 'existing_event', 'event_id': 'event', 'reason': 'Same matter'},
-                 expected_version=1, supported_claims=[{'fact': 'Update published.', 'evidence_ids': ['ev']}],
-                 update_kind='major_milestone', proposed_state=None)
+    decision = dict(novelty=novelty, reason_codes=['report'],
+                    association={'type': 'new_event', 'title': 'New Event', 'reason': 'First report'})
+    if novelty == 'new_fact':
+        decision.update(update_kind='event_created',
+                        supported_claims=[{'fact': 'Update published.', 'evidence_ids': ['ev']}],
+                        proposed_state=dict(current_status='announced', timeline=[], key_facts=[], sources=['ev']))
+    decision[field] = value
+    reply = dict(is_relevant=True, event_decisions=[decision])
     response = httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(reply)}}]})
 
     with httpx.Client(transport=httpx.MockTransport(lambda request: response)) as client:
@@ -194,10 +210,41 @@ def test_qwen_requires_explicit_status_for_milestone():
             QwenProvider(settings, client).assess({}, [], {'evidence_id': 'ev'}, [])
 
     assert caught.value.code == 'PROVIDER_SCHEMA'
-    assert 'major_milestone requires the new proposed_state.current_status' in caught.value.message
+    assert field in caught.value.message
 
 
-def test_qwen_missing_proposed_state_reaches_commit_and_trace(tmp_path, monkeypatch):
+@pytest.mark.parametrize('novelty,requires_review', [
+    ('new_fact', False), ('no_change', False), ('confirmation', True), ('conflict', True),
+])
+def test_qwen_repairs_unknown_existing_event_for_any_novelty(novelty, requires_review):
+    settings = Settings(base_url='https://provider.example', max_attempts=2)
+    prior = dict(event_id='existing', version=2, state=dict(current_status='active', key_facts=[], timeline=[], sources=[]))
+    evidence = dict(evidence_id='ev', title='Report', published_at='2026-04-02T09:00:00Z')
+    decision = dict(novelty=novelty, requires_review=requires_review, reason_codes=['report'],
+                    association=dict(type='existing_event', event_id='invented', reason='Same matter'))
+    if novelty == 'new_fact':
+        decision.update(expected_version=2, update_kind='fact_added',
+                        supported_claims=[{'fact': 'The offer started.', 'evidence_ids': ['ev']}],
+                        proposed_state=dict(current_status='active', timeline=[], key_facts=[], sources=['ev']))
+    calls = []
+
+    def respond(request):
+        messages = json.loads(request.content)['messages']
+        calls.append(messages)
+        if len(calls) == 2:
+            assert 'from current_events for every existing_event decision' in messages[-1]['content']
+            decision['association']['event_id'] = 'existing'
+        reply = dict(is_relevant=True, event_decisions=[decision])
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(reply)}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result = QwenProvider(settings, client).assess({}, [prior], evidence, [])
+
+    assert len(calls) == 2
+    assert result.event_decisions[0].association.event_id == 'existing'
+
+
+def test_qwen_explicit_proposed_state_reaches_commit_and_trace(tmp_path, monkeypatch):
     settings = Settings(database_path=str(tmp_path / 'tracker.db'), api_key='test',
                         base_url='https://provider.example', model='test-model', max_attempts=1)
 
@@ -208,14 +255,15 @@ def test_qwen_missing_proposed_state_reaches_commit_and_trace(tmp_path, monkeypa
         reply = dict(evidence_id=evidence['evidence_id'], is_relevant=True, novelty='new_fact',
                      reason_codes=['vendor_report'], supported_claims=[{
                          'fact': evidence['title'], 'evidence_ids': [evidence['evidence_id']],
-                     }])
+                     }], proposed_state=dict(current_status='reported', timeline=[], key_facts=[],
+                                             sources=[evidence['evidence_id']]))
         if inputs['current_events']:
             event = inputs['current_events'][0]
             reply.update(association={'type': 'existing_event', 'event_id': event['event_id'], 'reason': 'Same matter'},
                          expected_version=event['version'], update_kind='fact_added')
         else:
             reply.update(association={'type': 'new_event', 'title': evidence['title'], 'reason': 'Initial report'},
-                         update_kind='event_created', proposed_state=None)
+                         update_kind='event_created')
         return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(reply)}}]})
 
     with httpx.Client(transport=httpx.MockTransport(respond)) as model_client:
@@ -233,7 +281,7 @@ def test_qwen_missing_proposed_state_reaches_commit_and_trace(tmp_path, monkeypa
                 event, = client.get(f'{root}/dashboard').json()['events']
                 assessed, = [step['decision']['assessment'] for step in detail['steps'] if step['step_name'] == 'assess_evidence']
                 assert event['version'] == version
-                assert event['state']['current_status'] == 'new'
+                assert event['state']['current_status'] == 'reported'
                 assert len(event['state']['key_facts']) == len(event['state']['timeline']) == version
                 assert assessed['proposed_state'] == event['state']
                 row = next(row for row in client.get(f'{root}/evidence').json()

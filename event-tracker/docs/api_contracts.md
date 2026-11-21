@@ -48,11 +48,13 @@ Structured output has at most two attempts, with exact contract feedback for rep
 supported_claims is the canonical new-fact delta; deterministic code copies prior state,
 appends those exact claims, and uses the input title/publication timestamp for the new timeline
 entry. Raw references are checked before assembly; unknown IDs are never silently discarded.
-When the model omits proposed_state or returns null, a committed new event starts at `new` and a
-fact update keeps the existing status. A major milestone requires an explicit new status.
-Updates still require update_kind, evidence-backed new claims and the current version for an existing event.
+The application attaches the input evidence ID. If a model includes an ID, it must exactly match the input.
+A `new_fact` response requires `update_kind`, an explicit `proposed_state.current_status` and
+nonempty evidence-backed `supported_claims`. A `confirmation` or `no_change` carries no update
+fields or new claims. Every `existing_event` decision must reference an Event supplied to the
+model. State updates also require its exact version.
 StateManager independently checks the complete assembled proposal before it is stored. Trace records
-state_assembly=evidence_delta_v1. Current prompt version is `assessment-v6`.
+state_assembly=evidence_delta_v1. Current prompt version is `assessment-v7`.
 An assessment may include multiple `event_decisions` under one `evidence_id`. The legacy
 single-decision response is still accepted. `counts.committed` counts state transitions.
 | GET | /api/events/{id} | event, history, evidence with relation, reviews |

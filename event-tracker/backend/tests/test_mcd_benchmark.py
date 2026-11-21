@@ -28,14 +28,14 @@ def mcd_decisions(evidence_id):
     ]
 
 
-def start_mcd(client):
+def start_mcd(client, stage_index=2):
     source = CASE['runtime_source']
     assert client.post('/api/sources', json=source).status_code == 201
     topic = client.post('/api/topics', json=CASE['topic']).json()['topic_id']
     assert client.put(f'/api/topics/{topic}/sources', json={'approved_source_ids': [source['source_id']]}).status_code == 200
     response = client.post(f'/api/topics/{topic}/runs', json={
         'fixture_batch_id': 'all', 'provider': 'qwen',
-        'source_ids': [source['source_id']], 'as_of': CASE['stages'][2]['as_of'],
+        'source_ids': [source['source_id']], 'as_of': CASE['stages'][stage_index]['as_of'],
     })
     assert response.status_code == 202
     return topic, _wait_run(client, response.json()['run_id'])
@@ -63,6 +63,51 @@ def provider_stub():
 def model_settings(tmp_path):
     return Settings(database_path=str(tmp_path / 'tracker.db'), base_url='https://provider.example/v1',
                     api_key='test', model='test-model', max_attempts=2)
+
+
+@pytest.mark.parametrize('repair', [True, False])
+def test_mcd02_wrong_evidence_id_cannot_commit(tmp_path, monkeypatch, repair):
+    evidence_ids = {}
+    attempts = 0
+
+    def respond(request):
+        nonlocal attempts
+        messages = json.loads(request.content)['messages']
+        evidence = json.loads(messages[1]['content'])['evidence']
+        item_id = evidence['external_id'].rsplit(':', 1)[-1]
+        current = evidence['evidence_id']
+        evidence_ids[item_id] = current
+        reply = dict(is_relevant=False, event_decisions=[])
+        if item_id == 'MCD-02':
+            attempts += 1
+            decision = dict(association=dict(type='new_event', title=evidence['title'], reason='First report'),
+                            novelty='new_fact', reason_codes=['offer_announced'], update_kind='event_created',
+                            supported_claims=[dict(fact='試食價 $39。', evidence_ids=[current])],
+                            proposed_state=dict(current_status='announced', sources=[current], key_facts=[], timeline=[]))
+            reply = dict(is_relevant=True, event_decisions=[decision])
+            if attempts == 2:
+                assert 'evidence_id must equal the supplied input evidence_id' in messages[-1]['content']
+            if attempts == 1 or not repair:
+                reply['evidence_id'] = evidence_ids['MCD-01']
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(reply)}}]})
+
+    with httpx.Client(transport=httpx.MockTransport(respond)) as model_client:
+        monkeypatch.setattr(httpx, 'post', model_client.post)
+        with TestClient(create_app(model_settings(tmp_path))) as client:
+            topic, detail = start_mcd(client, stage_index=1)
+            outcome = next(row for row in detail['evidence'] if row['external_id'].endswith('MCD-02'))
+            events = client.get(f'/api/topics/{topic}/dashboard').json()['events']
+
+    assert outcome['evidence_id'] == evidence_ids['MCD-02']
+    assert outcome['attempts'] == 2
+    if repair:
+        assert outcome['status'] == 'committed'
+        event, = events
+        assert event['state']['sources'] == [evidence_ids['MCD-02']]
+    else:
+        assert outcome['status'] == 'failed'
+        assert outcome['error']['code'] == 'PROVIDER_SCHEMA'
+        assert events == []
 
 
 @pytest.mark.parametrize('failure,attempts,mcd03_status', [(503, 2, 'committed'), (401, 1, 'not_attempted')])

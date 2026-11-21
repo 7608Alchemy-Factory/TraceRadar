@@ -84,16 +84,19 @@ class StateManager:
                 self.repo.get('events', a.association.event_id)
                 raise AppError('CROSS_TOPIC_EVENT', 'Event belongs to a different topic.', 422)
         event_id = existing['event_id'] if existing else None
+        if a.novelty in ('no_change', 'confirmation') and (a.proposed_state or a.update_kind or a.supported_claims):
+            raise AppError('INVALID_PROPOSAL', 'Confirmation and no_change cannot carry a state update or new claims.', 422)
+        if a.novelty == 'new_fact':
+            if not a.proposed_state or not a.proposed_state.current_status.strip() or not a.update_kind:
+                raise AppError('INVALID_PROPOSAL', 'A new fact needs an update kind and an explicit status.', 422)
+            if not a.supported_claims or any(not claim.fact.strip() for claim in a.supported_claims):
+                raise AppError('UNGROUNDED_UPDATE', 'A new fact needs nonempty supported claims.', 422)
         if not a.is_relevant or a.requires_review or a.conflicts or a.novelty == 'conflict' or a.association.type == 'unresolved':
             review = a.is_relevant and (a.requires_review or bool(a.conflicts) or a.novelty == 'conflict' or a.association.type == 'unresolved')
             return dict(outcome='review' if review else 'irrelevant', event_id=event_id,
                         relation='conflicting' if review else None)
         if a.novelty in ('no_change', 'confirmation'):
-            if a.proposed_state or a.update_kind or a.supported_claims:
-                raise AppError('INVALID_PROPOSAL', 'Confirmation and no_change cannot carry a state update or new claims.', 422)
             return dict(outcome='no_change', event_id=event_id, relation='supporting')
-        if not a.proposed_state or not a.update_kind:
-            raise AppError('INVALID_PROPOSAL', 'A state update requires a complete proposal.', 422)
         proposal = StateUpdateProposal(association=a.association, expected_version=a.expected_version,
                                        update_kind=a.update_kind, state=a.proposed_state, evidence_ids=[evidence['evidence_id']])
         state = proposal.state.model_dump(mode='json')

@@ -54,6 +54,7 @@ def assessment_prompt():
             'Consider source provenance/tier when supplied, but do not invent reliability scores or assume every news report is official. '
             'Conflicting evidence must set novelty=conflict, requires_review=true, describe the conflict, and must not overwrite state. '
             'No substantive new information means no_change or confirmation with no proposed_state and no update_kind. '
+            'For no_change or confirmation, supported_claims must also be empty; never label new facts as confirmation. '
             'Use ONLY supplied evidence_id values in EventState.sources and all evidence_ids arrays, never source_id labels. '
             'For an update, supported_claims is the SINGLE canonical list of NEW facts, each citing the current evidence_id. '
             'Set proposed_state.current_status to the resulting status, proposed_state.key_facts=[] and timeline=[], sources=[current evidence_id]. '
@@ -102,6 +103,8 @@ def validate_assessment_contract(a,events,evidence):
     current=evidence.get('evidence_id')
     if a.evidence_id!=current:
         raise AssessmentContractError('evidence_id must equal the supplied input evidence_id.')
+    if a.novelty in ('no_change', 'confirmation') and (a.supported_claims or a.proposed_state is not None or a.update_kind is not None):
+        raise AssessmentContractError('no_change and confirmation cannot contain supported_claims, proposed_state or update_kind; use new_fact for a substantive update.')
     if not a.is_relevant or a.requires_review or a.conflicts or a.novelty in ('conflict','no_change','confirmation') or a.association.type=='unresolved':
         return
     prior=next((e for e in events if e['event_id']==a.association.event_id),None)

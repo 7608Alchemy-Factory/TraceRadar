@@ -66,6 +66,8 @@ class StateManager:
         a = assessment
         if a.evidence_id != evidence['evidence_id']:
             raise AppError('INVALID_EVIDENCE', 'Assessment evidence ID does not match input.', 422)
+        if a.novelty in ('no_change', 'confirmation') and (a.supported_claims or a.proposed_state is not None or a.update_kind is not None):
+            raise AppError('INCONSISTENT_ASSESSMENT', 'No-change assessment contains a state update or new claims.', 422)
         existing = None
         if a.association.type == 'existing_event':
             existing = self.repo.get('events', a.association.event_id)

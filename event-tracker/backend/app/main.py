@@ -175,7 +175,38 @@ def create_app(settings=None):
 
     @app.get('/api/runs/{identity}')
     def run_detail(identity: str):
-        return dict(run=repo.get('runs', identity), steps=repo.steps(identity))
+        run = repo.get('runs', identity)
+        steps = repo.steps(identity)
+        run_error = run.get('error') or {}
+        blocking_error = run_error.get('blocking_error')
+        if run_error.get('code') in ('interrupted', 'WORKFLOW_ERROR'):
+            blocking_error = run_error
+        attempts = {step['evidence_id']: step['attempt'] for step in steps if step['step_name'] == 'assess_evidence'}
+        evidence = []
+        for _, raw, outcome in repo.run_inputs(identity):
+            if outcome is None:
+                evidence_id = raw['evidence_id']
+                attempted = attempts.get(evidence_id, 0)
+                status = 'not_attempted'
+                if attempted:
+                    status = 'processing' if run['status'] == 'running' else 'failed'
+                outcome = dict(status=status, attempts=attempted, error=blocking_error,
+                               evidence_id=evidence_id, event_outcomes=[])
+            evidence.append(dict(source_id=raw['source_id'], external_id=raw['external_id'], title=raw['title'], **outcome))
+        return dict(run=run, steps=steps, evidence=evidence)
+
+    @app.post('/api/runs/{identity}/resume', status_code=202)
+    def resume(identity: str, idempotency_key: str | None = Header(default=None, max_length=200)):
+        original = repo.get('runs', identity)
+        if original['status'] not in ('failed', 'completed_with_errors'):
+            raise AppError('RUN_NOT_RESUMABLE', 'Only a finished run with errors can be resumed.')
+        provider = original['provider']
+        with config_lock:
+            get_provider(provider, config)
+            record, created = repo.resume_run(original, config.model if provider == 'qwen' else None, idempotency_key)
+        if created:
+            manager.submit(record['run_id'])
+        return {'run_id': record['run_id'], 'status': record['status']}
 
     @app.get('/api/topics/{identity}/dashboard')
     def dashboard(identity: str):

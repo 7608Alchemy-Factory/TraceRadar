@@ -86,25 +86,38 @@ def run_case(client, case, provider, timeout):
             'stages': stages}
 
 
-def diagnostic(result, gold):
+def diagnostic(result, gold, fixture):
     expected = {x['item_id']: x for x in gold['evidence_labels']}
     final = result['stages'][-1]
+    stored = {row['evidence']['external_id'].rsplit(':', 1)[-1]: row for row in final['evidence']}
+    stage_summary = []
+    for stage in result['stages']:
+        run = stage['run']['run']
+        by_item = {row['external_id'].rsplit(':', 1)[-1]: row for row in stage['run']['evidence']}
+        cutoff = datetime.fromisoformat(stage['as_of'].replace('Z', '+00:00'))
+        items = []
+        for item in fixture:
+            if datetime.fromisoformat(item['published_at'].replace('Z', '+00:00')) > cutoff:
+                continue
+            item_id = item['external_id']
+            detail = by_item.get(item_id, dict(status='not_attempted', attempts=0, evidence_id=None,
+                                               error=run['error'], event_outcomes=[]))
+            items.append(dict(item_id=item_id, **detail))
+        stage_summary.append(dict(stage_id=stage['stage_id'], run_status=run['status'], events=len(stage['events']),
+                                  notifications=len(stage['notifications']), evidence_rows=len(stage['evidence']), items=items))
     observations = []
-    for row in final['evidence']:
-        evidence = row['evidence']
-        item_id = evidence['external_id'].rsplit(':', 1)[-1]
-        label = expected.get(item_id)
-        assessment = row.get('assessment')
-        observations.append({'item_id': item_id, 'expected_relevance': label['relevance'] if label else None,
+    for detail in stage_summary[-1]['items']:
+        item_id = detail['item_id']
+        label = expected[item_id]
+        assessment = stored.get(item_id, {}).get('assessment')
+        observations.append({'item_id': item_id, 'expected_relevance': label['relevance'],
                              'actual_relevance': assessment.get('is_relevant') if assessment else None,
-                             'processing_status': row.get('status'), 'error': row.get('error')})
+                             'processing_status': detail['status'], 'error': detail['error']})
     return {'evaluation_valid': result['provider'] != 'mock' and gold['annotation_status'] == 'frozen',
             'reason': 'Mock is ExampleSoft-specific; draft labels are not formal scores.'
                       if result['provider'] == 'mock' or gold['annotation_status'] != 'frozen' else None,
             'observations': observations,
-            'stage_summary': [{'stage_id': s['stage_id'], 'run_status': s['run']['run']['status'],
-                               'events': len(s['events']), 'notifications': len(s['notifications']),
-                               'evidence_rows': len(s['evidence'])} for s in result['stages']]}
+            'stage_summary': stage_summary}
 
 
 def main():
@@ -129,16 +142,19 @@ def main():
         validate_gold(case, gold)
         commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT.parent,
                                 capture_output=True, text=True, check=True).stdout.strip()
-        report = {'experiment': {'commit': commit, 'provider': args.provider,
+        dirty = subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT.parent,
+                               capture_output=True, text=True, check=True).stdout
+        report = {'experiment': {'commit': commit, 'working_tree_dirty': bool(dirty), 'provider': args.provider,
                                  'case_sha256': digest(ROOT / 'evaluation/cases' / case_id / 'case.json'),
                                  'fixture_sha256': digest(ROOT / case['fixture']),
                                  'gold_sha256': digest(gold_path),
                                  'replay_options': {'fixture_batch_id': 'all', 'prefilter_enabled': False,
                                                     'near_duplicate_enabled': True}},
-                  'result': result, 'diagnostic': diagnostic(result, gold)}
+                  'result': result, 'diagnostic': diagnostic(result, gold, load(ROOT / case['fixture']))}
         (run_dir / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         print(json.dumps({'case_id': case_id, 'report': str(run_dir / 'report.json'),
-                          'summary': report['diagnostic']['stage_summary']}, ensure_ascii=False))
+                          'summary': [{key: value for key, value in stage.items() if key != 'items'}
+                                      for stage in report['diagnostic']['stage_summary']]}, ensure_ascii=False))
 
 
 if __name__ == '__main__':

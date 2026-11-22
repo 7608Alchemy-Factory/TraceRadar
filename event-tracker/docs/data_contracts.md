@@ -6,9 +6,9 @@ Frontend projections: `frontend/src/types.ts`. All timestamps use timezone-aware
 
 Relations: Topic → approved TopicSource → Source; Topic → multiple Events; Evidence → source and canonical Evidence; TopicEvidence → topic-specific assessment/status; EventEvidence → supporting/conflicting/duplicate; Event → StateTransition → one Notification; Run → ordered RunStep.
 
-EventState has four fields: current_status, timeline, key_facts, sources. Sources means Evidence IDs. Every fact and timeline item includes evidence_ids. The model proposes a full state and expected_version; State Manager verifies topic ownership, evidence availability, reference preservation, version, timeline and milestone policy before Repository atomically commits event, history, notification, evidence relation and processing completion.
+EventState has four fields: current_status, timeline, key_facts, sources. Sources means Evidence IDs. Every fact and timeline item includes evidence_ids. A new fact requires update_kind, an explicit proposed_state.current_status and evidence-backed supported_claims. Confirmation and no_change carry no update or new claims. The application attaches the input evidence ID and verifies any ID returned by the model. Every existing_event association must use a supplied Event ID, with expected_version required for updates. A major milestone must change current_status. State Manager verifies the assembled state before Repository atomically commits event, history, notification, evidence relation and processing completion.
 
-Initial transition before_state is null. Subsequent transitions include full before/after documents. Evidence is stored independently from state. Conflicts and unresolved clues are retained as review records without state transitions.
+Initial transition before_state is null. Subsequent transitions include full before/after documents. Evidence is stored independently from state. A model assessment can contain multiple Event decisions sharing one evidence ID. State, links, transitions and notifications for those decisions commit in one transaction. The transition key includes the Topic, canonical Evidence and target Event. Conflicts and unresolved clues go to the evidence-level review queue, with all pending Event decisions visible.
 
 Run/step status enums and Assessment/Association validation are in the canonical module. Trace captures structured assessment, attempt, timestamps and usage if available; it never stores credentials or private model reasoning.
 
@@ -23,8 +23,8 @@ The fictional raw evidence fixtures are schema-validated during ingestion; deter
 ## Member D additions (2026-11-17)
 
 Source.type includes fixture/replay/rss/manual. The frontend projects all four types.
-Assessment keeps the existing contract; new model runs identify prompt_version=assessment-v2,
-while deterministic demo runs use mock-demo-v1. Event association and milestone meaning are
+Older single-event assessments remain readable, and deterministic demo runs use mock-demo-v1.
+Event association and milestone meaning are
 domain-independent. Every committed update must add a current-evidence supported_claim present
 in key_facts and a current-evidence timeline item. A major milestone must change current_status;
 schema/reference checks cannot prove its semantic importance. Existing facts and history remain
@@ -45,4 +45,4 @@ Schema version 2 adds review_resolutions(topic_id,evidence_id,data) with a compo
 to topic_evidence. Review closure stores resolution_id, decision=dismiss, note, actor=local_user,
 resolved_at and original_assessment. For dismiss only processing status changes. For accept,
 the same transaction writes the human audit Run/Step, corrected Event, transition, notification
-and resolution. The schema does not change beyond version 2. The additive initialization is idempotent.
+and resolution. Schema version 3 adds `run_inputs` to persist the ordered input snapshot and each input's outcome. Initialization remains additive.

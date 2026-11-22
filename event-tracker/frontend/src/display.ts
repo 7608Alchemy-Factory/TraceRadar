@@ -27,6 +27,8 @@ export const status = (value: string) =>
     running: "运行中",
     pending: "等待中",
     failed: "失败",
+    failed_retryable: "服务故障，可重试",
+    not_attempted: "未处理",
     review: "待审核",
     draft: "待配置",
     active: "追踪中",

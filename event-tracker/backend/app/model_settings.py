@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from dotenv import set_key
 import httpx
 from .core import AppError
-from .llm import is_local_model_url, provider_error
+from .llm import is_local_model_url, request_provider, valid_model_url
 
 
 def model_status(settings):
@@ -17,13 +17,7 @@ def model_status(settings):
 
 def validate_address(address):
     address=address.strip().rstrip('/')
-    try:
-        url = urlsplit(address)
-        _ = url.port
-        valid = (url.scheme == 'https' or is_local_model_url(address)) and url.hostname and not (url.username or url.password or url.query or url.fragment) and not url.path.rstrip('/').endswith('/chat/completions')
-    except ValueError:
-        valid = False
-    if not valid or any(c in address for c in '\r\n'):
+    if not valid_model_url(address):
         raise AppError('INVALID_MODEL_CONFIG', 'Use an HTTPS API base URL or a local Ollama loopback URL.', 422)
     return address
 
@@ -34,16 +28,15 @@ def discover_models(settings,body,client=None):
     if not key or any(c in key for c in '\r\n'):
         raise AppError('INVALID_MODEL_CONFIG','请先填写 API Key。',422)
     try:
-        response=(client or httpx).get(address+'/models',headers={'Authorization':'Bearer '+key},timeout=settings.timeout,
-                                       **({'trust_env': False} if client is None and is_local_model_url(address) else {}))
-        if response.is_error:
-            raise provider_error(response)
+        response = request_provider(
+            (client or httpx).get, address + '/models',
+            headers={'Authorization': 'Bearer ' + key}, timeout=settings.timeout,
+            **({'trust_env': False} if client is None and is_local_model_url(urlsplit(address)) else {}),
+        )
         models=response.json()['data']
         result=[dict(id=m['id'],name=m.get('name',m['id'])) for m in models if isinstance(m,dict) and isinstance(m.get('id'),str)]
         if not result:raise ValueError('Empty model list')
         return {'models':result}
-    except (httpx.TimeoutException,httpx.NetworkError):
-        raise AppError('PROVIDER_UNAVAILABLE','无法读取模型列表，请检查网络和 API 地址。',502)
     except (ValueError,KeyError,TypeError):
         raise AppError('PROVIDER_MODELS','该服务未返回兼容模型列表，请按服务商文档填写准确的模型 ID。',502)
 

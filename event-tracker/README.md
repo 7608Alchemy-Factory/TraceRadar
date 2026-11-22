@@ -80,9 +80,17 @@ With the API running, from `event-tracker/backend`, execute the repeatable API d
 
 Result: `evaluation/reports/mock-demo.json`. This script reads expected results; the agent runtime never imports evaluation data.
 
+To generate the Hong Kong McDonald's benchmark report from `event-tracker/backend`:
+
+```powershell
+.\.venv\Scripts\python.exe ..\scripts\run_benchmark.py --provider mock
+```
+
+Each stage lists every visible evidence item and its processing outcome. Use `--provider qwen` to run with your configured model. The draft labels and Mock run are for development checks.
+
 ## Model setup
 
-Open **模型配置**, enter your HTTPS compatible API base URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. Alternatively copy `.env.example` to `.env`, fill the legacy `QWEN_API_KEY`, `QWEN_BASE_URL` and `QWEN_MODEL` names, and restart. The provider identifier qwen is retained for compatibility; the actual model comes from configuration. Missing configuration is rejected before queuing. Credentials remain in the backend; `.env` is ignored by Git.
+Open **模型配置**, enter your compatible HTTPS API base URL or local Ollama loopback URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. Alternatively copy `.env.example` to `.env`, fill the legacy `QWEN_API_KEY`, `QWEN_BASE_URL` and `QWEN_MODEL` names, and restart. The provider identifier qwen is retained for compatibility; the actual model comes from configuration. Missing configuration is rejected before queuing. Credentials remain in the backend; `.env` is ignored by Git.
 
 Adapter follows [Alibaba Cloud Chat Completions](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions) and [structured output documentation](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output). JSON mode is followed by Pydantic validation and State Manager reference/ownership checks. Network/temporary failures have at most 2 attempts; authentication fails immediately. Invalid JSON/schema has at most one repair attempt. No Mock fallback occurs.
 
@@ -114,4 +122,4 @@ See `docs/decisions.md`, `data_contracts.md`, `api_contracts.md`, `progress.md` 
 
 ## Current limits
 
-Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. Restart fails interrupted runs explicitly; run again to recover safely. Changed content at an existing source external ID requires a new revision ID. SQLite schema version 2 adds review_resolutions without replacing existing tables. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.
+Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. In **检查历史**, select a failed run and use **续跑未完成证据** to retry failed and unattempted items from its saved input snapshot. SQLite schema version 3 adds run input snapshots. Changed content at an existing source external ID requires a new revision ID. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.

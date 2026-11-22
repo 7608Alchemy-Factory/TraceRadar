@@ -312,9 +312,11 @@ function ReviewItem({
       <p className="review-content">{text(review.evidence.content)}</p>
       <details className="quiet-details">
         <summary>查看原始判断与证据</summary>
-        <p>{review.assessment.association.reason}</p>
-        {review.assessment.conflicts.map((c, i) => (
-          <p key={i}>{text(c)}</p>
+        {(review.event_decisions ?? [review.assessment]).map((decision, i) => (
+          <div key={i}>
+            <p>{decision.association.reason}</p>
+            {decision.conflicts.map((conflict, j) => <p key={j}>{text(conflict)}</p>)}
+          </div>
         ))}
         <p className="raw-text">{review.evidence.content}</p>
         <small>{review.evidence.url}</small>

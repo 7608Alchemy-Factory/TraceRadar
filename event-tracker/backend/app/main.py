@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import Body, FastAPI, Header, Request
+from pydantic import Field
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
@@ -22,6 +23,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 
 class SourceRecommendationInput(Model):
     llm_summary: bool | None = None
+    search_languages: list[Literal['zh-CN', 'zh-HK', 'en-US', 'ko', 'ja']] | None = Field(default=None, max_length=5)
 
 
 def create_app(settings=None):
@@ -133,6 +135,7 @@ def create_app(settings=None):
     ):
         item = repo.get('topics', identity)
         want_llm = body.llm_summary if (body is not None and body.llm_summary is not None) else llm_summary
+        search_languages = body.search_languages if body is not None else None
         approved_ids = {s['source_id'] for s in repo.sources(identity)}
         with config_lock:
             settings_snapshot = replace(config)
@@ -146,6 +149,7 @@ def create_app(settings=None):
             approved_source_ids=approved_ids,
             llm_summary=want_llm,
             settings=settings_snapshot,
+            search_languages=search_languages,
         )
         persisted = []
         for src in result['sources']:

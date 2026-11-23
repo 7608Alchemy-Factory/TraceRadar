@@ -530,48 +530,57 @@ class ConnectorRouter:
 
 _CJK_RE = re.compile(r'[\u4e00-\u9fff]')
 _CJK_FILLER_RE = re.compile(r'(最新的|最新|关于|追踪|跟踪|关注|动向|动态|消息|情况|的|了)')
-_ASCII_ENTITY_RE = re.compile(r'(?<![A-Za-z0-9])[A-Z][A-Za-z0-9]{2,19}(?![A-Za-z0-9])')
+_PUBLISHER_SUFFIX_RE = re.compile(r'\s+[-–—|]\s+[^-–—|]{1,40}$')
+_QUOTED_PHRASE_RE = re.compile(r'[「『《“"]([A-Za-z0-9\u4e00-\u9fff\s\-\.\+\$]{2,18})[」』》”"]')
+# General proper-noun / alphanumeric brand phrase extractor (strictly domain-agnostic).
+_LATIN_TOKEN = r'(?:[A-Z\u00C0-\u00DE][A-Za-z0-9\u00C0-\u024F&\-\.]{1,18}|\d+[A-Za-z]{2,8}|[A-Za-z]{1,4}\d{1,4})'
+_LATIN_ENTITY_RE = re.compile(rf'(?<![A-Za-z0-9])({_LATIN_TOKEN}(?:\s+{_LATIN_TOKEN}){{0,2}})(?![A-Za-z0-9])')
+_CJK_RUN_RE = re.compile(r'[\u4e00-\u9fff]{2,12}')
+_CJK_SPLIT_PARTICLES_RE = re.compile(r'[的了在與和及為將于於被以至起後中上下不可有是稱指或等但對向從跟同就都已再也仍並并讓给給把]')
+
+# Universal English, temporal, and major news-outlet stopwords (strictly domain-agnostic).
 _GENERIC_PROPER_STOP = {
-    'the', 'nba', 'lpl', 'lck', 'espn', 'yahoo', 'sports', 'news', 'reports', 'report', 'sources',
-    'free', 'agency', 'agent', 'agents', 'trade', 'trades', 'season', 'summer', 'league', 'july',
-    'june', 'august', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-    'lebron', 'james', 'klutch', 'game', 'over', 'podcast', 'shams', 'charania', 'athletic',
-    'liberty', 'ballers', 'official', 'update', 'updates', 'breaking', 'final', 'nba.com',
-    'sohu', 'thepaper', 'sina', 'netease', 'hupu', 'weibo', 'zhihu', 'bilibili', 'baidu', 'toutiao',
-    's16', 's15', 's14', 'cn', 'com',
+    'the', 'and', 'for', 'with', 'from', 'into', 'over', 'after', 'before', 'this', 'that', 'these', 'those',
+    'will', 'would', 'could', 'should', 'what', 'when', 'where', 'which', 'who', 'why', 'how', 'new', 'top',
+    'best', 'most', 'more', 'all', 'its', 'his', 'her', 'their', 'our', 'your', 'has', 'have', 'had', 'are',
+    'was', 'were', 'been', 'not', 'but', 'can', 'may', 'out', 'off', 'now', 'here', 'still', 'just', 'first',
+    'last', 'next', 'final', 'official', 'update', 'updates', 'breaking', 'report', 'reports', 'reported',
+    'sources', 'source', 'news', 'daily', 'post', 'times', 'press', 'media', 'journal', 'review', 'weekly',
+    'today', 'yesterday', 'tomorrow', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
+    'january', 'february', 'march', 'april', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+    'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
+    'espn', 'yahoo', 'sports', 'cbs', 'nbc', 'abc', 'bbc', 'cnn', 'reuters', 'bloomberg', 'forbes', 'athletic',
+    'bleacher', 'hoopshype', 'si', 'sohu', 'thepaper', 'sina', 'netease', 'hupu', 'weibo', 'zhihu', 'bilibili',
+    'baidu', 'toutiao', 'hk01', 'hket', 'ufood', 'uhk', 'am730', 'mingpao', 'singtao', 'bastille', 'hypebeast',
+    'lifestyle', 'asia', 'hong', 'kong', 'china', 'usa', 'com', 'cn', 'hk', 'org', 'net', 'app', 'inc', 'ltd',
+    'year', 'years', 'month', 'months', 'week', 'weeks', 'day', 'days', 'time', 'part', 'step', 'plan', 'list',
+    'guide', 'deal', 'deals', 'free', 'agency', 'agent', 'agents', 'trade', 'trades', 'season', 'summer', 'league',
+    'game', 'games', 'team', 'teams', 'player', 'players', 'star', 'stars', 'podcast', 'video', 'photo', 'watch',
 }
 
-# Neutral, zero-hindsight-bias NBA team registry (all major contenders treated identically).
-_NBA_TEAM_PROFILES: list[tuple[str, str, list[str]]] = [
-    ('timberwolves', 'Minnesota Timberwolves', ['timberwolves', 'minnesota', 'wolves']),
-    ('warriors', 'Golden State Warriors', ['warriors', 'golden state', 'draymond green']),
-    ('heat', 'Miami Heat', ['miami heat', 'heat']),
-    ('cavaliers', 'Cleveland Cavaliers', ['cavaliers', 'cleveland', 'cavs']),
-    ('76ers', 'Philadelphia 76ers', ['76ers', 'sixers', 'philadelphia']),
-    ('nuggets', 'Denver Nuggets', ['nuggets', 'denver']),
-    ('knicks', 'New York Knicks', ['knicks', 'new york knicks']),
-    ('mavericks', 'Dallas Mavericks', ['mavericks', 'dallas']),
-    ('spurs', 'San Antonio Spurs', ['spurs', 'san antonio']),
-    ('celtics', 'Boston Celtics', ['celtics', 'boston']),
-    ('clippers', 'LA Clippers', ['clippers']),
-    ('rockets', 'Houston Rockets', ['rockets', 'houston']),
-    ('suns', 'Phoenix Suns', ['phoenix suns', 'suns']),
-    ('bucks', 'Milwaukee Bucks', ['milwaukee bucks', 'bucks']),
-]
+# Universal Chinese non-entity function/generic words (strictly domain-agnostic).
+_CJK_STOP_PHRASES = {
+    '香港', '中國', '中国', '全球', '今日', '昨日', '明日', '近日', '近期', '目前', '最新', '全新', '正式', '首次',
+    '宣布', '公布', '推出', '登場', '登场', '上線', '上线', '開始', '开始', '結束', '结束', '回歸', '回归', '報道',
+    '报道', '表示', '指出', '透露', '回應', '回应', '確認', '确认', '消息', '進展', '进展', '動態', '动态', '官方',
+    '活動', '活动', '系列', '期間', '期间', '限定', '限時', '限时', '優惠', '优惠', '免費', '免费', '折扣', '價格',
+    '价格', '相關', '相关', '繼續', '继续', '持續', '持续', '同時', '同时', '已經', '已经', '我們', '我们', '他們',
+    '他们', '以及', '包括', '成為', '成为', '獲得', '获得', '進行', '进行', '部分', '全部', '主要', '重要', '可能',
+    '預計', '预计', '據報', '据报', '傳聞', '传闻', '媒體', '媒体', '網友', '网友', '用戶', '用户', '市場', '市场',
+    '公司', '品牌', '合作', '聯乘', '联乘', '聯名', '联名', '獨家', '独家', '全港', '分店', '門店', '门店',
+    '套餐', '新品', '商品', '服務', '服务', '功能', '版本', '系統', '系统', '問題', '问题', '情況', '情况', '方式',
+}
+
+# Generic, domain-agnostic terminal status cues (never team/brand specific).
+_TERMINAL_STATUS_RE = re.compile(
+    r'\b(patched|resolved|closed|expired|cancelled|canceled|completed|archived|ended)\b|'
+    r'(已结束|已結束|已过期|已過期|已结案|已結案|已修复|已修復|已取消|已终止|已終止|已完结|已完結)',
+    re.I,
+)
 
 
-# Neutral, zero-hindsight-bias McDonald's HK sub-campaign / collab profiles (surfaced only after appearing in ingested news).
-_MCD_HK_CAMPAIGN_PROFILES: list[tuple[str, str, list[str]]] = [
-    ('mcgriddles', 'McGriddles 全日早餐系列', ['mcgriddles', '班戟']),
-    ('chiikawa', 'CHIIKAWA 開心樂園餐聯乘', ['chiikawa', '吉伊卡哇']),
-    ('mcspicy_gdragon', '脆辣雞腿飽 / 韓辣牛油 G-DRAGON 聯乘', ['脆辣雞腿飽', '韓辣牛油', 'g-dragon', 'gochujang']),
-    ('vouchers', '麥麥慳套票 / $100 四餐', ['麥麥慳', '套票']),
-    ('afternoon_tea', '鹽味焦糖脆條 / $20-$22 下午茶', ['下午茶', '焦糖', '脆條', '麥旋風']),
-    ('jackson_wang', '王嘉爾 Under The Castle 萬聖節聯乘', ['王嘉爾', 'jackson wang', '黑魂版', 'under the castle']),
-    ('pokemon', 'Pokémon 寶可夢 30 週年 / Pokémon GO 聯乘', ['pokémon', 'pokemon', '寶可夢', '比卡超']),
-    ('bt21', 'BT21 開心樂園餐聯乘', ['bt21', 'chimmy', 'tata']),
-    ('winterfest', '旅發局繽紛冬日賞 / 買一送一', ['繽紛冬日', '買一送一', '買1送1', '旅發局']),
-]
+def _strip_publisher_suffix(text: str) -> str:
+    return _PUBLISHER_SUFFIX_RE.sub('', str(text or '').strip()).strip()
 
 
 def _find_grounded_fact_snippet(
@@ -580,7 +589,6 @@ def _find_grounded_fact_snippet(
     relevant_rows: list[dict] | None,
 ) -> tuple[str, str]:
     """0-Extra-Token rationale: reuse already-generated LLM key_facts / supported_claims mentioning the candidate."""
-    # 1. Prefer already-committed EventState.key_facts (newest first)
     for ev in reversed(list(current_events or [])):
         facts = list(((ev.get('state') or {}).get('key_facts') or []))
         for f in reversed(facts):
@@ -589,7 +597,6 @@ def _find_grounded_fact_snippet(
             if fact_text and any(_term_in_text(a, low) for a in aliases):
                 return 'key_fact', fact_text[:220]
 
-    # 2. Fall back to supported_claims in assessed evidence_decisions (includes Needs Review rumors!)
     for row in reversed(list(relevant_rows or [])):
         ass = row.get('assessment') or {}
         claims = list(ass.get('supported_claims') or [])
@@ -602,10 +609,9 @@ def _find_grounded_fact_snippet(
                 pub = str((row.get('evidence') or {}).get('published_at') or '')[:10]
                 return f'claim@{pub}' if pub else 'claim', fact_text[:220]
 
-    # 3. Last resort: exact headline of the latest relevant article mentioning the candidate
     for row in reversed(list(relevant_rows or [])):
         ev = row.get('evidence') or {}
-        title = str(ev.get('title') or '').strip()
+        title = _strip_publisher_suffix(str(ev.get('title') or ''))
         blob = f"{title} {ev.get('content', '')}".lower()
         if title and any(_term_in_text(a, blob) for a in aliases):
             pub = str(ev.get('published_at') or '')[:10]
@@ -613,20 +619,26 @@ def _find_grounded_fact_snippet(
     return '', ''
 
 
-def _summarize_candidates_with_llm(
+def _advise_watchlist_with_llm(
     topic: dict,
-    candidates: list[dict],
+    unapproved_candidates: list[dict],
+    approved_branches: list[dict],
     current_events: list[dict] | None,
+    notifications: list[dict] | None,
     settings,
-) -> tuple[str | None, dict[str, str]]:
-    """Optional ON/OFF lightweight single-call LLM summary comparing surfaced candidate branches."""
-    if not candidates or not settings:
-        return None, {}
+) -> tuple[str | None, dict[str, str], dict[str, str], list[dict]]:
+    """Optional ON/OFF single-call general AI Watchlist advisor:
+    1. Compares & ranks unapproved candidates strictly from fact_evidence.
+    2. Semantically judges which approved branches are settled/expired/obsolete across ANY domain.
+    3. Proposes up to 2 open-domain follow-up queries grounded in current_events/key_facts.
+    """
+    if not settings or (not unapproved_candidates and not approved_branches and not current_events):
+        return None, {}, {}, []
     api_key = getattr(settings, 'api_key', '')
     base_url = getattr(settings, 'base_url', '')
     model = getattr(settings, 'model', '')
     if not (api_key and base_url and model):
-        return None, {}
+        return None, {}, {}, []
 
     payload = {
         'topic': {'title': topic.get('title', ''), 'description': topic.get('description', '')},
@@ -634,24 +646,50 @@ def _summarize_candidates_with_llm(
             {
                 'title': e.get('title', ''),
                 'version': e.get('version', 0),
-                'status': str((e.get('state') or {}).get('current_status', ''))[:260],
+                'status': str((e.get('state') or {}).get('current_status', ''))[:280],
+                'recent_facts': [
+                    str(f.get('fact', ''))[:160]
+                    for f in list(((e.get('state') or {}).get('key_facts') or []))[-3:]
+                ],
             }
-            for e in (current_events or [])[:4]
+            for e in (current_events or [])[:8]
         ],
-        'candidates': [
+        'recent_milestones': [
+            {
+                'priority': n.get('priority'),
+                'reason_codes': n.get('reason_codes') or [],
+                'message': str(n.get('message') or '')[:180],
+            }
+            for n in (notifications or [])[-6:]
+        ],
+        'unapproved_candidates': [
             {
                 'source_id': c['source_id'],
                 'label': (c.get('config') or {}).get('branch_label') or c['name'],
                 'fact_evidence': c.get('fact_evidence') or c.get('reason', ''),
             }
-            for c in candidates[:6]
+            for c in unapproved_candidates[:8]
+        ],
+        'approved_branches': [
+            {
+                'source_id': b['source_id'],
+                'label': (b.get('config') or {}).get('branch_label') or b['name'],
+                'health_status': b.get('health_status'),
+                'fact_evidence': b.get('fact_evidence') or '',
+            }
+            for b in approved_branches[:10]
         ],
     }
     system = (
-        'You help a user decide which newly discovered candidate search keywords/branches to approve for an event tracker. '
-        'Return ONLY JSON matching {"summary_note": "1-2 concise Chinese sentences comparing which 1-2 candidates are highest priority to check right now and why", '
-        '"per_source": {"<source_id>": "1 concise Chinese sentence explaining why to approve or skip this branch based ONLY on fact_evidence"}}. '
-        'Never invent facts not present in the input.'
+        'You are a domain-agnostic Watchlist advisor for an autonomous event tracker. '
+        'Using ONLY the supplied topic, current_events, recent_milestones, unapproved_candidates, and approved_branches, return ONLY JSON:\n'
+        '{\n'
+        '  "summary_note": "1-2 concise Chinese sentences highlighting top candidates to approve AND any branches that can now be archived",\n'
+        '  "per_source": {"<unapproved_source_id>": "1 concise Chinese sentence grounded strictly in fact_evidence explaining whether to approve or skip"},\n'
+        '  "retire_branches": [{"source_id": "<approved_branch_source_id>", "reason": "1 concise Chinese sentence explaining why this branch is now settled, expired, or superseded based on current_events"}],\n'
+        '  "suggested_queries": [{"label": "concise entity or sub-topic name", "query": "2-4 focused search keywords", "reason": "1 concise Chinese sentence grounded in current_events"}]\n'
+        '}\n'
+        'Rules: Never invent facts outside the input. Only put a branch into retire_branches if current_events clearly show its storyline ended, expired, or lost out to a finalized resolution (silence alone is NOT a reason to retire). Return at most 2 suggested_queries only if they are genuinely missing from unapproved_candidates and approved_branches.'
     )
     try:
         resp = httpx.post(
@@ -666,19 +704,35 @@ def _summarize_candidates_with_llm(
                     {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)},
                 ],
             },
-            timeout=20.0,
+            timeout=25.0,
         )
         if resp.status_code != 200:
-            return None, {}
+            return None, {}, {}, []
         parsed = json.loads(resp.json()['choices'][0]['message']['content'])
         if not isinstance(parsed, dict):
-            return None, {}
-        note = str(parsed.get('summary_note') or '').strip()[:360] or None
+            return None, {}, {}, []
+        note = str(parsed.get('summary_note') or '').strip()[:380] or None
         raw_map = parsed.get('per_source') if isinstance(parsed.get('per_source'), dict) else {}
         per_source = {str(k): str(v).strip()[:240] for k, v in raw_map.items() if str(v or '').strip()}
-        return note, per_source
+        approved_ids = {b['source_id'] for b in approved_branches}
+        retire_map: dict[str, str] = {}
+        for item in (parsed.get('retire_branches') or []):
+            if isinstance(item, dict):
+                sid = str(item.get('source_id') or '').strip()
+                rsn = str(item.get('reason') or '').strip()[:240]
+                if sid in approved_ids and rsn:
+                    retire_map[sid] = rsn
+        suggested: list[dict] = []
+        for item in (parsed.get('suggested_queries') or [])[:2]:
+            if isinstance(item, dict):
+                lbl = str(item.get('label') or '').strip()[:40]
+                qry = str(item.get('query') or '').strip()[:60]
+                rsn = str(item.get('reason') or '').strip()[:220]
+                if lbl and qry:
+                    suggested.append({'label': lbl, 'query': qry, 'reason': rsn})
+        return note, per_source, retire_map, suggested
     except Exception:
-        return None, {}
+        return None, {}, {}, []
 
 
 def _term_in_text(term: str, lowered_text: str) -> bool:
@@ -710,20 +764,16 @@ def _extract_clean_query(topic: dict) -> str:
     title = str(topic.get('title', '') or '').strip()
     desc = str(topic.get('description', '') or '').strip()
     if _CJK_RE.search(title):
-        # Drop parenthetical examples/sub-facets so Google News RSS does not AND-lock to 0 hits.
         core = re.sub(r'（[^）]*）|\([^)]*\)', ' ', title)
         core = re.sub(r'[，。！？、；：“”‘’【】\[\]|/\\:]+', ' ', core)
         core = _CJK_FILLER_RE.sub(' ', core)
-        ascii_entities = _ASCII_ENTITY_RE.findall(core)
-        # If the title already contains 2+ high-signal ASCII identifiers (e.g. "BLG LPL"),
-        # keep them as a crisp high-recall anchor so diverse sub-facets (roster/streams/interviews) all enter Round 1.
+        ascii_entities = re.findall(r'(?<![A-Za-z0-9])[A-Z][A-Za-z0-9]{1,19}(?![A-Za-z0-9])', core)
         if len(ascii_entities) >= 2:
             dedup_ascii: list[str] = []
             for tok in ascii_entities:
                 if tok.lower() not in {x.lower() for x in dedup_ascii}:
                     dedup_ascii.append(tok)
             return ' '.join(dedup_ascii[:3])
-        # Otherwise split on conjunctions and keep at most 2 concise chunks (~20 chars).
         parts = [p.strip() for p in re.split(r'[\s与和及]+', core) if p.strip()]
         compact = ' '.join(parts[:3])
         return compact[:24].strip() or title[:24]
@@ -732,64 +782,155 @@ def _extract_clean_query(topic: dict) -> str:
     return ' '.join(tokens) if tokens else (title[:48] or 'news')
 
 
-def _build_google_news_rss_url(query: str, *, recency_days: int | None = None) -> str:
+def _build_google_news_rss_url(query: str, *, recency_days: int | None = None, prefer_zh: bool = False) -> str:
     q = ' '.join(str(query or '').split()).strip() or 'news'
     if isinstance(recency_days, int) and 1 <= recency_days <= 365 and 'when:' not in q:
         q = f'{q} when:{recency_days}d'
-    if _CJK_RE.search(q) or any(tok in q.upper() for tok in ('LPL', 'BLG', 'WBG', 'TES', 'JDG', 'EDG', 'RNG', 'HK')):
+    if prefer_zh or _CJK_RE.search(q):
         return f'https://news.google.com/rss/search?q={quote_plus(q)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans'
     return f'https://news.google.com/rss/search?q={quote_plus(q)}&hl=en-US&gl=US&ceid=US:en'
 
 
-def _detect_milestone_winner(
-    current_events: list[dict] | None,
-    notifications: list[dict] | None = None,
-) -> tuple[bool, set[str]]:
-    """Detect whether the main LeBron decision storyline reached final resolution and which team won (never triggered by other players' contracts)."""
-    has_breaking_notif = any(
-        n.get('priority') == 'breaking' or 'major_milestone' in (n.get('reason_codes') or [])
-        for n in (notifications or [])
-    )
-    subject_decision_re = re.compile(
-        r'(?:lebron(?:\s+james)?|lbj|詹姆斯).{0,70}'
-        r'(?:picks?|picked|signs?|signed|agrees?|agreed|joins?|joined|commits?|committed|chooses?|chose|'
-        r'选择|選擇|加盟|签下|簽下|签约|簽約|官宣|同意与|同意與|达成协议|達成協議)',
-        re.I,
-    )
-    winning_patterns: list[tuple[str, re.Pattern]] = [
-        ('76ers', re.compile(r'(philadelphia\s+76ers|76ers|sixers|费城76人|76人)', re.I)),
-        ('warriors', re.compile(r'(golden\s+state\s+warriors|warriors|金州勇士|勇士)', re.I)),
-        ('cavaliers', re.compile(r'(cleveland\s+cavaliers|cavaliers|cavs|克利夫兰骑士|骑士)', re.I)),
-        ('heat', re.compile(r'(miami\s+heat|迈阿密热火|热火)', re.I)),
-        ('timberwolves', re.compile(r'(minnesota\s+timberwolves|timberwolves|明尼苏达森林狼|森林狼)', re.I)),
-    ]
-    settled = False
-    winning_slugs: set[str] = set()
-    for ev in (current_events or []):
-        st = ev.get('state') or {}
-        status_text = str(st.get('current_status', '') or '')
-        m = subject_decision_re.search(status_text)
-        if not m:
+def _extract_general_terms(text: str) -> list[str]:
+    """Domain-agnostic 0-Token phrase extraction: quoted phrases, capitalized/branded Latin phrases, and clean CJK phrases."""
+    cleaned = _strip_publisher_suffix(text)
+    found: list[str] = []
+
+    for m in _QUOTED_PHRASE_RE.findall(cleaned):
+        phrase = ' '.join(m.split()).strip()
+        if 2 <= len(phrase) <= 16 and not phrase.isdigit() and phrase not in _CJK_STOP_PHRASES:
+            found.append(phrase)
+
+    for m in _LATIN_ENTITY_RE.findall(cleaned):
+        phrase = ' '.join(m.split()).strip(' .-&')
+        if len(phrase) < 2:
             continue
-        # Only inspect the clause immediately around LeBron's decision (prevent Draymond Green / Jaylen Brown false triggers!)
-        clause = status_text[m.start():m.end() + 70]
-        for slug, pat in winning_patterns:
-            if pat.search(clause):
-                settled = True
-                winning_slugs.add(slug)
-    if settled and has_breaking_notif:
-        return True, winning_slugs
-    return settled, winning_slugs
+        words = phrase.split()
+        while words and words[0].lower() in _GENERIC_PROPER_STOP:
+            words.pop(0)
+        while words and words[-1].lower() in _GENERIC_PROPER_STOP:
+            words.pop()
+        if not words:
+            continue
+        phrase = ' '.join(words)
+        low = phrase.lower()
+        if len(phrase) < 2 or low in _GENERIC_PROPER_STOP or phrase.isdigit():
+            continue
+        if len(words) == 1 and re.fullmatch(r's\d{1,2}|20\d{2}', low):
+            continue
+        found.append(phrase)
+
+    for run in _CJK_RUN_RE.findall(cleaned):
+        for seg in _CJK_SPLIT_PARTICLES_RE.split(run):
+            seg = seg.strip()
+            if 2 <= len(seg) <= 5 and seg not in _CJK_STOP_PHRASES:
+                found.append(seg)
+
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for item in found:
+        k = item.lower()
+        if k not in seen:
+            seen.add(k)
+            uniq.append(item)
+    return uniq
+
+
+def _discover_general_candidates(
+    topic: dict,
+    relevant_rows: list[dict],
+    current_events: list[dict] | None,
+) -> list[dict]:
+    """100% domain-agnostic 0-Token branch/entity discovery from already-assessed relevant articles and LLM event titles."""
+    title_str = str(topic.get('title', '') or '')
+    title_lower = title_str.lower()
+    anchor_tokens = {t.lower() for t in _extract_clean_query(topic).split() if len(t) >= 2}
+
+    event_title_terms: set[str] = set()
+    for ev in (current_events or []):
+        for term in _extract_general_terms(str(ev.get('title') or '')):
+            event_title_terms.add(term.lower())
+
+    stats: dict[str, dict] = {}
+    for row in relevant_rows:
+        ev = row.get('evidence') or {}
+        pub = str(ev.get('published_at') or '')[:10]
+        headline = _strip_publisher_suffix(str(ev.get('title') or ''))
+        snippet = str(ev.get('content') or '')[:260]
+        doc_terms = _extract_general_terms(headline)
+        for qm in _QUOTED_PHRASE_RE.findall(snippet):
+            phrase = ' '.join(qm.split()).strip()
+            if 2 <= len(phrase) <= 16 and phrase not in _CJK_STOP_PHRASES:
+                doc_terms.append(phrase)
+
+        seen_in_doc: set[str] = set()
+        for term in doc_terms:
+            low = term.lower()
+            if low in seen_in_doc or low in anchor_tokens or low in title_lower:
+                continue
+            words = low.split()
+            if words and all(_term_in_text(w, title_lower) for w in words):
+                continue
+            seen_in_doc.add(low)
+            entry = stats.get(low)
+            if not entry:
+                stats[low] = {
+                    'term': term,
+                    'low': low,
+                    'count': 0,
+                    'first_date': pub,
+                    'in_event_title': low in event_title_terms,
+                    'is_cjk_only': bool(_CJK_RE.search(term)) and not re.search(r'[A-Za-z0-9]', term),
+                    'is_quoted': bool(re.search(rf'[「『《“"]{re.escape(term)}[」』》”"]', f'{headline} {snippet}')),
+                }
+                entry = stats[low]
+            entry['count'] += 1
+            if pub and (not entry['first_date'] or pub < entry['first_date']):
+                entry['first_date'] = pub
+            if low in event_title_terms:
+                entry['in_event_title'] = True
+
+    filtered = [
+        info for info in stats.values()
+        if (not info['is_cjk_only']) or info['is_quoted'] or info['count'] >= 2 or info['in_event_title']
+    ]
+
+    filtered.sort(key=lambda x: (-len(x['term']), -x['count'], x['low']))
+    merged: list[dict] = []
+    for cand in filtered:
+        parent = next(
+            (
+                m for m in merged
+                if cand['low'] != m['low']
+                and _term_in_text(cand['low'], m['low'])
+                and (m['count'] >= cand['count'] or m['in_event_title'])
+            ),
+            None,
+        )
+        if parent is not None:
+            parent['count'] = max(parent['count'], cand['count'])
+            if cand['first_date'] and (not parent['first_date'] or cand['first_date'] < parent['first_date']):
+                parent['first_date'] = cand['first_date']
+            continue
+        merged.append(cand)
+
+    merged.sort(
+        key=lambda x: (
+            0 if (x['in_event_title'] or x['is_quoted']) else 1,
+            -x['count'],
+            x['first_date'],
+            x['low'],
+        )
+    )
+    return merged[:8]
 
 
 def _audit_source_health(
     src: dict,
     evidence_decisions: list[dict] | None,
-    *,
-    milestone_settled: bool,
-    winning_slugs: set[str],
+    current_events: list[dict] | None = None,
 ) -> tuple[str, str | None]:
-    """0-Token Silence vs. Noise Audit + Milestone Closure check for branch sources."""
+    """100% general 0-Token Silence vs. Noise Audit + generic terminal-status check for branch sources."""
     cfg = src.get('config') or {}
     if cfg.get('role') != 'branch':
         return 'active', None
@@ -798,6 +939,7 @@ def _audit_source_health(
     assessed_irrelevant = 0
     useful = 0
     recent_outcomes: list[tuple[str, bool]] = []
+    linked_event_ids: set[str] = set()
     for row in (evidence_decisions or []):
         ev = row.get('evidence') or {}
         if ev.get('source_id') != sid:
@@ -815,6 +957,13 @@ def _audit_source_health(
             elif ass.get('is_relevant') is True:
                 useful += 1
                 recent_outcomes.append((pub, True))
+                assoc = ass.get('association') or {}
+                if assoc.get('event_id'):
+                    linked_event_ids.add(str(assoc['event_id']))
+                for dec in (ass.get('event_decisions') or []):
+                    d_assoc = dec.get('association') or {}
+                    if d_assoc.get('event_id'):
+                        linked_event_ids.add(str(d_assoc['event_id']))
 
     recent_outcomes.sort(key=lambda pair: pair[0])
     trailing_irrelevant = 0
@@ -831,13 +980,17 @@ def _audit_source_health(
             f'⚠️ 噪音审计告警：该支线近期连续 {trailing_irrelevant} 篇（累计 {assessed_irrelevant} 篇）新报道均被判无关，正在消耗验证 Token，建议取消勾选退役！',
         )
 
-    # Rule 2: Milestone Closure (main storyline finalized -> unchosen competing branches can be archived)
-    branch_slug = str(cfg.get('branch_slug') or '').lower()
-    if milestone_settled and branch_slug and winning_slugs and branch_slug not in winning_slugs:
-        return (
-            'milestone_closed',
-            '🏁 主线事件已官宣落定，该未中标竞争支线可取消勾选归档以保持词表精简。',
-        )
+    # Rule 2: Generic terminal-status check (nuanced semantic closure is judged by AI ON mode)
+    if linked_event_ids and current_events:
+        matched_events = [e for e in current_events if str(e.get('event_id')) in linked_event_ids]
+        if matched_events and all(
+            _TERMINAL_STATUS_RE.search(str((e.get('state') or {}).get('current_status', '') or ''))
+            for e in matched_events
+        ):
+            return (
+                'milestone_closed',
+                '🏁 该支线关联事件已进入完结/过期状态，可取消勾选归档以保持词表精简。',
+            )
 
     if useful > 0:
         return 'productive', f'✅ 活跃有效：已贡献 {useful} 篇相关报道（噪音 {assessed_irrelevant} 篇）。'
@@ -856,25 +1009,21 @@ def recommend_sources(
     llm_summary: bool = False,
     settings=None,
 ) -> dict:
-    """Recommend topic-scoped watchlist anchors/branches (with 0-Token key_fact rationales + optional ON/OFF LLM comparison) and media channels."""
+    """100% general topic-scoped Watchlist & Channel recommender:
+    - Zero hardcoded domain/team/brand tables.
+    - 0-Token entity/phrase discovery grounded in LLM EventState.key_facts.
+    - 0-Token Silence vs. High-Noise statistical health audit.
+    - Optional ON/OFF single-call AI advisor for candidate priority comparison, semantic branch archival, and open-domain query suggestions.
+    """
     title_str = str(topic.get('title', '') or '')
     desc_str = str(topic.get('description', '') or '')
     text = f'{title_str} {desc_str}'.lower()
     query = _extract_clean_query(topic)
+    prefer_zh = bool(_CJK_RE.search(title_str))
     topic_slug = str(topic.get('topic_id', 'default'))[:8].lower()
     approved_set = set(approved_source_ids or set())
 
-    lbj_sim_rel = 'lbj_2026_daily_sim/all.json'
-    lbj_sim_available = bool(corpus_root and (corpus_root / lbj_sim_rel).exists())
-    is_lbj_topic = any(k in text for k in ('lebron', 'lbj', '詹姆斯'))
-
-    mcd_sim_rel = 'mcd_hk_real_2026/all.json'
-    mcd_sim_available = bool(corpus_root and (corpus_root / mcd_sim_rel).exists())
-    is_mcd_topic = any(k in text for k in ('麥當勞', '麦当劳', 'mcdonald'))
-
-    milestone_settled, winning_slugs = _detect_milestone_winner(current_events, notifications)
-
-    # Pre-collect relevant evidence chronologically for 0-Token entity discovery & fact grounding.
+    # Pre-collect relevant evidence chronologically for 0-Token discovery & fact grounding.
     relevant_rows = []
     for row in (evidence_decisions or []):
         st = row.get('status')
@@ -883,31 +1032,43 @@ def recommend_sources(
             relevant_rows.append(row)
     relevant_rows.sort(key=lambda r: str((r.get('evidence') or {}).get('published_at', '')))
 
+    # Data-driven detection: if this topic is anchored on an offline replay corpus, branches query that same corpus.
+    active_replay_anchor = next(
+        (
+            s for s in repo_sources
+            if s['source_id'] in approved_set
+            and s.get('type') == 'replay'
+            and (s.get('config') or {}).get('corpus_path')
+            and (s.get('config') or {}).get('role') != 'branch'
+        ),
+        None,
+    )
+
     # Filter out other topics' private generated sources so cross-topic tabs stay clean.
     recommended = []
     for src in repo_sources:
         sid = src['source_id']
-        if sid.startswith('lbj_anchor_') and sid != f'lbj_anchor_{topic_slug}' and sid not in approved_set:
-            continue
-        if sid.startswith('mcd_anchor_') and sid != f'mcd_anchor_{topic_slug}' and sid not in approved_set:
-            continue
         if sid.startswith('kw_') and not sid.startswith(f'kw_{topic_slug}_') and sid not in approved_set:
+            continue
+        if sid.startswith('gnews_') and sid != f'gnews_{topic_slug}' and sid not in approved_set:
+            continue
+        if (sid.startswith('replay_') or sid.startswith('anchor_')) and sid not in approved_set:
             continue
         cfg = src.get('config') or {}
         tier = cfg.get('tier', 'simulated')
-        role = cfg.get('role') or ('anchor' if sid == f'gnews_{topic_slug}' else 'channel')
+        role = cfg.get('role') or (
+            'anchor' if (sid == f'gnews_{topic_slug}' or (src.get('type') == 'replay' and sid in approved_set)) else 'channel'
+        )
         base_reason = (
             'Registered source in workspace.'
             if src['type'] != 'fixture'
-            else 'Registered simulated cybersecurity demo source.'
+            else 'Registered simulated demo source.'
         )
         health_status, health_note = _audit_source_health(
             src,
             evidence_decisions,
-            milestone_settled=milestone_settled,
-            winning_slugs=winning_slugs,
+            current_events=current_events,
         )
-        # Re-ground fact evidence for existing branch sources so rationales stay human-readable!
         fact_evidence = ''
         if role == 'branch':
             aliases = list(cfg.get('query_any') or [])
@@ -937,229 +1098,80 @@ def recommend_sources(
             )
         )
 
-    dynamic_candidates = []
-    # Topic 1: LBJ Daily Simulation Anchor (53 real URLs)
-    if is_lbj_topic and lbj_sim_available:
-        dynamic_candidates.append(
-            dict(
-                source_id=f'lbj_anchor_{topic_slug}',
-                name='主搜索词：LeBron James（逐日模拟池 · 53条全真链）',
-                type='replay',
-                endpoint=f'replay://{lbj_sim_rel}',
-                config={
-                    'corpus_path': lbj_sim_rel,
-                    'query_any': ['lebron', 'james'],
-                    'tier': 'media',
-                    'role': 'anchor',
-                },
-                reason='冷启动布尔主词（OR: LeBron / James）：只抓取直接提及老詹的报道，作为零泄题基线。',
-                fact_evidence='',
-                role='anchor',
-                tier='media',
-                registered=False,
-                health_status='active',
-                retirement_recommended=False,
-            )
-        )
+    dynamic_candidates: list[dict] = []
 
-    # Topic 2: McDonald's HK Real 2026 Promotions Anchor (51 real URLs)
-    if is_mcd_topic and mcd_sim_available:
-        dynamic_candidates.append(
-            dict(
-                source_id=f'mcd_anchor_{topic_slug}',
-                name='主搜索词：香港麥當勞優惠與新品（51條 2026 真實港媒與官網語料）',
-                type='replay',
-                endpoint=f'replay://{mcd_sim_rel}',
-                config={
-                    'corpus_path': mcd_sim_rel,
-                    'query_all': ['麥當勞'],
-                    'query_any': ['優惠', '套餐', '聯乘', '登場', '回歸', '新品', 'App', '開心樂園餐', '買一送一', '買1送1'],
-                    'tier': 'media',
-                    'role': 'anchor',
-                },
-                reason='冷啟動布爾主詞（麥當勞 AND 優惠/套餐/聯乘/新品）：抓取香港主流媒體與官網促銷主線，自動發現大型聯乘/套票子活動。',
-                fact_evidence='',
-                role='anchor',
-                tier='media',
-                registered=False,
-                health_status='active',
-                retirement_recommended=False,
-            )
-        )
-
-    # 0-Token Zero-Hindsight-Bias Chronological Branch Discovery from RELEVANT ingested evidence
-    if is_lbj_topic and lbj_sim_available and relevant_rows:
-        discovered_teams: dict[str, dict] = {}
-        title_lower = title_str.lower()
-        for row in relevant_rows:
-            ev = row.get('evidence') or {}
-            blob = f"{ev.get('title', '')} {ev.get('content', '')}".lower()
-            pub_date = str(ev.get('published_at', ''))[:10]
-            for slug, team_name, aliases in _NBA_TEAM_PROFILES:
-                if any(_term_in_text(a, title_lower) for a in aliases):
-                    continue
-                if any(_term_in_text(a, blob) for a in aliases):
-                    if slug not in discovered_teams:
-                        discovered_teams[slug] = {
-                            'slug': slug,
-                            'name': team_name,
-                            'aliases': aliases,
-                            'first_date': pub_date,
-                            'count': 0,
-                        }
-                    discovered_teams[slug]['count'] += 1
-
-        ordered_teams = sorted(discovered_teams.values(), key=lambda t: (t['first_date'], -t['count'], t['slug']))
-        for info in ordered_teams[:10]:
-            sid = f"kw_{topic_slug}_{info['slug']}"
-            _, fact_snip = _find_grounded_fact_snippet(info['aliases'], current_events, relevant_rows)
-            reason = (
-                f"依据（已提炼事实）：{fact_snip}"
-                if fact_snip
-                else f"0-Token 实体发现：{info['first_date']} 起在相关报道中提及 {info['name']}（共 {info['count']} 篇）。"
-            )
-            dynamic_candidates.append(
-                dict(
-                    source_id=sid,
-                    name=f"支线候选：{info['name']}（{info['first_date']} 首次提及 · {info['count']} 篇）",
-                    type='replay',
-                    endpoint=f'replay://{lbj_sim_rel}',
-                    config={
-                        'corpus_path': lbj_sim_rel,
-                        'query_any': info['aliases'],
-                        'tier': 'media',
-                        'role': 'branch',
-                        'branch_slug': info['slug'],
-                        'branch_label': info['name'],
-                    },
-                    reason=reason,
-                    fact_evidence=fact_snip,
-                    role='branch',
-                    tier='media',
-                    registered=False,
-                    health_status='candidate',
-                    retirement_recommended=False,
-                )
-            )
-    elif is_mcd_topic and mcd_sim_available and relevant_rows:
-        discovered_camps: dict[str, dict] = {}
-        title_lower = title_str.lower()
-        for row in relevant_rows:
-            ev = row.get('evidence') or {}
-            blob = f"{ev.get('title', '')} {ev.get('content', '')}".lower()
-            pub_date = str(ev.get('published_at', ''))[:10]
-            for slug, camp_name, aliases in _MCD_HK_CAMPAIGN_PROFILES:
-                if any(_term_in_text(a, title_lower) for a in aliases):
-                    continue
-                if any(_term_in_text(a, blob) for a in aliases):
-                    if slug not in discovered_camps:
-                        discovered_camps[slug] = {
-                            'slug': slug,
-                            'name': camp_name,
-                            'aliases': aliases,
-                            'first_date': pub_date,
-                            'count': 0,
-                        }
-                    discovered_camps[slug]['count'] += 1
-
-        ordered_camps = sorted(discovered_camps.values(), key=lambda c: (c['first_date'], -c['count'], c['slug']))
-        for info in ordered_camps[:12]:
-            sid = f"kw_{topic_slug}_{info['slug']}"
-            _, fact_snip = _find_grounded_fact_snippet(info['aliases'], current_events, relevant_rows)
-            reason = (
-                f"依據（已提煉事實）：{fact_snip}"
-                if fact_snip
-                else f"0-Token 活動發現：{info['first_date']} 起提及「{info['name']}」（共 {info['count']} 篇）。"
-            )
-            dynamic_candidates.append(
-                dict(
-                    source_id=sid,
-                    name=f"子活動候選：{info['name']}（{info['first_date']} 首次提及 · {info['count']} 篇）",
-                    type='replay',
-                    endpoint=f'replay://{mcd_sim_rel}',
-                    config={
-                        'corpus_path': mcd_sim_rel,
-                        'query_any': info['aliases'],
-                        'tier': 'media',
-                        'role': 'branch',
-                        'branch_slug': info['slug'],
-                        'branch_label': info['name'],
-                    },
-                    reason=reason,
-                    fact_evidence=fact_snip,
-                    role='branch',
-                    tier='media',
-                    registered=False,
-                    health_status='candidate',
-                    retirement_recommended=False,
-                )
-            )
-    elif relevant_rows:
-        # Generic 0-Token entity expansion for any live RSS topic (e.g. BLG S16 -> Viper / Knight / Elk)
-        counts: dict[str, int] = {}
-        first_seen: dict[str, str] = {}
-        title_lower = title_str.lower()
-        anchor_ascii = _ASCII_ENTITY_RE.findall(title_str)
-        # Preserve domain disambiguation (e.g. "BLG LPL" / "BLG 英雄联盟") to prevent cross-division drift!
-        domain_tag = 'LPL' if ('lpl' in title_lower or '英雄联盟' in title_lower or 's16' in title_lower) else ''
-        primary_subject = next((tok for tok in anchor_ascii if tok.lower() not in ('lpl', 'lck', 's16', 'nba')), None)
-        anchor = primary_subject or (anchor_ascii[0] if anchor_ascii else query.split()[0])
-        # Also discover high-signal CJK sub-facets (e.g. 直播/采访/庆功宴/转会/续约) alongside ASCII player/entity names
-        cjk_facets = ('直播', '采访', '专访', '庆功宴', '转会', '续约', '离队', '官宣')
-        for row in relevant_rows:
-            ev = row.get('evidence') or {}
-            pub = str(ev.get('published_at') or '')[:10]
-            # Strip trailing Google News RSS publisher suffix (" - Sohu", " - 直播吧") so outlets never pose as entities
-            clean_title = re.sub(r'\s+-\s+[^-]{1,36}$', '', str(ev.get('title', '') or ''))
-            clean_body = re.sub(r'\s+-\s+[^-]{1,36}$', '', str(ev.get('content', '') or '')[:300])
-            blob = f"{clean_title} {clean_body}"
-            for tok in _ASCII_ENTITY_RE.findall(blob):
-                low = tok.lower()
-                if low in _GENERIC_PROPER_STOP or low in title_lower or low == anchor.lower():
-                    continue
-                counts[tok] = counts.get(tok, 0) + 1
-                first_seen.setdefault(tok, pub)
-            for facet in cjk_facets:
-                if facet in blob:
-                    counts[facet] = counts.get(facet, 0) + 1
-                    first_seen.setdefault(facet, pub)
-        top_ents = [ent for ent, cnt in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])) if cnt >= 1][:6]
-        for ent in top_ents:
-            kw_q = f'{anchor} {domain_tag} {ent}'.strip() if domain_tag and domain_tag.lower() != anchor.lower() else f'{anchor} {ent}'
-            kw_q = ' '.join(kw_q.split())
-            slug = hashlib.sha256(kw_q.lower().encode('utf-8')).hexdigest()[:8]
-            _, fact_snip = _find_grounded_fact_snippet([ent], current_events, relevant_rows)
+    # General 0-Token Candidate Discovery (identical algorithm for ANY replay corpus OR ANY live RSS topic!)
+    if relevant_rows:
+        discovered = _discover_general_candidates(topic, relevant_rows, current_events)
+        anchor_prefix = ' '.join(query.split()[:2]).strip() or query
+        for info in discovered:
+            term = info['term']
+            slug = hashlib.sha256(term.lower().encode('utf-8')).hexdigest()[:8]
+            sid = f'kw_{topic_slug}_{slug}'
+            _, fact_snip = _find_grounded_fact_snippet([term], current_events, relevant_rows)
             reason = (
                 f'依据（已提炼事实）：{fact_snip}'
                 if fact_snip
-                else f'0-Token 实体发现：已入库相关报道提及 {ent}（{counts[ent]} 次），勾选批准后可专项追踪。'
+                else f"0-Token 实体发现：{info['first_date']} 起在相关报道中提及「{term}」（共 {info['count']} 篇）。"
             )
-            dynamic_candidates.append(
-                dict(
-                    source_id=f'kw_{topic_slug}_{slug}',
-                    name=f'扩展关键词：{kw_q}（{first_seen.get(ent, "")} 提及 · {counts[ent]} 篇）',
-                    type='rss',
-                    endpoint=_build_google_news_rss_url(kw_q, recency_days=30),
-                    config={'tier': 'aggregator', 'max_items': 8, 'role': 'branch', 'branch_label': ent},
-                    reason=reason,
-                    fact_evidence=fact_snip,
-                    role='branch',
-                    tier='aggregator',
-                    registered=False,
-                    health_status='candidate',
-                    retirement_recommended=False,
+            if active_replay_anchor:
+                replay_path = active_replay_anchor['config']['corpus_path']
+                dynamic_candidates.append(
+                    dict(
+                        source_id=sid,
+                        name=f"扩展支线：{term}（{info['first_date']} 首次提及 · {info['count']} 篇）",
+                        type='replay',
+                        endpoint=f'replay://{replay_path}',
+                        config={
+                            'corpus_path': replay_path,
+                            'query_any': [term],
+                            'tier': 'media',
+                            'role': 'branch',
+                            'branch_label': term,
+                        },
+                        reason=reason,
+                        fact_evidence=fact_snip,
+                        role='branch',
+                        tier='media',
+                        registered=False,
+                        health_status='candidate',
+                        retirement_recommended=False,
+                    )
                 )
-            )
+            else:
+                kw_q = f'{anchor_prefix} {term}'.strip() if not _term_in_text(anchor_prefix, term.lower()) else term
+                kw_q = ' '.join(kw_q.split())
+                dynamic_candidates.append(
+                    dict(
+                        source_id=sid,
+                        name=f"扩展关键词：{kw_q}（{info['first_date']} 提及 · {info['count']} 篇）",
+                        type='rss',
+                        endpoint=_build_google_news_rss_url(kw_q, recency_days=30, prefer_zh=prefer_zh),
+                        config={'tier': 'aggregator', 'max_items': 8, 'role': 'branch', 'branch_label': term},
+                        reason=reason,
+                        fact_evidence=fact_snip,
+                        role='branch',
+                        tier='aggregator',
+                        registered=False,
+                        health_status='candidate',
+                        retirement_recommended=False,
+                    )
+                )
 
+    # Always provide general live keyword RSS anchor + general world news channel
     dynamic_candidates.extend(
         [
             dict(
                 source_id=f'gnews_{topic_slug}',
                 name=f'实时关键词 RSS：{query[:40]}',
                 type='rss',
-                endpoint=_build_google_news_rss_url(query, recency_days=30 if any(k in text for k in ('最新', '近期', 'latest', 'recent')) else None),
+                endpoint=_build_google_news_rss_url(
+                    query,
+                    recency_days=30 if any(k in text for k in ('最新', '近期', 'latest', 'recent')) else None,
+                    prefer_zh=prefer_zh,
+                ),
                 config={'tier': 'aggregator', 'max_items': 10, 'role': 'anchor'},
-                reason='实时 Google News 关键词订阅（自动识别中/英文语区）。',
+                reason='实时 Google News 关键词订阅（自动识别中/英文语区，无需预设领域词表）。',
                 fact_evidence='',
                 role='anchor',
                 tier='aggregator',
@@ -1183,46 +1195,13 @@ def recommend_sources(
             ),
         ]
     )
-    if any(k in text for k in ('cve', 'security', 'vulnerability', 'cyber', '漏洞', '安全', 'examplesoft')):
-        dynamic_candidates.append(
-            dict(
-                source_id='bleepingcomputer_rss',
-                name='BleepingComputer Security RSS',
-                type='rss',
-                endpoint='https://www.bleepingcomputer.com/feed/',
-                config={'tier': 'media', 'max_items': 10, 'role': 'channel'},
-                reason='Cybersecurity advisories and vulnerability coverage.',
-                fact_evidence='',
-                role='channel',
-                tier='media',
-                registered=False,
-                health_status='active',
-                retirement_recommended=False,
-            )
-        )
-    if any(k in text for k in ('nba', 'lebron', 'lbj', 'basketball', 'trade', 'sports', '湖人', '詹姆斯')):
-        dynamic_candidates.append(
-            dict(
-                source_id='espn_nba_rss',
-                name='ESPN NBA News RSS',
-                type='rss',
-                endpoint='https://www.espn.com/espn/rss/nba/news',
-                config={'tier': 'media', 'max_items': 10, 'role': 'channel'},
-                reason='NBA roster moves, rumors and official transactions.',
-                fact_evidence='',
-                role='channel',
-                tier='media',
-                registered=False,
-                health_status='active',
-                retirement_recommended=False,
-            )
-        )
 
     existing_by_id = {s['source_id']: idx for idx, s in enumerate(recommended)}
     for cand in dynamic_candidates:
         cid = cand['source_id']
         if cid not in existing_by_id:
             recommended.append(cand)
+            existing_by_id[cid] = len(recommended) - 1
         else:
             idx = existing_by_id[cid]
             if recommended[idx].get('health_status') in ('quiet', 'active') and cid not in approved_set and cand.get('health_status') == 'candidate':
@@ -1231,22 +1210,90 @@ def recommend_sources(
                 recommended[idx]['fact_evidence'] = cand.get('fact_evidence', '')
                 recommended[idx]['health_status'] = 'candidate'
 
-    # Optional ON/OFF LLM priority rationale comparison across unapproved candidates
+    # Optional ON/OFF General AI Advisor: priority comparison + AI-judged semantic archival + open-domain query proposals
     llm_summary_note = None
     if llm_summary:
         unapproved_branches = [
             s for s in recommended
             if s.get('role') == 'branch' and s['source_id'] not in approved_set and s['source_id'].startswith(f'kw_{topic_slug}_')
         ]
-        llm_summary_note, per_source = _summarize_candidates_with_llm(topic, unapproved_branches, current_events, settings)
+        approved_branches = [
+            s for s in recommended
+            if s.get('role') == 'branch' and s['source_id'] in approved_set
+        ]
+        llm_summary_note, per_source, retire_map, suggested_queries = _advise_watchlist_with_llm(
+            topic, unapproved_branches, approved_branches, current_events, notifications, settings
+        )
         for s in recommended:
-            if s['source_id'] in per_source:
-                s['reason'] = f"🤖 AI 决策建议：{per_source[s['source_id']]}" + (f" ｜ 依据：{s['fact_evidence']}" if s.get('fact_evidence') else '')
+            sid = s['source_id']
+            if sid in per_source:
+                s['reason'] = f"🤖 AI 决策建议：{per_source[sid]}" + (f" ｜ 依据：{s['fact_evidence']}" if s.get('fact_evidence') else '')
+            if sid in retire_map:
+                s['health_status'] = 'milestone_closed'
+                s['retirement_recommended'] = True
+                if not s['name'].startswith('🏁'):
+                    s['name'] = f"🏁 [AI 建议归档] {s['name']}"
+                s['reason'] = f"🏁 AI 结案/归档判断：{retire_map[sid]}"
+        existing_labels = {
+            str((s.get('config') or {}).get('branch_label', '')).lower()
+            for s in recommended
+            if s.get('role') == 'branch'
+        }
+        for prop in suggested_queries:
+            if prop['label'].lower() in existing_labels:
+                continue
+            slug = hashlib.sha256(prop['query'].lower().encode('utf-8')).hexdigest()[:8]
+            sid = f'kw_{topic_slug}_ai_{slug}'
+            if sid in existing_by_id:
+                continue
+            if active_replay_anchor:
+                replay_path = active_replay_anchor['config']['corpus_path']
+                terms = [t for t in prop['query'].split() if len(t) >= 2] or [prop['label']]
+                recommended.append(
+                    dict(
+                        source_id=sid,
+                        name=f"AI 扩展建议：{prop['label']}",
+                        type='replay',
+                        endpoint=f'replay://{replay_path}',
+                        config={
+                            'corpus_path': replay_path,
+                            'query_any': terms,
+                            'tier': 'media',
+                            'role': 'branch',
+                            'branch_label': prop['label'],
+                        },
+                        reason=f"🤖 AI 主动建议：{prop['reason']}",
+                        fact_evidence=prop['reason'],
+                        role='branch',
+                        tier='media',
+                        registered=False,
+                        health_status='candidate',
+                        retirement_recommended=False,
+                    )
+                )
+            else:
+                recommended.append(
+                    dict(
+                        source_id=sid,
+                        name=f"AI 扩展建议：{prop['query']}",
+                        type='rss',
+                        endpoint=_build_google_news_rss_url(prop['query'], recency_days=30, prefer_zh=prefer_zh),
+                        config={'tier': 'aggregator', 'max_items': 8, 'role': 'branch', 'branch_label': prop['label']},
+                        reason=f"🤖 AI 主动建议：{prop['reason']}",
+                        fact_evidence=prop['reason'],
+                        role='branch',
+                        tier='aggregator',
+                        registered=False,
+                        health_status='candidate',
+                        retirement_recommended=False,
+                    )
+                )
+            existing_by_id[sid] = len(recommended) - 1
 
     def _sort_key(s):
         sid = s['source_id']
         role = s.get('role', 'channel')
-        if role == 'anchor' and sid in (f'lbj_anchor_{topic_slug}', f'mcd_anchor_{topic_slug}'):
+        if role == 'anchor' and sid != f'gnews_{topic_slug}':
             return (0, sid)
         if role == 'branch' or sid.startswith(f'kw_{topic_slug}_'):
             return (1, 0 if s.get('retirement_recommended') else 1, sid)
@@ -1257,7 +1304,7 @@ def recommend_sources(
     recommended.sort(key=_sort_key)
     return {
         'recommendation_mode': 'topic_aware_v1',
-        'rationale_mode': 'fact_grounded_v2',
+        'rationale_mode': 'general_fact_grounded_v3',
         'llm_summary_enabled': bool(llm_summary and llm_summary_note is not None),
         'llm_summary_note': llm_summary_note,
         'sources': recommended,

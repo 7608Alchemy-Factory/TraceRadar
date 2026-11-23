@@ -183,10 +183,12 @@ export type ModelStatus = {
   missing: string[];
 };
 export type Corpus = {
-  corpus_id: "lbj_daily" | "mcd_hk_real" | "lbj" | "nba";
+  corpus_id: string;
   name: string;
   corpus_path: string;
   records: number;
   cutoffs: string[];
+  default_goal?: string;
+  anchor_terms?: string[];
   provenance: string;
 };

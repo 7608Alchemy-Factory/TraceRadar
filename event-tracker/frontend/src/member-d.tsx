@@ -730,12 +730,11 @@ export function ReplaySetup({
   action: Act;
   onPrepared: (topic: Topic, corpus: Corpus) => Promise<void>;
 }) {
-  const defaultGoalFor = (corpusId: string) =>
-    corpusId === "mcd_hk_real"
-      ? "追踪香港麦当劳（McDonald's HK）2026年真实套餐新品、联名活动、App优惠与套票发售、价格与有效期变动；同一活动的续期或加推关联原事件，不同联名/优惠活动分开建档，过滤无关社会新闻与其他品牌广告。"
-      : "跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。";
-  const [id, setId] = useState(corpora[0]?.corpus_id ?? "lbj"),
-    [goal, setGoal] = useState(defaultGoalFor(corpora[0]?.corpus_id ?? "lbj"));
+  const defaultGoalFor = (corpus?: Corpus) =>
+    corpus?.default_goal ||
+    "持续追踪该主题的重要进展，区分传闻、确认进展与冲突证据；同一事项的后续更新关联原事件，独立事项分开建档。";
+  const [id, setId] = useState(corpora[0]?.corpus_id ?? ""),
+    [goal, setGoal] = useState(defaultGoalFor(corpora[0]));
   const selected = corpora.find((c) => c.corpus_id === id);
   return (
     <form
@@ -744,44 +743,19 @@ export function ReplaySetup({
         e.preventDefault();
         if (!selected) return;
         void action(async () => {
-          const isMcd = id === "mcd_hk_real";
-          const isLbjDaily = id === "lbj_daily";
-          const sourceId = isMcd
-            ? `mcd_anchor_${crypto.randomUUID().slice(0, 8)}`
-            : isLbjDaily
-              ? `lbj_anchor_${crypto.randomUUID().slice(0, 8)}`
-              : `replay_${id}_${crypto.randomUUID().slice(0, 8)}`;
+          const sourceId = `anchor_${id}_${crypto.randomUUID().slice(0, 8)}`;
           const anchorConfig: Record<string, unknown> = {
             corpus_path: selected.corpus_path,
-            ...(isMcd
-              ? {
-                  role: "anchor",
-                  query_any: [
-                    "麥當勞",
-                    "麦当劳",
-                    "McDonald",
-                    "McGriddles",
-                    "麥麥",
-                    "脆辣雞腿飽",
-                  ],
-                }
-              : isLbjDaily
-                ? {
-                    role: "anchor",
-                    query_any: ["LeBron", "LBJ", "詹姆斯"],
-                  }
-                : {}),
+            role: "anchor",
+            ...(selected.anchor_terms?.length
+              ? { query_any: selected.anchor_terms }
+              : {}),
           };
           await api(
             "/sources",
             json("POST", {
               source_id: sourceId,
-              name:
-                isMcd
-                  ? "主搜索词: 香港麦当劳 / McDonald's HK (51条全真链)"
-                  : isLbjDaily
-                    ? "主搜索词: LeBron James (逐日模拟池 · 53条全真链)"
-                    : selected.name + " · 离线语料",
+              name: `${selected.name} · 主检索源`,
               type: "replay",
               endpoint: `replay://${selected.corpus_path}`,
               config: anchorConfig,
@@ -811,7 +785,7 @@ export function ReplaySetup({
               checked={id === c.corpus_id}
               onChange={() => {
                 setId(c.corpus_id);
-                setGoal(defaultGoalFor(c.corpus_id));
+                setGoal(defaultGoalFor(c));
               }}
             />
             <span>

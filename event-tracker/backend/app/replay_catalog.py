@@ -8,7 +8,7 @@ def replay_catalog(settings):
     specs = [
         (
             'lbj_daily',
-            'LeBron James 2026 逐日模拟搜索池（零泄题 A/B）',
+            'LeBron James 2026 逐日模拟搜索池（53 条真链）',
             'lbj_2026_daily_sim/all.json',
             [
                 '2026-06-28T23:59:59Z',
@@ -22,6 +22,8 @@ def replay_catalog(settings):
                 '2026-07-24T23:59:59Z',
                 '2026-07-28T23:59:59Z',
             ],
+            '跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。',
+            ['LeBron', 'LBJ', '詹姆斯'],
         ),
         (
             'mcd_hk_real',
@@ -35,11 +37,27 @@ def replay_catalog(settings):
                 '2026-11-18T23:59:59Z',
                 '2026-11-23T23:59:59Z',
             ],
+            '追踪香港麦当劳2026年真实套餐新品、联名活动、App优惠与套票发售、价格与有效期变动；同一活动的续期或加推关联原事件，不同活动分开建档，过滤无关社会杂闻与竞品广告。',
+            ['麥當勞', '麦当劳', 'McDonald'],
         ),
-        ('lbj', 'LeBron James 转会追踪', 'lbj_2026_extended/all.json', None),
-        ('nba', 'NBA 多事件追踪', 'nba_2026_multi_event/all.json', None),
+        (
+            'lbj',
+            'LeBron James 转会追踪',
+            'lbj_2026_extended/all.json',
+            None,
+            '跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。',
+            None,
+        ),
+        (
+            'nba',
+            'NBA 多事件追踪',
+            'nba_2026_multi_event/all.json',
+            None,
+            '跟踪多条独立转会与续约进展，独立交易分开建档并保留冲突证据。',
+            None,
+        ),
     ]
-    for identity, name, path, fixed_cutoffs in specs:
+    for identity, name, path, fixed_cutoffs, default_goal, anchor_terms in specs:
         full = settings.corpus_root / path
         if not full.exists():
             continue
@@ -51,6 +69,16 @@ def replay_catalog(settings):
         cutoffs = fixed_cutoffs if fixed_cutoffs else (
             list(dict.fromkeys(dates[min(len(dates)-1, int(len(dates)*n/3)-1)] for n in (1,2,3))) if dates else []
         )
-        catalog.append(dict(corpus_id=identity,name=name,corpus_path=path,records=len(rows),cutoffs=cutoffs,
-                            provenance='全真 Google News 链接离线模拟语料（无未来信息泄露）'))
+        entry = dict(
+            corpus_id=identity,
+            name=name,
+            corpus_path=path,
+            records=len(rows),
+            cutoffs=cutoffs,
+            default_goal=default_goal,
+            provenance='全真 Google News 链接离线模拟语料（无未来信息泄露）',
+        )
+        if anchor_terms:
+            entry['anchor_terms'] = anchor_terms
+        catalog.append(entry)
     return catalog

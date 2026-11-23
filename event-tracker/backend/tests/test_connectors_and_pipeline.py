@@ -565,7 +565,7 @@ def test_hardening_guards_preserve_valid_news_and_block_extreme_inputs(tmp_path,
         assert manual_trace['decision']['stats']['returned'] == 1
 
 
-def test_boolean_replay_and_zero_token_branch_discovery_and_noise_audit():
+def test_boolean_replay_and_zero_token_branch_discovery_and_noise_audit(monkeypatch):
     from pathlib import Path
     from app.connectors import ReplayConnector, recommend_sources
 
@@ -596,111 +596,171 @@ def test_boolean_replay_and_zero_token_branch_discovery_and_noise_audit():
     assert any('Jaylen Brown trade was a risk' in x['title'] for x in sixers_only)
     assert replay.last_stats['query_filtered'] > 0
 
-    # Chronological zero-hindsight-bias candidate ordering: Timberwolves (06-30) before Warriors (07-02) before 76ers (07-03)
+    # 100% general 0-Token entity discovery on a replay-anchored topic (zero hardcoded domain profiles!)
     topic = {'topic_id': '11223344-aaaa', 'title': 'LeBron James 2026 转会追踪', 'description': 'Track LBJ free agency'}
+    replay_anchor = {
+        'source_id': 'anchor_lbj_daily_11223344',
+        'name': 'Anchor Replay',
+        'type': 'replay',
+        'endpoint': 'replay://lbj_2026_daily_sim/all.json',
+        'config': {'corpus_path': 'lbj_2026_daily_sim/all.json', 'role': 'anchor', 'query_any': ['LeBron']},
+    }
     decisions = [
         {
-            'evidence': {'source_id': 'lbj_anchor_11223344', 'published_at': '2026-06-30T15:00:00Z',
-                         'title': 'Timberwolves contact LeBron James', 'content': 'Minnesota Timberwolves contacted LeBron James.'},
+            'evidence': {'source_id': 'anchor_lbj_daily_11223344', 'published_at': '2026-06-30T15:00:00Z',
+                         'title': 'Timberwolves contact LeBron James - Yahoo Sports', 'content': 'Minnesota Timberwolves contacted LeBron James.'},
             'status': 'completed', 'assessment': {'is_relevant': True},
         },
         {
-            'evidence': {'source_id': 'lbj_anchor_11223344', 'published_at': '2026-07-02T14:00:00Z',
-                         'title': 'Heat, Cavaliers, Golden State Warriors linked to LeBron', 'content': 'Warriors and Heat lead odds.'},
+            'evidence': {'source_id': 'anchor_lbj_daily_11223344', 'published_at': '2026-07-02T14:00:00Z',
+                         'title': 'Golden State Warriors linked to LeBron James - ESPN', 'content': 'Warriors lead odds.'},
             'status': 'completed', 'assessment': {'is_relevant': True},
         },
         {
-            'evidence': {'source_id': 'lbj_anchor_11223344', 'published_at': '2026-07-03T12:00:00Z',
-                         'title': 'Rich Paul maps 76ers for LeBron', 'content': 'Philadelphia 76ers highlighted.'},
+            'evidence': {'source_id': 'anchor_lbj_daily_11223344', 'published_at': '2026-07-03T12:00:00Z',
+                         'title': 'Rich Paul maps 76ers for LeBron - Bleacher Report', 'content': 'Philadelphia 76ers highlighted.'},
             'status': 'completed', 'assessment': {'is_relevant': True},
         },
     ]
-    rec = recommend_sources(topic, [], current_events=[], evidence_decisions=decisions, corpus_root=corpus_root)
-    branch_ids = [s['source_id'] for s in rec['sources'] if s['source_id'].startswith('kw_11223344_')]
-    assert 'kw_11223344_timberwolves' in branch_ids
-    assert 'kw_11223344_warriors' in branch_ids
-    assert 'kw_11223344_76ers' in branch_ids
+    rec = recommend_sources(
+        topic,
+        [replay_anchor],
+        current_events=[],
+        evidence_decisions=decisions,
+        corpus_root=corpus_root,
+        approved_source_ids={'anchor_lbj_daily_11223344'},
+    )
+    branch_labels = [
+        (s.get('config') or {}).get('branch_label', '')
+        for s in rec['sources']
+        if s['source_id'].startswith('kw_11223344_') and s['type'] == 'replay'
+    ]
+    assert 'Timberwolves' in branch_labels
+    assert 'Golden State Warriors' in branch_labels
+    assert '76ers' in branch_labels
+    # Publisher suffixes must never leak into discovered entities
+    assert not any(lbl in {'ESPN', 'Yahoo Sports', 'Bleacher Report'} for lbl in branch_labels)
 
-    # Silence vs. Noise Audit: silence = NO alert; 3 irrelevant = noise_alert; milestone = milestone_closed on non-winners!
-    wolves_src = {
-        'source_id': 'kw_11223344_timberwolves',
-        'name': '支线候选：Minnesota Timberwolves',
+    # Silence vs. Noise Audit + Generic Terminal Status Closure (0-Token, 100% domain-agnostic)
+    branch_a = {
+        'source_id': 'kw_11223344_branch_a',
+        'name': '扩展支线：Branch A',
         'type': 'replay',
         'endpoint': 'replay://lbj_2026_daily_sim/all.json',
-        'config': {'corpus_path': 'lbj_2026_daily_sim/all.json', 'role': 'branch', 'branch_slug': 'timberwolves'},
+        'config': {'corpus_path': 'lbj_2026_daily_sim/all.json', 'role': 'branch', 'branch_label': 'Branch A'},
     }
-    warriors_src = {
-        'source_id': 'kw_11223344_warriors',
-        'name': '支线候选：Golden State Warriors',
+    branch_b = {
+        'source_id': 'kw_11223344_branch_b',
+        'name': '扩展支线：Branch B',
         'type': 'replay',
         'endpoint': 'replay://lbj_2026_daily_sim/all.json',
-        'config': {'corpus_path': 'lbj_2026_daily_sim/all.json', 'role': 'branch', 'branch_slug': 'warriors'},
+        'config': {'corpus_path': 'lbj_2026_daily_sim/all.json', 'role': 'branch', 'branch_label': 'Branch B'},
     }
     # Quiet check: 0 items -> quiet, NOT retired
-    quiet_rec = recommend_sources(topic, [wolves_src, warriors_src], current_events=[], evidence_decisions=[], corpus_root=corpus_root, approved_source_ids={'kw_11223344_timberwolves', 'kw_11223344_warriors'})
-    w_quiet = next(s for s in quiet_rec['sources'] if s['source_id'] == 'kw_11223344_timberwolves')
-    assert w_quiet['health_status'] == 'quiet' and not w_quiet['retirement_recommended']
+    quiet_rec = recommend_sources(
+        topic, [branch_a, branch_b], current_events=[], evidence_decisions=[],
+        corpus_root=corpus_root, approved_source_ids={'kw_11223344_branch_a', 'kw_11223344_branch_b'},
+    )
+    a_quiet = next(s for s in quiet_rec['sources'] if s['source_id'] == 'kw_11223344_branch_a')
+    assert a_quiet['health_status'] == 'quiet' and not a_quiet['retirement_recommended']
 
-    # Noise check: 3 irrelevant articles -> noise_alert
+    # Noise check: 3 trailing irrelevant articles -> noise_alert
     noisy_decisions = [
-        {'evidence': {'source_id': 'kw_11223344_timberwolves', 'published_at': f'2026-07-0{i}T12:00:00Z', 'title': f'Summer League {i}', 'content': 'Rookies'},
+        {'evidence': {'source_id': 'kw_11223344_branch_a', 'published_at': f'2026-07-0{i}T12:00:00Z', 'title': f'Irrelevant {i}', 'content': 'Noise'},
          'status': 'completed', 'assessment': {'is_relevant': False}}
         for i in (5, 8, 9)
     ]
-    noisy_rec = recommend_sources(topic, [wolves_src, warriors_src], current_events=[], evidence_decisions=noisy_decisions, corpus_root=corpus_root, approved_source_ids={'kw_11223344_timberwolves', 'kw_11223344_warriors'})
-    w_noisy = next(s for s in noisy_rec['sources'] if s['source_id'] == 'kw_11223344_timberwolves')
-    assert w_noisy['health_status'] == 'noise_alert' and w_noisy['retirement_recommended'] is True
+    noisy_rec = recommend_sources(
+        topic, [branch_a, branch_b], current_events=[], evidence_decisions=noisy_decisions,
+        corpus_root=corpus_root, approved_source_ids={'kw_11223344_branch_a', 'kw_11223344_branch_b'},
+    )
+    a_noisy = next(s for s in noisy_rec['sources'] if s['source_id'] == 'kw_11223344_branch_a')
+    assert a_noisy['health_status'] == 'noise_alert' and a_noisy['retirement_recommended'] is True
 
-    # Milestone guard: Draymond Green re-signing with Warriors must NOT falsely close LeBron's free agency!
-    draymond_only_events = [{'title': 'Warriors pursuit of LeBron and Draymond contract', 'version': 4, 'state': {'current_status': 'Draymond Green re-signed with the Golden State Warriors on a new deal.', 'key_facts': []}}]
-    not_closed_rec = recommend_sources(topic, [warriors_src, wolves_src], current_events=draymond_only_events, evidence_decisions=[], corpus_root=corpus_root, approved_source_ids={'kw_11223344_warriors', 'kw_11223344_timberwolves'})
-    wolves_not_closed = next(s for s in not_closed_rec['sources'] if s['source_id'] == 'kw_11223344_timberwolves')
-    assert wolves_not_closed['health_status'] != 'milestone_closed' and wolves_not_closed['retirement_recommended'] is False
+    # Generic terminal status closure (works for any domain: patched/expired/closed/已结束)
+    terminal_decisions = [
+        {
+            'evidence': {'source_id': 'kw_11223344_branch_b', 'published_at': '2026-07-10T12:00:00Z', 'title': 'Campaign ended', 'content': 'Promo expired.'},
+            'status': 'completed',
+            'assessment': {'is_relevant': True, 'association': {'event_id': 'ev-done'}},
+        }
+    ]
+    terminal_events = [{'event_id': 'ev-done', 'title': 'Limited Promo', 'version': 3, 'state': {'current_status': '已过期 / expired', 'key_facts': []}}]
+    closed_rec = recommend_sources(
+        topic, [branch_b], current_events=terminal_events, evidence_decisions=terminal_decisions,
+        corpus_root=corpus_root, approved_source_ids={'kw_11223344_branch_b'},
+    )
+    b_closed = next(s for s in closed_rec['sources'] if s['source_id'] == 'kw_11223344_branch_b')
+    assert b_closed['health_status'] == 'milestone_closed' and b_closed['retirement_recommended'] is True
 
-    # Milestone closure: LeBron picks Philadelphia -> Warriors flagged milestone_closed
-    settled_events = [{'title': 'LeBron James Free Agency', 'version': 8, 'state': {'current_status': 'LeBron James picks Philadelphia 76ers as final NBA challenge', 'key_facts': []}}]
-    closed_rec = recommend_sources(topic, [warriors_src], current_events=settled_events, evidence_decisions=[], corpus_root=corpus_root, approved_source_ids={'kw_11223344_warriors'})
-    gsw_closed = next(s for s in closed_rec['sources'] if s['source_id'] == 'kw_11223344_warriors')
-    assert gsw_closed['health_status'] == 'milestone_closed' and gsw_closed['retirement_recommended'] is True
-
-    # Crisp CJK+ASCII live Google News RSS anchor query (no 6-term AND lock to 0 results)
+    # Crisp CJK+ASCII live Google News RSS anchor query (prefer_zh driven purely by topic title CJK, zero hardcoded acronyms)
     blg_rec = recommend_sources(
-        {'topic_id': 'bb112233-9999', 'title': 'BLG LPL 人员变动与成员近期娱乐动向（直播、采访、庆功宴）', 'description': 'LPL BLG roster and streams'},
+        {'topic_id': 'bb112233-9999', 'title': 'BLG LPL 人员变动与成员近期娱乐动向（直播、采访、庆功宴）', 'description': 'Roster and streams'},
         [],
     )
     blg_gnews = next(s for s in blg_rec['sources'] if s['source_id'] == 'gnews_bb112233')
     assert 'BLG+LPL' in blg_gnews['endpoint'] and 'hl=zh-CN' in blg_gnews['endpoint']
 
-    # 0-Extra-Token key_fact grounding + McDonald's HK sub-campaign discovery + optional ON/OFF llm_summary
-    mcd_topic = {'topic_id': 'aabbccdd-1111', 'title': '香港麥當勞 2026 優惠與新品追蹤', 'description': '追蹤香港麥當勞限時優惠、套票與聯乘'}
-    mcd_events = [
+    # 0-Extra-Token key_fact grounding + general quoted/branded CJK discovery (zero hardcoded campaign profiles!)
+    gen_topic = {'topic_id': 'aabbccdd-1111', 'title': '香港麥當勞 2026 優惠與新品追蹤', 'description': '追蹤香港麥當勞限時優惠、套票與聯乘'}
+    gen_events = [
         {
-            'title': '香港麥當勞 2026 Pokémon 聯乘',
+            'title': '香港麥當勞 2026 Pokémon 聯乘與「麥麥慳」套票',
             'version': 1,
             'state': {
                 'current_status': 'Pokémon 盲盒漢堡已推出',
-                'key_facts': [{'fact': '香港麥當勞正式推出Pokémon聯乘盲盒漢堡，$39歎黑椒雞堡隨機附送比卡超包裝。', 'evidence_ids': ['e1']}],
+                'key_facts': [
+                    {'fact': '香港麥當勞正式推出Pokémon聯乘盲盒漢堡，$39歎黑椒雞堡隨機附送比卡超包裝。', 'evidence_ids': ['e1']},
+                    {'fact': '「麥麥慳」套票限時回歸，$100 可兌換四個套餐。', 'evidence_ids': ['e2']},
+                ],
             },
         }
     ]
-    mcd_decisions = [
+    gen_decisions = [
         {
             'evidence': {
-                'source_id': 'mcd_anchor_aabbccdd',
+                'source_id': 'gnews_aabbccdd',
                 'published_at': '2026-11-11T10:00:00Z',
-                'title': '麥當勞聯乘Pokémon盲盒漢堡及主題美食系列登場',
-                'content': '香港麥當勞推出Pokémon盲盒漢堡，$39歎黑椒雞堡。',
+                'title': '麥當勞聯乘Pokémon盲盒漢堡及「麥麥慳」套票登場 - HK01',
+                'content': '香港麥當勞推出Pokémon盲盒漢堡與「麥麥慳」套票。',
             },
             'status': 'completed',
             'assessment': {'is_relevant': True},
         }
     ]
-    mcd_rec = recommend_sources(
-        mcd_topic, [], current_events=mcd_events, evidence_decisions=mcd_decisions, corpus_root=corpus_root
+    gen_rec = recommend_sources(gen_topic, [], current_events=gen_events, evidence_decisions=gen_decisions)
+    discovered_labels = {(s.get('config') or {}).get('branch_label'): s for s in gen_rec['sources'] if s['role'] == 'branch'}
+    assert 'Pokémon' in discovered_labels
+    assert '麥麥慳' in discovered_labels
+    assert '比卡超包裝' in discovered_labels['Pokémon']['fact_evidence']
+    assert '$100 可兌換四個套餐' in discovered_labels['麥麥慳']['fact_evidence']
+    assert gen_rec['llm_summary_enabled'] is False
+
+    # AI ON general advisor: semantic closure (retire_branches) + open-domain query proposal (suggested_queries)
+    import app.connectors as conn_mod
+    fake_ai_payload = {
+        'summary_note': '建议优先追踪「麥麥慳」，并归档已落幕支线。',
+        'per_source': {},
+        'retire_branches': [{'source_id': 'kw_11223344_branch_b', 'reason': '主线已尘埃落定，该竞争支线可归档。'}],
+        'suggested_queries': [{'label': '比卡超包裝', 'query': '香港麥當勞 比卡超包裝', 'reason': '已有事实提及随机附送比卡超包装。'}],
+    }
+    monkeypatch.setattr(
+        conn_mod.httpx,
+        'post',
+        lambda *a, **kw: httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(fake_ai_payload)}}]}),
     )
-    assert any(s['source_id'] == 'mcd_anchor_aabbccdd' and s['role'] == 'anchor' for s in mcd_rec['sources'])
-    poke = next(s for s in mcd_rec['sources'] if s['source_id'] == 'kw_aabbccdd_pokemon')
-    assert poke['role'] == 'branch'
-    assert '比卡超包裝' in poke['fact_evidence']
-    assert '比卡超包裝' in poke['reason']
-    assert mcd_rec['llm_summary_enabled'] is False
+    fake_settings = Settings(api_key='k', base_url='https://api.example/v1', model='test-model')
+    ai_rec = recommend_sources(
+        topic,
+        [branch_b],
+        current_events=gen_events,
+        evidence_decisions=gen_decisions,
+        approved_source_ids={'kw_11223344_branch_b'},
+        llm_summary=True,
+        settings=fake_settings,
+    )
+    assert ai_rec['llm_summary_enabled'] is True
+    b_ai_retired = next(s for s in ai_rec['sources'] if s['source_id'] == 'kw_11223344_branch_b')
+    assert b_ai_retired['health_status'] == 'milestone_closed' and b_ai_retired['retirement_recommended'] is True
+    assert 'AI 结案/归档判断' in b_ai_retired['reason']
+    assert any(s['source_id'].startswith('kw_11223344_ai_') and (s.get('config') or {}).get('branch_label') == '比卡超包裝' for s in ai_rec['sources'])

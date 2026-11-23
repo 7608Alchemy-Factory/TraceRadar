@@ -272,19 +272,7 @@ function App() {
               s.type === "replay" && s.config.corpus_path === c.corpus_path,
           ),
         );
-        const preferred =
-          /麥當勞|麦当劳|mcdonald/i.test(d.topic.title) &&
-          availableCorpora.some((c) => c.corpus_id === "mcd_hk_real")
-            ? "mcd_hk_real"
-            : /nba/i.test(d.topic.title) &&
-                !/lebron|lbj|詹姆斯/i.test(d.topic.title)
-              ? "nba"
-              : availableCorpora.some((c) => c.corpus_id === "lbj_daily")
-                ? "lbj_daily"
-                : "lbj";
-        const selectedCorpus =
-          availableCorpora.find((c) => c.corpus_id === preferred) ??
-          availableCorpora[0];
+        const selectedCorpus = availableCorpora[0];
         if (selectedCorpus) setReplayCorpus(selectedCorpus.corpus_id);
         const cutoff =
           d.recent_runs.find((r) => r.snapshot?.options?.as_of)?.snapshot
@@ -1308,8 +1296,7 @@ function App() {
                     s.role === "anchor" ||
                     s.role === "branch" ||
                     s.source_id.startsWith("kw_") ||
-                    s.source_id.startsWith("lbj_anchor_") ||
-                    s.source_id.startsWith("mcd_anchor_");
+                    s.source_id.startsWith("anchor_");
                   const watchlistSources = visibleSources.filter(isWatchlist);
                   const channelSources = visibleSources.filter(
                     (s) => !isWatchlist(s),
@@ -1483,9 +1470,9 @@ function App() {
                           普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。
                         </p>
                         <div className="context-divider" />
-                        <h3>想测试回放语料？</h3>
+                        <h3>想测试离线回放语料？</h3>
                         <p className="hint">
-                          单独创建回放主题（支持 LBJ 2026 与香港麦当劳 2026 真实语料），避免混入模拟新闻和实时订阅。
+                          单独创建回放主题，按时间切片验证多事件建档与关键词演化，避免混入模拟新闻和实时订阅。
                         </p>
                         <button
                           className="text-button"

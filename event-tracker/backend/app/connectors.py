@@ -747,6 +747,8 @@ def _advise_watchlist_with_llm(
     current_events: list[dict] | None,
     notifications: list[dict] | None,
     settings,
+    *,
+    latest_evidence_date: str | None = None,
 ) -> tuple[str | None, dict[str, str], dict[str, str], list[dict], str | None]:
     """Optional ON/OFF single-call general AI Watchlist advisor:
     1. Compares & ranks unapproved candidates strictly from fact_evidence.
@@ -767,11 +769,17 @@ def _advise_watchlist_with_llm(
 
     payload = {
         'topic': {'title': topic.get('title', ''), 'description': topic.get('description', '')},
+        **({'latest_evidence_date': latest_evidence_date} if latest_evidence_date else {}),
         'current_events': [
             {
                 'title': e.get('title', ''),
                 'version': e.get('version', 0),
                 'status': str((e.get('state') or {}).get('current_status', ''))[:280],
+                **(
+                    {'latest_timeline_date': str((((e.get('state') or {}).get('timeline') or [])[-1]).get('occurred_at') or '')[:10]}
+                    if ((e.get('state') or {}).get('timeline') or [])
+                    else {}
+                ),
                 'recent_facts': [
                     str(f.get('fact', ''))[:160]
                     for f in list(((e.get('state') or {}).get('key_facts') or []))[-3:]
@@ -807,14 +815,14 @@ def _advise_watchlist_with_llm(
     }
     system = (
         'You are a domain-agnostic Watchlist advisor for an autonomous event tracker. '
-        'Using ONLY the supplied topic, current_events, recent_milestones, unapproved_candidates, and approved_branches, return ONLY JSON:\n'
+        'Using ONLY the supplied topic, latest_evidence_date, current_events, recent_milestones, unapproved_candidates, and approved_branches, return ONLY JSON:\n'
         '{\n'
         '  "summary_note": "1-2 concise Chinese sentences highlighting top candidates to approve AND any branches that can now be archived",\n'
         '  "per_source": {"<unapproved_source_id>": "1 concise Chinese sentence grounded strictly in fact_evidence explaining whether to approve or skip"},\n'
         '  "retire_branches": [{"source_id": "<approved_branch_source_id>", "reason": "1 concise Chinese sentence explaining why this branch is now settled, expired, or superseded based on current_events"}],\n'
         '  "suggested_queries": [{"label": "concise entity or sub-topic name", "query": "2-4 focused search keywords", "reason": "1 concise Chinese sentence grounded in current_events"}]\n'
         '}\n'
-        'Rules: Never invent facts outside the input. Only put a branch into retire_branches if current_events clearly show its storyline ended, expired, or lost out to a finalized resolution (silence alone is NOT a reason to retire). Return at most 2 suggested_queries only if they are genuinely missing from unapproved_candidates and approved_branches.'
+        'Rules: Never invent facts outside the input. If latest_evidence_date is supplied, anchor any year or season wording strictly to latest_evidence_date and never assume an older year or invent dates beyond it. Only put a branch into retire_branches if current_events clearly show its storyline ended, expired, or lost out to a finalized resolution (silence alone is NOT a reason to retire). Return at most 2 suggested_queries only if they are genuinely missing from unapproved_candidates and approved_branches.'
     )
     url = urlsplit(base_url)
     local = is_local_model_url(url)
@@ -1292,17 +1300,27 @@ def recommend_sources(
     topic_slug = str(topic.get('topic_id', 'default'))[:8].lower()
     approved_set = set(approved_source_ids or set())
 
-    # Pre-collect relevant evidence chronologically (UTC-aware) for 0-Token discovery & fact grounding.
+    # Pre-collect relevant evidence chronologically (UTC-aware) and derive data-driven latest_evidence_date (no system clock, zero replay future leakage).
     relevant_rows = []
     branch_evidence_sids: set[str] = set()
+    latest_dt: datetime | None = None
     for row in (evidence_decisions or []):
         ev = row.get('evidence') or {}
         if ev.get('source_id'):
             branch_evidence_sids.add(str(ev['source_id']))
+        valid_ts, dt_val = _safe_utc_sort_key(str(ev.get('published_at') or ''))
+        if valid_ts and (latest_dt is None or dt_val > latest_dt):
+            latest_dt = dt_val
         st = row.get('status')
         ass = row.get('assessment') or {}
         if st == 'review' or (st == 'completed' and ass.get('is_relevant') is True):
             relevant_rows.append(row)
+    for ev_obj in (current_events or []):
+        for item in ((ev_obj.get('state') or {}).get('timeline') or []):
+            valid_ts, dt_val = _safe_utc_sort_key(str(item.get('occurred_at') or ''))
+            if valid_ts and (latest_dt is None or dt_val > latest_dt):
+                latest_dt = dt_val
+    latest_evidence_date = latest_dt.strftime('%Y-%m-%d') if latest_dt is not None else None
     relevant_rows.sort(key=lambda r: _safe_utc_sort_key(str((r.get('evidence') or {}).get('published_at', ''))))
 
     # Data-driven detection: if this topic is anchored on an offline replay corpus, branches query that same corpus.
@@ -1321,13 +1339,17 @@ def recommend_sources(
     recommended = []
     for src in repo_sources:
         sid = src['source_id']
+        cfg = src.get('config') or {}
         if sid.startswith('kw_') and not sid.startswith(f'kw_{topic_slug}_') and sid not in approved_set:
             continue
         if sid.startswith('gnews_') and sid != f'gnews_{topic_slug}' and sid not in approved_set:
             continue
-        if (sid.startswith('replay_') or sid.startswith('anchor_')) and sid not in approved_set:
+        if (
+            sid.startswith('replay_')
+            or sid.startswith('anchor_')
+            or (cfg.get('role') == 'anchor' and sid != f'gnews_{topic_slug}')
+        ) and sid not in approved_set:
             continue
-        cfg = src.get('config') or {}
         tier = cfg.get('tier', 'simulated')
         role = cfg.get('role') or (
             'anchor' if (sid == f'gnews_{topic_slug}' or (src.get('type') == 'replay' and sid in approved_set)) else 'channel'
@@ -1551,7 +1573,13 @@ def recommend_sources(
             if s.get('role') == 'branch' and s['source_id'] in approved_set
         ]
         llm_summary_note, per_source, retire_map, suggested_queries, llm_summary_error = _advise_watchlist_with_llm(
-            topic, unapproved_branches, approved_branches, current_events, notifications, settings
+            topic,
+            unapproved_branches,
+            approved_branches,
+            current_events,
+            notifications,
+            settings,
+            latest_evidence_date=latest_evidence_date,
         )
         for s in recommended:
             sid = s['source_id']

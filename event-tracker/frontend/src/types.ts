@@ -15,6 +15,10 @@ export type Source = {
   endpoint: string;
   config: Record<string, unknown>;
   reason?: string;
+  fact_evidence?: string;
+  role?: "anchor" | "branch" | "channel";
+  health_status?: string;
+  retirement_recommended?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };
 export type TimelineItem = {
@@ -179,7 +183,7 @@ export type ModelStatus = {
   missing: string[];
 };
 export type Corpus = {
-  corpus_id: "lbj" | "nba";
+  corpus_id: "lbj_daily" | "mcd_hk_real" | "lbj" | "nba";
   name: string;
   corpus_path: string;
   records: number;

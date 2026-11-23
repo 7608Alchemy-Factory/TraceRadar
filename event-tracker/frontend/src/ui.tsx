@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useLayoutEffect, useRef } from "react";
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
   const paths: Record<string, React.ReactNode> = {
@@ -99,21 +99,57 @@ export function Modal({
   sheet?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
+  const exit = useRef<Animation | null>(null);
+  useLayoutEffect(() => {
     const d = ref.current!;
+    const opener = document.activeElement;
     d.showModal();
-    return () => d.close();
+    return () => {
+      exit.current?.cancel();
+      d.close();
+      if (opener instanceof HTMLElement && opener.isConnected)
+        opener.focus({ preventScroll: true });
+    };
   }, []);
+  function dismiss() {
+    const d = ref.current!;
+    if (exit.current) return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      d.close();
+      onClose();
+      return;
+    }
+    d.dataset.closing = "";
+    exit.current = d.animate(
+      [
+        { opacity: 1, transform: "none" },
+        {
+          opacity: 0,
+          transform: sheet
+            ? "translateX(36px)"
+            : "translateY(12px) scale(.985)",
+        },
+      ],
+      { duration: 170, easing: "ease-in", fill: "forwards" },
+    );
+    void exit.current.finished.then(
+      () => {
+        d.close();
+        onClose();
+      },
+      () => {},
+    );
+  }
   return (
     <dialog
       ref={ref}
       className={`dialog ${wide ? "wide" : ""} ${sheet ? "sheet" : ""}`}
       onCancel={(e) => {
         e.preventDefault();
-        onClose();
+        dismiss();
       }}
       onClick={(e) => {
-        if (e.target === ref.current) onClose();
+        if (e.target === ref.current) dismiss();
       }}
       aria-label={title}
     >
@@ -122,7 +158,7 @@ export function Modal({
           <span className="kicker">TRACERADAR</span>
           <h2>{title}</h2>
         </div>
-        <button className="icon-button" onClick={onClose} aria-label="关闭窗口">
+        <button className="icon-button" onClick={dismiss} aria-label="关闭窗口">
           <Icon name="close" />
         </button>
       </div>

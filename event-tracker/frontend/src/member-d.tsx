@@ -730,10 +730,12 @@ export function ReplaySetup({
   action: Act;
   onPrepared: (topic: Topic, corpus: Corpus) => Promise<void>;
 }) {
+  const defaultGoalFor = (corpusId: string) =>
+    corpusId === "mcd_hk_real"
+      ? "追踪香港麦当劳（McDonald's HK）2026年真实套餐新品、联名活动、App优惠与套票发售、价格与有效期变动；同一活动的续期或加推关联原事件，不同联名/优惠活动分开建档，过滤无关社会新闻与其他品牌广告。"
+      : "跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。";
   const [id, setId] = useState(corpora[0]?.corpus_id ?? "lbj"),
-    [goal, setGoal] = useState(
-      "跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。",
-    );
+    [goal, setGoal] = useState(defaultGoalFor(corpora[0]?.corpus_id ?? "lbj"));
   const selected = corpora.find((c) => c.corpus_id === id);
   return (
     <form
@@ -742,15 +744,47 @@ export function ReplaySetup({
         e.preventDefault();
         if (!selected) return;
         void action(async () => {
-          const sourceId = `replay_${id}_${crypto.randomUUID().slice(0, 8)}`;
+          const isMcd = id === "mcd_hk_real";
+          const isLbjDaily = id === "lbj_daily";
+          const sourceId = isMcd
+            ? `mcd_anchor_${crypto.randomUUID().slice(0, 8)}`
+            : isLbjDaily
+              ? `lbj_anchor_${crypto.randomUUID().slice(0, 8)}`
+              : `replay_${id}_${crypto.randomUUID().slice(0, 8)}`;
+          const anchorConfig: Record<string, unknown> = {
+            corpus_path: selected.corpus_path,
+            ...(isMcd
+              ? {
+                  role: "anchor",
+                  query_any: [
+                    "麥當勞",
+                    "麦当劳",
+                    "McDonald",
+                    "McGriddles",
+                    "麥麥",
+                    "脆辣雞腿飽",
+                  ],
+                }
+              : isLbjDaily
+                ? {
+                    role: "anchor",
+                    query_any: ["LeBron", "LBJ", "詹姆斯"],
+                  }
+                : {}),
+          };
           await api(
             "/sources",
             json("POST", {
               source_id: sourceId,
-              name: selected.name + " · 离线语料",
+              name:
+                isMcd
+                  ? "主搜索词: 香港麦当劳 / McDonald's HK (51条全真链)"
+                  : isLbjDaily
+                    ? "主搜索词: LeBron James (逐日模拟池 · 53条全真链)"
+                    : selected.name + " · 离线语料",
               type: "replay",
               endpoint: `replay://${selected.corpus_path}`,
-              config: { corpus_path: selected.corpus_path },
+              config: anchorConfig,
             }),
           );
           const topic = await api<Topic>(
@@ -775,7 +809,10 @@ export function ReplaySetup({
               type="radio"
               name="corpus"
               checked={id === c.corpus_id}
-              onChange={() => setId(c.corpus_id)}
+              onChange={() => {
+                setId(c.corpus_id);
+                setGoal(defaultGoalFor(c.corpus_id));
+              }}
             />
             <span>
               <strong>{c.name}</strong>

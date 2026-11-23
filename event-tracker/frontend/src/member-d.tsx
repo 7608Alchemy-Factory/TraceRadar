@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
 import type {
   Topic,
@@ -735,6 +735,12 @@ export function ReplaySetup({
     "持续追踪该主题的重要进展，区分传闻、确认进展与冲突证据；同一事项的后续更新关联原事件，独立事项分开建档。";
   const [id, setId] = useState(corpora[0]?.corpus_id ?? ""),
     [goal, setGoal] = useState(defaultGoalFor(corpora[0]));
+  useEffect(() => {
+    if (!id && corpora[0]) {
+      setId(corpora[0].corpus_id);
+      setGoal(defaultGoalFor(corpora[0]));
+    }
+  }, [id, corpora]);
   const selected = corpora.find((c) => c.corpus_id === id);
   return (
     <form

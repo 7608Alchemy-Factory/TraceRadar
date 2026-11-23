@@ -479,6 +479,22 @@ button:not(:disabled) {
   background: #fdf6e6;
   border-color: #d6a955;
 }
+.watchlist-save-status {
+  font-size: 0.86rem;
+  color: var(--ink-soft);
+  flex: 1 1 260px;
+}
+.watchlist-save-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tag.quiet {
+  background: #eef1f3;
+  color: #53606c;
+  border: 1px solid #d5dde3;
+}
 .llm-summary-box {
   padding: 10px 14px;
   margin-bottom: 14px;
@@ -498,9 +514,10 @@ button:not(:disabled) {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--line);
 }
-.source-group-hd h3 {
+.source-group-hd span {
   margin: 0;
   font-size: 0.95rem;
+  font-weight: 600;
 }
 .fact-list li.fact-new {
   background: #edf7f1;

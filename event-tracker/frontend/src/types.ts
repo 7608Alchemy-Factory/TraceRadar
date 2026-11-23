@@ -19,6 +19,7 @@ export type Source = {
   role?: "anchor" | "branch" | "channel";
   health_status?: string;
   retirement_recommended?: boolean;
+  registered?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };
 export type TimelineItem = {
@@ -149,6 +150,7 @@ export type Notification = {
 };
 export type Transition = {
   transition_id: string;
+  run_id?: string;
   before_state: EventState | null;
   after_state: EventState;
   evidence_ids: string[];

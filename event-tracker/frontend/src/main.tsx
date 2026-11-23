@@ -133,9 +133,7 @@ function App() {
     ) ?? [];
   const replaySource = replaySources[0];
   const candidateBranchCount = sources.filter(
-    (s) =>
-      s.source_id.startsWith(`kw_${selected.slice(0, 8)}_`) &&
-      !approved.includes(s.source_id),
+    (s) => s.health_status === "candidate" && !approved.includes(s.source_id),
   ).length;
   const retirementAlertCount = sources.filter(
     (s) => approved.includes(s.source_id) && s.retirement_recommended,
@@ -193,7 +191,10 @@ function App() {
     viewedRun.current = "";
     setEvidence([]);
     setSources([]);
+    setApproved([]);
     setNotices([]);
+    setReplayCorpus("");
+    setAsOf("");
     setLlmSummaryOn(false);
     setLlmSummaryNote(null);
     localStorage.setItem("traceradar-topic", id);
@@ -273,7 +274,7 @@ function App() {
           ),
         );
         const selectedCorpus = availableCorpora[0];
-        if (selectedCorpus) setReplayCorpus(selectedCorpus.corpus_id);
+        setReplayCorpus(selectedCorpus?.corpus_id ?? "");
         const cutoff =
           d.recent_runs.find((r) => r.snapshot?.options?.as_of)?.snapshot
             .options?.as_of ?? selectedCorpus?.cutoffs[0];
@@ -297,22 +298,32 @@ function App() {
     };
   }, [selected]);
 
-  async function refresh(sourceSettingsChanged = false) {
+  async function refresh(
+    sourceSettingsChanged = false,
+    options: { includeRecommendations?: boolean } = {},
+  ) {
     const id = selected;
+    const includeRec = options.includeRecommendations ?? true;
     const [d, n, e, rec] = await Promise.all([
       api<Dashboard>(`/topics/${id}/dashboard`),
       api<Notification[]>(`/topics/${id}/notifications`),
       api<EvidenceDecision[]>(`/topics/${id}/evidence`),
-      api<{ sources: Source[] }>(
-        `/topics/${id}/source-recommendations`,
-        json("POST", {}),
-      ).catch(() => null),
+      includeRec
+        ? api<{ sources: Source[] }>(
+            `/topics/${id}/source-recommendations`,
+            json("POST", {}),
+          ).catch(() => null)
+        : Promise.resolve(null),
     ]);
     if (selectedRef.current !== id) return;
     setDashboard(d);
     setNotices(n);
     setEvidence(e);
-    if (rec) setSources(rec.sources);
+    if (rec) {
+      setSources(rec.sources);
+      setLlmSummaryOn(false);
+      setLlmSummaryNote(null);
+    }
     if (sourceSettingsChanged) {
       setApproved(d.approved_sources.map((s) => s.source_id));
       setProvider(fixtureOnly(d.approved_sources) ? "mock" : "qwen");
@@ -322,47 +333,56 @@ function App() {
       const nextCorpus = corpora.find((c) =>
         activeReplay.some((s) => s.config.corpus_path === c.corpus_path),
       );
-      setReplayCorpus(nextCorpus?.corpus_id ?? "");
-      if (!asOf && nextCorpus?.cutoffs[0]) {
+      const nextCorpusId = nextCorpus?.corpus_id ?? "";
+      const corpusChanged = nextCorpusId !== replayCorpus;
+      setReplayCorpus(nextCorpusId);
+      if (corpusChanged) {
+        setAsOf(
+          nextCorpus?.cutoffs[0] ? localInput(nextCorpus.cutoffs[0]) : "",
+        );
+      } else if (!asOf && nextCorpus?.cutoffs[0]) {
         setAsOf(localInput(nextCorpus.cutoffs[0]));
       }
       setBatch(nextCorpus ? "all" : "1");
     }
   }
   async function refreshSources(wantLlmSummary = llmSummaryOn) {
-    const s = await api<{ sources: Source[]; llm_summary_note?: string | null }>(
-      `/topics/${selected}/source-recommendations`,
+    const id = selected;
+    const s = await api<{
+      sources: Source[];
+      llm_summary_enabled?: boolean;
+      llm_summary_note?: string | null;
+      llm_summary_error?: string | null;
+    }>(
+      `/topics/${id}/source-recommendations`,
       json("POST", { llm_summary: wantLlmSummary }),
     );
+    if (selectedRef.current !== id) return null;
     setSources(s.sources);
+    setLlmSummaryOn(Boolean(s.llm_summary_enabled));
     setLlmSummaryNote(s.llm_summary_note ?? null);
+    return s;
   }
   async function saveApprovedSources() {
+    const toRegister = sources.filter(
+      (s) => approved.includes(s.source_id) && s.registered === false,
+    );
+    for (const s of toRegister) {
+      await api(
+        "/sources",
+        json("POST", {
+          source_id: s.source_id,
+          name: s.name.slice(0, 200),
+          type: s.type,
+          endpoint: s.endpoint,
+          config: s.config,
+        }),
+      );
+    }
     await api(
       `/topics/${selected}/sources`,
       json("PUT", { approved_source_ids: approved }),
     );
-    if (dashboard?.topic) {
-      const branchLabels = sources
-        .filter(
-          (s) =>
-            approved.includes(s.source_id) &&
-            typeof s.config?.branch_label === "string",
-        )
-        .map((s) => String(s.config.branch_label));
-      const baseDesc = dashboard.topic.description
-        .replace(/\s*【关联支线关注：[^】]*】/g, "")
-        .trim();
-      const nextDesc = branchLabels.length
-        ? `${baseDesc} 【关联支线关注：同时追踪 ${branchLabels.join("、")} 的相关最新进展与细节】`
-        : baseDesc;
-      if (nextDesc !== dashboard.topic.description) {
-        await api(
-          `/topics/${selected}`,
-          json("PATCH", { description: nextDesc }),
-        );
-      }
-    }
     await refresh(true);
     setTopics(await api<Topic[]>("/topics"));
     setToast("已保存这个主题的追踪词表与信息来源。");
@@ -399,10 +419,11 @@ function App() {
         if (disposed || detail.run.topic_id !== selected) return;
         if (!viewedRun.current || viewedRun.current === detail.run.run_id)
           setRun(detail);
-        await refresh();
+        const stillActive = active(detail.run.status);
+        await refresh(false, { includeRecommendations: !stillActive });
         retries = 0;
         if (!disposed) {
-          if (active(detail.run.status)) timer = setTimeout(poll, 900);
+          if (stillActive) timer = setTimeout(poll, 900);
           else {
             setWatchId("");
             setToast(
@@ -1289,7 +1310,7 @@ function App() {
                   const visibleSources = sources.filter(
                     (s) =>
                       !s.source_id.startsWith("gnews_") ||
-                      s.source_id === `gnews_${selected.slice(0, 8)}` ||
+                      s.source_id === `gnews_${selected.slice(0, 8).toLowerCase()}` ||
                       approved.includes(s.source_id),
                   );
                   const isWatchlist = (s: Source) =>
@@ -1338,18 +1359,20 @@ function App() {
                         </small>
                       </span>
                       <span
-                        className={`tag ${s.retirement_recommended ? "amber" : s.health_status === "quiet" ? "quiet" : ""}`}
+                        className={`tag ${s.retirement_recommended ? "amber" : s.health_status === "quiet" || s.health_status === "archived" ? "quiet" : ""}`}
                       >
                         {s.retirement_recommended
                           ? "建议清理"
                           : s.health_status === "quiet"
                             ? "静默正常"
-                            : {
-                                fixture: "模拟来源",
-                                replay: "离线回放",
-                                rss: "RSS",
-                                manual: "手动录入",
-                              }[s.type]}
+                            : s.health_status === "archived"
+                              ? "已归档"
+                              : {
+                                  fixture: "模拟来源",
+                                  replay: "离线回放",
+                                  rss: "RSS",
+                                  manual: "手动录入",
+                                }[s.type]}
                       </span>
                     </label>
                   );
@@ -1380,13 +1403,22 @@ function App() {
                               onClick={() =>
                                 void action(async () => {
                                   const next = !llmSummaryOn;
-                                  setLlmSummaryOn(next);
-                                  await refreshSources(next);
-                                  setToast(
-                                    next
-                                      ? "已开启 AI 对比推荐理由（单次轻量总结）。"
-                                      : "已切换回 0-Token 事实依据模式。",
-                                  );
+                                  const res = await refreshSources(next);
+                                  if (!res) return;
+                                  if (next) {
+                                    if (res.llm_summary_enabled) {
+                                      setToast(
+                                        "已开启 AI 对比推荐理由（单次轻量总结）。",
+                                      );
+                                    } else {
+                                      setError(
+                                        res.llm_summary_error ||
+                                          "AI 对比理由未能开启（请检查模型配置或先运行一次检查），已保持 0-Token 事实依据模式。",
+                                      );
+                                    }
+                                  } else {
+                                    setToast("已切换回 0-Token 事实依据模式。");
+                                  }
                                 })
                               }
                             >
@@ -1435,7 +1467,7 @@ function App() {
                         <div className="section-actions">
                           <button
                             className="primary"
-                            disabled={busy || running}
+                            disabled={busy || running || !hasUnsavedSources}
                             onClick={() => void action(saveApprovedSources)}
                           >
                             保存批准来源 <Icon name="check" size={15} />

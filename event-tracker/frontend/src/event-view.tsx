@@ -20,12 +20,19 @@ export function EventView({
 }) {
   const e = value.event;
   const latestTransition = value.history[value.history.length - 1];
+  const latestRunTransitions = latestTransition?.run_id
+    ? value.history.filter((h) => h.run_id === latestTransition.run_id)
+    : latestTransition
+      ? [latestTransition]
+      : [];
+  const beforeLatestRunFacts =
+    latestRunTransitions[0]?.before_state?.key_facts ?? [];
   const latestAddedFactSet = new Set(
     latestTransition
       ? latestTransition.after_state.key_facts
           .filter(
             (f) =>
-              !latestTransition.before_state?.key_facts.some(
+              !beforeLatestRunFacts.some(
                 (x) => JSON.stringify(x) === JSON.stringify(f),
               ),
           )
@@ -33,7 +40,12 @@ export function EventView({
       : [],
   );
   const newestFactsFirst = [...e.state.key_facts].reverse();
-  const newestEvidenceFirst = [...value.evidence].reverse();
+  const newestEvidenceFirst = [...value.evidence].sort((a, b) => {
+    const ta = Date.parse(a.published_at);
+    const tb = Date.parse(b.published_at);
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && tb !== ta) return tb - ta;
+    return b.published_at.localeCompare(a.published_at);
+  });
   return (
     <div>
       <div className="event-lead">

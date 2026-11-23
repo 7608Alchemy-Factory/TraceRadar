@@ -24,6 +24,7 @@ def replay_catalog(settings):
             ],
             '跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。',
             ['LeBron', 'LBJ', '詹姆斯'],
+            '离线模拟搜索池（附 Google News 报道链接，按发布时间切片；新闻细节仍以原文为准）',
         ),
         (
             'mcd_hk_real',
@@ -39,6 +40,7 @@ def replay_catalog(settings):
             ],
             '追踪香港麦当劳2026年真实套餐新品、联名活动、App优惠与套票发售、价格与有效期变动；同一活动的续期或加推关联原事件，不同活动分开建档，过滤无关社会杂闻与竞品广告。',
             ['麥當勞', '麦当劳', 'McDonald'],
+            '离线模拟搜索池（附 Google News 报道链接，按发布时间切片；新闻细节仍以原文为准）',
         ),
         (
             'lbj',
@@ -47,6 +49,7 @@ def replay_catalog(settings):
             None,
             '跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。',
             None,
+            '队友提供的离线测试语料，新闻真实性与标签仍需核验',
         ),
         (
             'nba',
@@ -55,9 +58,10 @@ def replay_catalog(settings):
             None,
             '跟踪多条独立转会与续约进展，独立交易分开建档并保留冲突证据。',
             None,
+            '队友提供的离线测试语料，新闻真实性与标签仍需核验',
         ),
     ]
-    for identity, name, path, fixed_cutoffs, default_goal, anchor_terms in specs:
+    for identity, name, path, fixed_cutoffs, default_goal, anchor_terms, provenance in specs:
         full = settings.corpus_root / path
         if not full.exists():
             continue
@@ -76,7 +80,7 @@ def replay_catalog(settings):
             records=len(rows),
             cutoffs=cutoffs,
             default_goal=default_goal,
-            provenance='全真 Google News 链接离线模拟语料（无未来信息泄露）',
+            provenance=provenance,
         )
         if anchor_terms:
             entry['anchor_terms'] = anchor_terms

@@ -495,6 +495,70 @@ button:not(:disabled) {
   color: #53606c;
   border: 1px solid #d5dde3;
 }
+.tag.lang {
+  background: #e6f0fa;
+  color: #1d4e89;
+  border: 1px solid #bdd4ee;
+}
+.source-tags {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.lang-picker-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f8faf9;
+  border: 1px solid var(--line);
+}
+.lang-picker-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.lang-picker-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lang-pill {
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  border-radius: 999px;
+  border: 1px solid #cbd6d0;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+.lang-pill.active {
+  background: #1d6f54;
+  border-color: #1d6f54;
+  color: #fff;
+}
+.replay-lang-hint {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+}
+.llm-summary-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.llm-meta-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
 .llm-summary-box {
   padding: 10px 14px;
   margin-bottom: 14px;

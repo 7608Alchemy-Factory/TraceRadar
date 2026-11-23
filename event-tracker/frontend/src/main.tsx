@@ -62,6 +62,16 @@ type Dialog =
   | "replay"
   | "help"
   | null;
+const SEARCH_LANGUAGE_OPTIONS = [
+  { code: "zh-CN", label: "简中" },
+  { code: "zh-HK", label: "繁港" },
+  { code: "en-US", label: "英文" },
+  { code: "ko", label: "韩文" },
+  { code: "ja", label: "日文" },
+] as const;
+const SEARCH_LANGUAGE_MAP = new Map<string, string>(
+  SEARCH_LANGUAGE_OPTIONS.map((o) => [o.code, o.label]),
+);
 const demoSteps = [
   {
     id: "1",
@@ -109,6 +119,17 @@ function App() {
   const [showHistorySources, setShowHistorySources] = useState(false);
   const [llmSummaryOn, setLlmSummaryOn] = useState(false);
   const [llmSummaryNote, setLlmSummaryNote] = useState<string | null>(null);
+  const [llmMode, setLlmMode] = useState<string | null>(null);
+  const [searchLanguages, setSearchLanguages] = useState<string[]>([]);
+  const [lastLlmLangs, setLastLlmLangs] = useState<string>("");
+  const [recommendedLanguages, setRecommendedLanguages] = useState<string[]>(
+    [],
+  );
+  const [llmUsage, setLlmUsage] = useState<{
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  } | null>(null);
   const [newTitle, setNewTitle] = useState(""),
     [newDescription, setNewDescription] = useState("");
   const selectedRef = useRef(selected);
@@ -197,6 +218,11 @@ function App() {
     setAsOf("");
     setLlmSummaryOn(false);
     setLlmSummaryNote(null);
+    setLlmMode(null);
+    setSearchLanguages([]);
+    setLastLlmLangs("");
+    setRecommendedLanguages([]);
+    setLlmUsage(null);
     localStorage.setItem("traceradar-topic", id);
     const address = new URL(location.href);
     if (id) address.searchParams.set("topic", id);
@@ -311,7 +337,12 @@ function App() {
       includeRec
         ? api<{ sources: Source[] }>(
             `/topics/${id}/source-recommendations`,
-            json("POST", {}),
+            json(
+              "POST",
+              searchLanguages.length
+                ? { search_languages: searchLanguages }
+                : {},
+            ),
           ).catch(() => null)
         : Promise.resolve(null),
     ]);
@@ -321,8 +352,19 @@ function App() {
     setEvidence(e);
     if (rec) {
       setSources(rec.sources);
+      if (!sourceSettingsChanged) {
+        const validIds = new Set([
+          ...rec.sources.map((x) => x.source_id),
+          ...d.approved_sources.map((x) => x.source_id),
+        ]);
+        setApproved((prev) => prev.filter((sid) => validIds.has(sid)));
+      }
       setLlmSummaryOn(false);
       setLlmSummaryNote(null);
+      setLlmMode(null);
+      setLastLlmLangs("");
+      setRecommendedLanguages([]);
+      setLlmUsage(null);
     }
     if (sourceSettingsChanged) {
       setApproved(d.approved_sources.map((s) => s.source_id));
@@ -346,21 +388,41 @@ function App() {
       setBatch(nextCorpus ? "all" : "1");
     }
   }
-  async function refreshSources(wantLlmSummary = llmSummaryOn) {
+  async function refreshSources(
+    wantLlmSummary = llmSummaryOn,
+    langsOverride?: string[],
+  ) {
     const id = selected;
+    const activeLangs = langsOverride ?? searchLanguages;
+    const body: Record<string, unknown> = { llm_summary: wantLlmSummary };
+    if (activeLangs.length) body.search_languages = activeLangs;
     const s = await api<{
       sources: Source[];
       llm_summary_enabled?: boolean;
+      llm_mode?: string | null;
       llm_summary_note?: string | null;
       llm_summary_error?: string | null;
-    }>(
-      `/topics/${id}/source-recommendations`,
-      json("POST", { llm_summary: wantLlmSummary }),
-    );
+      recommended_languages?: string[];
+      llm_usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+      } | null;
+    }>(`/topics/${id}/source-recommendations`, json("POST", body));
     if (selectedRef.current !== id) return null;
     setSources(s.sources);
-    setLlmSummaryOn(Boolean(s.llm_summary_enabled));
+    const validIds = new Set([
+      ...s.sources.map((x) => x.source_id),
+      ...(dashboard?.approved_sources.map((x) => x.source_id) ?? []),
+    ]);
+    setApproved((prev) => prev.filter((sid) => validIds.has(sid)));
+    const enabled = Boolean(s.llm_summary_enabled);
+    setLlmSummaryOn(enabled);
+    setLlmMode(s.llm_mode ?? null);
     setLlmSummaryNote(s.llm_summary_note ?? null);
+    setLastLlmLangs(enabled ? activeLangs.join(",") : "");
+    setRecommendedLanguages(s.recommended_languages ?? []);
+    setLlmUsage(s.llm_usage ?? null);
     return s;
   }
   async function saveApprovedSources() {
@@ -1358,24 +1420,77 @@ function App() {
                           {s.source_id} · {s.endpoint}
                         </small>
                       </span>
-                      <span
-                        className={`tag ${s.retirement_recommended ? "amber" : s.health_status === "quiet" || s.health_status === "archived" ? "quiet" : ""}`}
-                      >
-                        {s.retirement_recommended
-                          ? "建议清理"
-                          : s.health_status === "quiet"
-                            ? "静默正常"
-                            : s.health_status === "archived"
-                              ? "已归档"
-                              : {
-                                  fixture: "模拟来源",
-                                  replay: "离线回放",
-                                  rss: "RSS",
-                                  manual: "手动录入",
-                                }[s.type]}
+                      <span className="source-tags">
+                        {typeof s.config?.search_language === "string" &&
+                          SEARCH_LANGUAGE_MAP.has(s.config.search_language) && (
+                            <span className="tag lang">
+                              {SEARCH_LANGUAGE_MAP.get(
+                                s.config.search_language,
+                              )}
+                            </span>
+                          )}
+                        <span
+                          className={`tag ${s.retirement_recommended ? "amber" : s.health_status === "quiet" || s.health_status === "archived" ? "quiet" : ""}`}
+                        >
+                          {s.retirement_recommended
+                            ? "建议清理"
+                            : s.health_status === "quiet"
+                              ? "静默正常"
+                              : s.health_status === "archived"
+                                ? "已归档"
+                                : {
+                                    fixture: "模拟来源",
+                                    replay: "离线回放",
+                                    rss: "RSS",
+                                    manual: "手动录入",
+                                  }[s.type]}
+                        </span>
                       </span>
                     </label>
                   );
+                  const hasRelevantEvidence = evidence.some(
+                    (v) => v.status === "review" || v.assessment?.is_relevant,
+                  );
+                  const approvedBranches = dashboard.approved_sources.filter(
+                    (s) => s.role === "branch" || s.source_id.startsWith("kw_"),
+                  );
+                  const hasNonCsApprovedBranch = approvedBranches.some(
+                    (s) =>
+                      !(s.config as Record<string, unknown> | undefined)
+                        ?.cold_start,
+                  );
+                  const hasUnapprovedBranch = sources.some(
+                    (s) =>
+                      s.health_status === "candidate" &&
+                      !(s.config as Record<string, unknown> | undefined)
+                        ?.cold_start &&
+                      !dashboard.approved_sources.some(
+                        (a) => a.source_id === s.source_id,
+                      ),
+                  );
+                  const isColdStartTopic =
+                    llmMode === "cold_start" ||
+                    (llmMode !== "advisor" &&
+                      dashboard.events.length === 0 &&
+                      !hasRelevantEvidence &&
+                      !hasUnapprovedBranch &&
+                      (approvedBranches.length === 0 ||
+                        (!hasNonCsApprovedBranch && evidence.length === 0)));
+                  const langsDirtyForLlm =
+                    llmSummaryOn &&
+                    !replay &&
+                    searchLanguages.join(",") !== lastLlmLangs;
+                  const toggleLanguage = (code: string) => {
+                    const nextLangs = searchLanguages.includes(code)
+                      ? searchLanguages.filter((l) => l !== code)
+                      : [...searchLanguages, code];
+                    setSearchLanguages(nextLangs);
+                    if (!llmSummaryOn) {
+                      void action(async () => {
+                        await refreshSources(false, nextLangs);
+                      });
+                    }
+                  };
                   return (
                     <div className="sources-layout">
                       <section className="section-block">
@@ -1394,7 +1509,9 @@ function App() {
                           <span className="watchlist-save-status">
                             {hasUnsavedSources
                               ? `有未保存的勾选变更（当前勾选 ${approved.length} 项），请点击保存后生效。`
-                              : `已生效 ${approved.length} 项追踪配置。默认使用 0-Token 已有事件事实作为扩展理由。`}
+                              : isColdStartTopic
+                                ? `已生效 ${approved.length} 项。空主题可点击「AI 冷启动拆词」自动生成 ≤3 个初始检索方向与推荐语种。`
+                                : `已生效 ${approved.length} 项追踪配置。默认使用 0-Token 已有事件事实作为扩展理由。`}
                           </span>
                           <div className="watchlist-save-actions">
                             <button
@@ -1402,18 +1519,22 @@ function App() {
                               disabled={busy || running}
                               onClick={() =>
                                 void action(async () => {
-                                  const next = !llmSummaryOn;
+                                  const next = langsDirtyForLlm
+                                    ? true
+                                    : !llmSummaryOn;
                                   const res = await refreshSources(next);
                                   if (!res) return;
                                   if (next) {
                                     if (res.llm_summary_enabled) {
                                       setToast(
-                                        "已开启 AI 对比推荐理由（单次轻量总结）。",
+                                        res.llm_mode === "cold_start"
+                                          ? "已生成 AI Cold-Start 初始检索建议，请勾选需要的来源并保存。"
+                                          : "已开启 AI 对比推荐理由（单次轻量总结）。",
                                       );
                                     } else {
                                       setError(
                                         res.llm_summary_error ||
-                                          "AI 对比理由未能开启（请检查模型配置或先运行一次检查），已保持 0-Token 事实依据模式。",
+                                          "AI 助手未能开启（请检查模型配置），已保持 0-Token 模式。",
                                       );
                                     }
                                   } else {
@@ -1422,9 +1543,15 @@ function App() {
                                 })
                               }
                             >
-                              {llmSummaryOn
-                                ? "AI 对比理由：ON"
-                                : "AI 对比理由：OFF (0-Token)"}
+                              {langsDirtyForLlm
+                                ? "按新语种重新生成"
+                                : isColdStartTopic
+                                  ? llmSummaryOn
+                                    ? "AI 冷启动拆词：ON"
+                                    : "AI 冷启动拆词：OFF"
+                                  : llmSummaryOn
+                                    ? "AI 对比理由：ON"
+                                    : "AI 对比理由：OFF (0-Token)"}
                             </button>
                             <button
                               type="button"
@@ -1436,9 +1563,65 @@ function App() {
                             </button>
                           </div>
                         </div>
+                        {!replay ? (
+                          <div className="lang-picker-bar">
+                            <span className="lang-picker-label">检索语种</span>
+                            <div className="lang-picker-pills">
+                              <button
+                                type="button"
+                                className={`lang-pill ${searchLanguages.length === 0 ? "active" : ""}`}
+                                disabled={busy || running}
+                                onClick={() => {
+                                  setSearchLanguages([]);
+                                  if (!llmSummaryOn) {
+                                    void action(async () => {
+                                      await refreshSources(false, []);
+                                    });
+                                  }
+                                }}
+                              >
+                                自动（AI 推荐）
+                              </button>
+                              {SEARCH_LANGUAGE_OPTIONS.map((opt) => (
+                                <button
+                                  type="button"
+                                  key={opt.code}
+                                  className={`lang-pill ${searchLanguages.includes(opt.code) ? "active" : ""}`}
+                                  disabled={busy || running}
+                                  onClick={() => toggleLanguage(opt.code)}
+                                >
+                                  {opt.label}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <p className="hint replay-lang-hint">
+                            离线搜索池按本地语料布尔检索，无需选择网搜语种；空主题下点击「AI 冷启动拆词」可基于目标字面拆出 ≤3 个初始检索支线（零未来泄露）。
+                          </p>
+                        )}
                         {llmSummaryNote && (
                           <div className="llm-summary-box">
-                            <strong>AI 扩展优先级对比建议</strong>
+                            <div className="llm-summary-head">
+                              <strong>
+                                {llmMode === "cold_start"
+                                  ? "AI Cold-Start 初始检索方案"
+                                  : "AI 扩展优先级对比建议"}
+                              </strong>
+                              <span className="llm-meta-badges">
+                                {!replay &&
+                                  recommendedLanguages.map((lg) => (
+                                    <span className="tag lang" key={lg}>
+                                      推荐：{SEARCH_LANGUAGE_MAP.get(lg) ?? lg}
+                                    </span>
+                                  ))}
+                                {llmUsage?.total_tokens != null && (
+                                  <span className="tag quiet">
+                                    本次消耗 {llmUsage.total_tokens} tokens
+                                  </span>
+                                )}
+                              </span>
+                            </div>
                             <p>{llmSummaryNote}</p>
                           </div>
                         )}
@@ -1748,7 +1931,7 @@ function App() {
               disabled={busy || running}
               action={action}
               onSaved={async () => {
-                await refreshSources();
+                await refreshSources(false);
                 setDialog(null);
                 setTab("sources");
                 setToast("来源已添加，请勾选并保存批准。");

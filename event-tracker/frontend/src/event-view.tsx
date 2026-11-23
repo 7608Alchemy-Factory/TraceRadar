@@ -19,49 +19,85 @@ export function EventView({
   onEvidence: (id: string) => void;
 }) {
   const e = value.event;
+  const latestTransition = value.history[value.history.length - 1];
+  const latestRunTransitions = latestTransition?.run_id
+    ? value.history.filter((h) => h.run_id === latestTransition.run_id)
+    : latestTransition
+      ? [latestTransition]
+      : [];
+  const beforeLatestRunFacts =
+    latestRunTransitions[0]?.before_state?.key_facts ?? [];
+  const latestAddedFactSet = new Set(
+    latestTransition
+      ? latestTransition.after_state.key_facts
+          .filter(
+            (f) =>
+              !beforeLatestRunFacts.some(
+                (x) => JSON.stringify(x) === JSON.stringify(f),
+              ),
+          )
+          .map((f) => JSON.stringify(f))
+      : [],
+  );
+  const newestFactsFirst = [...e.state.key_facts].reverse();
+  const newestEvidenceFirst = [...value.evidence].sort((a, b) => {
+    const ta = Date.parse(a.published_at);
+    const tb = Date.parse(b.published_at);
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && tb !== ta) return tb - ta;
+    return b.published_at.localeCompare(a.published_at);
+  });
   return (
     <div>
       <div className="event-lead">
-        <span
-          className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
-        >
-          {status(e.state.current_status)}
-        </span>
         <span className="meta">
-          版本 {e.version} · 更新于 {date(e.updated_at)}
+          版本 v{e.version} · 更新于 {date(e.updated_at)}
         </span>
         <h2>{title(e.title)}</h2>
+        <div
+          className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
+        >
+          <strong>[AI 当前状态总结] </strong>
+          {status(e.state.current_status)}
+        </div>
       </div>
       <div className="event-detail-grid">
         <div>
           <section className="detail-section">
-            <span className="kicker">WHAT WE KNOW</span>
-            <h3>当前事实</h3>
+            <span className="kicker">WHAT WE KNOW · AI 提炼事实（最新优先）</span>
+            <h3>
+              当前事实 <span className="count">{e.state.key_facts.length}</span>
+            </h3>
             <ul className="fact-list">
-              {e.state.key_facts.map((f, i) => (
-                <li key={i}>
-                  <span>{text(f.fact)}</span>
-                  <span className="citation-group">
-                    {f.evidence_ids.map((id) => (
-                      <button
-                        className="citation"
-                        key={id}
-                        onClick={() => onEvidence(id)}
-                        aria-label={`查看事实 ${i + 1} 的证据`}
-                      >
-                        {e.state.sources.indexOf(id) + 1}
-                      </button>
-                    ))}
-                  </span>
-                </li>
-              ))}
+              {newestFactsFirst.map((f, i) => {
+                const isNew = latestAddedFactSet.has(JSON.stringify(f));
+                return (
+                  <li key={i} className={isNew ? "fact-new" : ""}>
+                    <span>
+                      {isNew && <span className="new-pill">本轮新增</span>}
+                      {text(f.fact)}
+                    </span>
+                    <span className="citation-group">
+                      {f.evidence_ids.map((id) => (
+                        <button
+                          className="citation"
+                          key={id}
+                          onClick={() => onEvidence(id)}
+                          aria-label={`查看事实 ${i + 1} 的证据`}
+                        >
+                          {e.state.sources.indexOf(id) + 1}
+                        </button>
+                      ))}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
           <section className="detail-section">
-            <span className="kicker">HOW IT EVOLVED</span>
+            <span className="kicker">HOW IT EVOLVED · 时间线（最新优先）</span>
             <h3>事件时间线</h3>
             <ol className="timeline">
-              {e.state.timeline.map((t, i) => (
+              {[...e.state.timeline].reverse().map((t, i) => (
                 <li key={i}>
                   <time>{date(t.occurred_at)}</time>
                   <p>{headline(t.description)}</p>
@@ -122,14 +158,14 @@ export function EventView({
           </section>
         </div>
         <aside className="evidence-rail">
-          <span className="kicker">SUPPORTING MATERIAL</span>
+          <span className="kicker">ORIGINAL HEADLINES · 原新闻标题（最新优先）</span>
           <h3>
             关联证据 <span className="count">{value.evidence.length}</span>
           </h3>
           <p className="hint">
-            事实旁的数字对应证据。重复报道和冲突报道也会保留。
+            右侧为原新闻标题，左侧为 AI 提炼事实；事实旁的数字对应原文编号。
           </p>
-          {value.evidence.map((ev) => (
+          {newestEvidenceFirst.map((ev) => (
             <button
               className="evidence-reference"
               key={ev.evidence_id}

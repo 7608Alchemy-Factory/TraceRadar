@@ -4,12 +4,12 @@ from dataclasses import replace
 from urllib.parse import urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
-from fastapi import FastAPI, Header, Request
+from fastapi import Body, FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
+from .domain import Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
 from .repositories import Repository
 from .connectors import SOURCES, recommend_sources, validate_source_definition
 from .llm import get_provider
@@ -18,6 +18,10 @@ from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+
+
+class SourceRecommendationInput(Model):
+    llm_summary: bool | None = None
 
 
 def create_app(settings=None):
@@ -122,14 +126,33 @@ def create_app(settings=None):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
 
     @app.post('/api/topics/{identity}/source-recommendations')
-    def recommendations(identity: str):
+    def recommendations(
+        identity: str,
+        llm_summary: bool = False,
+        body: SourceRecommendationInput | None = Body(default=None),
+    ):
         item = repo.get('topics', identity)
-        result = recommend_sources(item, repo.sources())
+        want_llm = body.llm_summary if (body is not None and body.llm_summary is not None) else llm_summary
+        approved_ids = {s['source_id'] for s in repo.sources(identity)}
+        with config_lock:
+            settings_snapshot = replace(config)
+        result = recommend_sources(
+            item,
+            repo.sources(),
+            current_events=repo.events(identity),
+            evidence_decisions=repo.evidence_decisions(identity),
+            notifications=repo.notifications(identity),
+            corpus_root=settings_snapshot.corpus_root,
+            approved_source_ids=approved_ids,
+            llm_summary=want_llm,
+            settings=settings_snapshot,
+        )
         persisted = []
         for src in result['sources']:
-            if not src.get('registered'):
+            # Persist anchors/channels so direct approval keeps working, but never pre-persist unapproved branch candidates.
+            if not src.get('registered') and src.get('role') != 'branch':
                 clean_src = {k: src[k] for k in ('source_id', 'name', 'type', 'endpoint', 'config')}
-                validated = validate_source_definition(clean_src, config.corpus_root)
+                validated = validate_source_definition(clean_src, settings_snapshot.corpus_root)
                 repo.register_source(validated)
                 src = dict(src, registered=True)
             persisted.append(src)

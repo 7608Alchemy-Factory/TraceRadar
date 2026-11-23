@@ -15,6 +15,11 @@ export type Source = {
   endpoint: string;
   config: Record<string, unknown>;
   reason?: string;
+  fact_evidence?: string;
+  role?: "anchor" | "branch" | "channel";
+  health_status?: string;
+  retirement_recommended?: boolean;
+  registered?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };
 export type TimelineItem = {
@@ -145,6 +150,7 @@ export type Notification = {
 };
 export type Transition = {
   transition_id: string;
+  run_id?: string;
   before_state: EventState | null;
   after_state: EventState;
   evidence_ids: string[];
@@ -179,10 +185,12 @@ export type ModelStatus = {
   missing: string[];
 };
 export type Corpus = {
-  corpus_id: "lbj" | "nba";
+  corpus_id: string;
   name: string;
   corpus_path: string;
   records: number;
   cutoffs: string[];
+  default_goal?: string;
+  anchor_terms?: string[];
   provenance: string;
 };

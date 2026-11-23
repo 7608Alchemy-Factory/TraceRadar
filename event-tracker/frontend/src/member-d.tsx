@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
 import type {
   Topic,
@@ -730,10 +730,17 @@ export function ReplaySetup({
   action: Act;
   onPrepared: (topic: Topic, corpus: Corpus) => Promise<void>;
 }) {
-  const [id, setId] = useState(corpora[0]?.corpus_id ?? "lbj"),
-    [goal, setGoal] = useState(
-      "跟踪转会进展，区分传闻、谈判、协议与正式签约；保留冲突证据。同一交易的后续进展关联原事件，独立交易分开追踪。",
-    );
+  const defaultGoalFor = (corpus?: Corpus) =>
+    corpus?.default_goal ||
+    "持续追踪该主题的重要进展，区分传闻、确认进展与冲突证据；同一事项的后续更新关联原事件，独立事项分开建档。";
+  const [id, setId] = useState(corpora[0]?.corpus_id ?? ""),
+    [goal, setGoal] = useState(defaultGoalFor(corpora[0]));
+  useEffect(() => {
+    if (!id && corpora[0]) {
+      setId(corpora[0].corpus_id);
+      setGoal(defaultGoalFor(corpora[0]));
+    }
+  }, [id, corpora]);
   const selected = corpora.find((c) => c.corpus_id === id);
   return (
     <form
@@ -742,15 +749,22 @@ export function ReplaySetup({
         e.preventDefault();
         if (!selected) return;
         void action(async () => {
-          const sourceId = `replay_${id}_${crypto.randomUUID().slice(0, 8)}`;
+          const sourceId = `anchor_${id}_${crypto.randomUUID().slice(0, 8)}`;
+          const anchorConfig: Record<string, unknown> = {
+            corpus_path: selected.corpus_path,
+            role: "anchor",
+            ...(selected.anchor_terms?.length
+              ? { query_any: selected.anchor_terms }
+              : {}),
+          };
           await api(
             "/sources",
             json("POST", {
               source_id: sourceId,
-              name: selected.name + " · 离线语料",
+              name: `${selected.name} · 主检索源`,
               type: "replay",
               endpoint: `replay://${selected.corpus_path}`,
-              config: { corpus_path: selected.corpus_path },
+              config: anchorConfig,
             }),
           );
           const topic = await api<Topic>(
@@ -775,7 +789,10 @@ export function ReplaySetup({
               type="radio"
               name="corpus"
               checked={id === c.corpus_id}
-              onChange={() => setId(c.corpus_id)}
+              onChange={() => {
+                setId(c.corpus_id);
+                setGoal(defaultGoalFor(c));
+              }}
             />
             <span>
               <strong>{c.name}</strong>

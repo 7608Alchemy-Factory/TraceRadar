@@ -1,10 +1,11 @@
 import json
 import httpx
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 from app.core import Settings,AppError
 from app.domain import ModelDiscoveryInput,ModelSettingsInput,Assessment,Association
-from app.llm import AssessmentContractError,QwenProvider,MockProvider,get_provider,provider_error,validate_assessment_contract
+from app.llm import MODEL_DECISION,QwenProvider,MockProvider,get_provider,provider_error
 from app.model_settings import discover_models,save_model_settings,validate_address
 from app.main import create_app
 from app.services import StateManager
@@ -136,32 +137,23 @@ def test_no_change_cannot_silently_discard_update(novelty, extra):
                             association=Association(type='new_event', title='Example', reason='Test'),
                             novelty=novelty, reason_codes=['test'], **extra)
     evidence = {'evidence_id': 'ev'}
-    with pytest.raises(AssessmentContractError, match='cannot contain'):
-        validate_assessment_contract(assessment, [], evidence)
+    with pytest.raises(ValidationError):
+        MODEL_DECISION.validate_python(assessment.model_dump(exclude={'evidence_id', 'is_relevant'}))
     with pytest.raises(AppError) as caught:
-        StateManager(None).apply({'topic_id': 'topic'}, 'run', evidence, assessment)
-    assert caught.value.code == 'INCONSISTENT_ASSESSMENT'
+        StateManager(None).prepare_decision({'topic_id': 'topic'}, 'run', evidence, assessment, {}, {})
+    assert caught.value.code == 'INVALID_PROPOSAL'
 
 
 def test_clean_confirmation_still_records_supporting_evidence():
-    class Repo:
-        def __init__(self):
-            self.finished = None
-
-        def get(self, collection, identity):
-            assert (collection, identity) == ('events', 'event')
-            return {'event_id': 'event', 'topic_id': 'topic'}
-
-        def finish_evidence(self, *args, **kwargs):
-            self.finished = (args, kwargs)
-
-    repo = Repo()
     assessment = Assessment(evidence_id='ev', is_relevant=True,
                             association=Association(type='existing_event', event_id='event', reason='Same fact'),
                             novelty='confirmation', reason_codes=['corroboration'])
-    validate_assessment_contract(assessment, [], {'evidence_id': 'ev'})
-    assert StateManager(repo).apply({'topic_id': 'topic'}, 'run', {'evidence_id': 'ev'}, assessment) == 'no_change'
-    assert repo.finished[1]['event_id'] == 'event'
+    MODEL_DECISION.validate_python(assessment.model_dump(exclude={'evidence_id', 'is_relevant'}))
+    result = StateManager(None).prepare_decision(
+        {'topic_id': 'topic'}, 'run', {'evidence_id': 'ev'}, assessment,
+        {'event': {'event_id': 'event'}}, {},
+    )
+    assert result == {'outcome': 'no_change', 'event_id': 'event', 'relation': 'supporting'}
 
 
 def test_invalid_references_get_targeted_repair_instead_of_weakened_validation():

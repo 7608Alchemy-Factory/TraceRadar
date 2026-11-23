@@ -86,7 +86,7 @@ To generate the Hong Kong McDonald's benchmark report from `event-tracker/backen
 .\.venv\Scripts\python.exe ..\scripts\run_benchmark.py --provider mock
 ```
 
-Each stage lists every visible evidence item and its processing outcome. Use `--provider qwen` to run with your configured model. The draft labels and Mock run are for development checks.
+Each run writes `report.json` with processing outcomes and counts, plus `review.md` with stage-by-stage expected claims, actual Event facts/status, citation structure, and notification checks for human adjudication. Use `--cases mcd_hk_campaigns_v1 --provider qwen` to run the frozen MCD case with your configured model; `qwen` is the legacy provider identifier. Mock runs are pipeline checks, not semantic scores. Frozen input hashes are checked against the case manifest. The evaluation design for future live search is in `evaluation/ONLINE_EVALUATION_DESIGN.zh-CN.md`.
 
 ## Model setup
 

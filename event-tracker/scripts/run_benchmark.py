@@ -18,7 +18,9 @@ sys.path.insert(0, str(ROOT / 'backend'))
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.core import Settings  # noqa: E402
+from app.llm import PROMPT_VERSION  # noqa: E402
 from app.main import create_app  # noqa: E402
+from build_review_sheet import build as build_review_sheet  # noqa: E402
 
 
 def load(path):
@@ -43,7 +45,8 @@ def check_case(case_id):
 
 
 def digest(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Git may check out text with CRLF on Windows; hash canonical LF bytes.
+    return hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
 
 
 def validate_gold(case, gold):
@@ -51,6 +54,23 @@ def validate_gold(case, gold):
     assert case['case_id'] == gold['case_id']
     assert {item['external_id'] for item in fixture} == {x['item_id'] for x in gold['evidence_labels']}
     assert [s['stage_id'] for s in case['stages']] == [s['stage_id'] for s in gold['stage_expectations']]
+
+
+def verify_freeze(case, gold, gold_path):
+    if gold['annotation_status'] != 'frozen':
+        return
+    manifest_path = gold_path.with_name('freeze_manifest.json')
+    if not manifest_path.exists():
+        raise ValueError(f'Frozen case needs a freeze manifest: {manifest_path}')
+    manifest = load(manifest_path)
+    expected = {'case_sha256': ROOT / 'evaluation/cases' / case['case_id'] / 'case.json',
+                'fixture_sha256': ROOT / case['fixture'],
+                'ground_truth_sha256': gold_path}
+    if manifest.get('case_id') != case['case_id'] or manifest.get('status') != 'frozen':
+        raise ValueError(f'Freeze manifest identity/status mismatch: {manifest_path}')
+    for field, path in expected.items():
+        if manifest.get(field) != digest(path):
+            raise ValueError(f'Frozen input changed ({field}): {path}')
 
 
 def wait_run(client, run_id, timeout):
@@ -140,19 +160,28 @@ def main():
         gold_path = ROOT / 'evaluation/cases' / case_id / 'ground_truth.json'
         gold = load(gold_path)
         validate_gold(case, gold)
+        verify_freeze(case, gold, gold_path)
         commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT.parent,
                                 capture_output=True, text=True, check=True).stdout.strip()
         dirty = subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT.parent,
                                capture_output=True, text=True, check=True).stdout
         report = {'experiment': {'commit': commit, 'working_tree_dirty': bool(dirty), 'provider': args.provider,
+                                 'model_id': settings.model if args.provider == 'qwen' else None,
+                                 'model_base_url': settings.base_url if args.provider == 'qwen' else None,
+                                 'prompt_version': PROMPT_VERSION if args.provider == 'qwen' else None,
+                                 'model_timeout_seconds': settings.timeout if args.provider == 'qwen' else None,
+                                 'model_max_attempts': settings.max_attempts if args.provider == 'qwen' else None,
                                  'case_sha256': digest(ROOT / 'evaluation/cases' / case_id / 'case.json'),
                                  'fixture_sha256': digest(ROOT / case['fixture']),
                                  'gold_sha256': digest(gold_path),
                                  'replay_options': {'fixture_batch_id': 'all', 'prefilter_enabled': False,
                                                     'near_duplicate_enabled': True}},
                   'result': result, 'diagnostic': diagnostic(result, gold, load(ROOT / case['fixture']))}
-        (run_dir / 'report.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        report_path = run_dir / 'report.json'
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+        (run_dir / 'review.md').write_text(build_review_sheet(report_path), encoding='utf-8')
         print(json.dumps({'case_id': case_id, 'report': str(run_dir / 'report.json'),
+                          'review': str(run_dir / 'review.md'),
                           'summary': [{key: value for key, value in stage.items() if key != 'items'}
                                       for stage in report['diagnostic']['stage_summary']]}, ensure_ascii=False))
 

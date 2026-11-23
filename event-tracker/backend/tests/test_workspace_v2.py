@@ -104,8 +104,8 @@ def test_unconfigured_connection_check_and_replay_metadata(client):
     c,_=client
     assert c.post('/api/settings/model/check').json()['error']['code']=='QWEN_NOT_CONFIGURED'
     corpora=c.get('/api/replay/corpora').json()
-    assert [(r['corpus_id'],r['records']) for r in corpora]==[('lbj',30),('nba',18)]
-    assert all(len(r['cutoffs'])==3 and r['cutoffs']==sorted(r['cutoffs']) for r in corpora)
+    assert [(r['corpus_id'],r['records']) for r in corpora]==[('lbj_daily',53),('mcd_hk_real',51),('lbj',30),('nba',18)]
+    assert all(len(r['cutoffs'])>=3 and r['cutoffs']==sorted(r['cutoffs']) for r in corpora)
     assert 'labels' not in json.dumps(corpora)
 
 

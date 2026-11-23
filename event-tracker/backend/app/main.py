@@ -1,3 +1,4 @@
+import json
 import logging
 from threading import RLock
 from dataclasses import replace
@@ -122,9 +123,29 @@ def create_app(settings=None):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
 
     @app.post('/api/topics/{identity}/source-recommendations')
-    def recommendations(identity: str):
+    async def recommendations(identity: str, request: Request, llm_summary: bool = False):
         item = repo.get('topics', identity)
-        result = recommend_sources(item, repo.sources())
+        want_llm = bool(llm_summary)
+        try:
+            raw_body = await request.body()
+            if raw_body:
+                parsed = json.loads(raw_body)
+                if isinstance(parsed, dict) and parsed.get('llm_summary') is not None:
+                    want_llm = bool(parsed.get('llm_summary'))
+        except Exception:
+            pass
+        approved_ids = {s['source_id'] for s in repo.sources(identity)}
+        result = recommend_sources(
+            item,
+            repo.sources(),
+            current_events=repo.events(identity),
+            evidence_decisions=repo.evidence_decisions(identity),
+            notifications=repo.notifications(identity),
+            corpus_root=config.corpus_root,
+            approved_source_ids=approved_ids,
+            llm_summary=want_llm,
+            settings=config,
+        )
         persisted = []
         for src in result['sources']:
             if not src.get('registered'):

@@ -38,7 +38,7 @@ class Topic(TopicInput):
 class Source(Model):
     source_id: str = Field(pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
     name: str = Field(min_length=1, max_length=200)
-    type: Literal['fixture', 'replay', 'rss', 'manual'] = 'fixture'
+    type: Literal['fixture', 'replay', 'rss', 'manual', 'web_search', 'webpage'] = 'fixture'
     endpoint: str = Field(min_length=1, max_length=1000)
     config: dict = Field(default_factory=dict)
 

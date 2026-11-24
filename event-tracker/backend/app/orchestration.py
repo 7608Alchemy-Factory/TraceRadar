@@ -24,7 +24,7 @@ def public_error(exc):
 class RunManager:
     def __init__(self, repo, settings):
         self.repo, self.settings = repo, settings
-        self.connector = ConnectorRouter(settings.fixture_path, settings.corpus_root)
+        self.connector = ConnectorRouter(settings.fixture_path, settings.corpus_root, settings=settings)
         self.state_manager = StateManager(repo)
         self.queue = queue.Queue()
         self.thread = threading.Thread(target=self.worker, name='topic-worker', daemon=True)
@@ -80,6 +80,19 @@ class RunManager:
         options = run['snapshot'].get('options', {})
         inputs = []
         sources = [] if run['trigger_type'] == 'resume' else run['snapshot']['sources']
+        source_types = {s['source_id']: s.get('type') for s in run['snapshot']['sources']}
+        needs_web_ctx = any(s.get('type') in ('web_search', 'webpage', 'rss') for s in sources)
+        existing_for_fetch = self.repo.topic_evidence_items(topic['topic_id']) if needs_web_ctx else None
+        committed_ext_ids = (
+            {
+                (row['evidence']['source_id'], row['evidence']['external_id'])
+                for row in self.repo.evidence_decisions(topic['topic_id'])
+                if row.get('status') in ('completed', 'review')
+            }
+            if any(s.get('type') == 'webpage' for s in sources)
+            else None
+        )
+        in_run_urls: set[str] = set()
         for source in sources:
             trace = step('fetch_source')
             trace['input_refs'] = [source['source_id']]
@@ -89,6 +102,12 @@ class RunManager:
                     fetch_kwargs['as_of'] = options['as_of']
                 if options.get('manual_items'):
                     fetch_kwargs['manual_items'] = options['manual_items']
+                if source.get('type') in ('web_search', 'webpage', 'rss'):
+                    fetch_kwargs['existing_items'] = existing_for_fetch
+                    fetch_kwargs['in_run_urls'] = in_run_urls
+                    fetch_kwargs['topic_id'] = topic['topic_id']
+                if source.get('type') == 'webpage':
+                    fetch_kwargs['committed_ext_ids'] = committed_ext_ids
                 batch = self.connector.fetch(source, run['fixture_batch_id'], **fetch_kwargs) if fetch_kwargs else self.connector.fetch(source, run['fixture_batch_id'])
                 inputs.extend(batch)
                 decision = {'source_id': source['source_id'], 'items': len(batch)}
@@ -128,7 +147,7 @@ class RunManager:
                     dup_match = find_duplicate_match(
                         raw,
                         existing_items,
-                        enable_near_duplicate=options.get('near_duplicate_enabled', True),
+                        enable_near_duplicate=options.get('near_duplicate_enabled', True) and source_types.get(raw['source_id']) != 'webpage',
                     )
                 evidence = self.repo.ingest(
                     topic['topic_id'],

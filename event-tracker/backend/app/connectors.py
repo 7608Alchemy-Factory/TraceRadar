@@ -23,6 +23,14 @@ from .evidence_processing import (
     parse_published_at,
 )
 from .llm import is_local_model_url, provider_error, valid_model_url
+from .web_connectors import (
+    WebSearchConnector,
+    WebpageMonitorConnector,
+    _ALLOWED_SEARCH_PROVIDERS,
+    _DOMAIN_RE,
+    _resolve_active_search_provider,
+    enrich_items_with_web_fetch,
+)
 
 _ORIG_HTTPX_GET = httpx.get
 
@@ -128,15 +136,22 @@ def _parse_ip_literal(host: str) -> ipaddress.IPv4Address | ipaddress.IPv6Addres
         return None
 
 
-def _validate_http_url(url: str, *, resolve_dns: bool = False) -> None:
+def _validate_http_url(url: str, *, resolve_dns: bool = False, fail_closed_dns: bool = False) -> None:
     try:
         parsed = urlsplit(url)
+        _ = parsed.port
     except ValueError as exc:
         raise AppError('INVALID_SOURCE', f'Invalid RSS URL: {exc}', 422)
     host = (parsed.hostname or '').rstrip('.').lower()
     if parsed.scheme not in ('http', 'https') or not host:
         raise AppError('INVALID_SOURCE', 'RSS endpoint must be an http(s) URL with a valid host.', 422)
-    if host in _BLOCKED_HOSTS or host.endswith('.localhost') or host.endswith('.local'):
+    if parsed.username is not None or parsed.password is not None:
+        raise AppError('INVALID_SOURCE', 'URLs with embedded credentials are not permitted.', 422)
+    if (
+        host in _BLOCKED_HOSTS
+        or host.endswith(('.localhost', '.local', '.internal', '.corp', '.lan', '.home', '.home.arpa'))
+        or '%' in host
+    ):
         raise AppError('INVALID_SOURCE', 'Loopback RSS endpoints are not permitted.', 422)
     ip = _parse_ip_literal(host)
     if ip is not None:
@@ -146,10 +161,14 @@ def _validate_http_url(url: str, *, resolve_dns: bool = False) -> None:
                 raise AppError('INVALID_SOURCE', 'Loopback RSS endpoints are not permitted.', 422)
             raise AppError('INVALID_SOURCE', 'Private network RSS endpoints are not permitted.', 422)
         return
+    if '.' not in host:
+        raise AppError('INVALID_SOURCE', 'Private or single-label hostnames are not permitted.', 422)
     if resolve_dns:
         try:
             infos = socket.getaddrinfo(host, None)
-        except socket.gaierror:
+        except OSError:
+            if fail_closed_dns:
+                raise AppError('SOURCE_UNAVAILABLE', 'Target hostname could not be resolved safely.', 502)
             return
         for info in infos:
             addr = info[4][0].split('%', 1)[0]
@@ -198,6 +217,52 @@ def validate_source_definition(source: dict, corpus_root: Path) -> dict:
     if stype == 'rss':
         _validate_http_url(endpoint, resolve_dns=False)
         config['max_items'] = _parse_max_items(config)
+        if 'fetch_full_text' in config and not isinstance(config['fetch_full_text'], bool):
+            raise AppError('INVALID_SOURCE', 'RSS fetch_full_text must be a boolean.', 422)
+    elif stype == 'web_search':
+        q = str(config.get('query') or endpoint.removeprefix('search://')).strip()
+        if not q or len(q) > 200:
+            raise AppError('INVALID_SOURCE', 'Web search requires a query string between 1 and 200 characters.', 422)
+        config['query'] = q
+        raw_max = config.get('max_items', 8)
+        if isinstance(raw_max, bool):
+            raise AppError('INVALID_SOURCE', 'Web search max_items must be an integer between 1 and 20.', 422)
+        try:
+            max_items = int(raw_max)
+        except (TypeError, ValueError):
+            raise AppError('INVALID_SOURCE', 'Web search max_items must be an integer between 1 and 20.', 422)
+        if max_items < 1 or max_items > 20:
+            raise AppError('INVALID_SOURCE', 'Web search max_items must be between 1 and 20.', 422)
+        config['max_items'] = max_items
+        if 'fetch_full_text' in config and not isinstance(config['fetch_full_text'], bool):
+            raise AppError('INVALID_SOURCE', 'Web search fetch_full_text must be a boolean.', 422)
+        if 'search_provider' in config and config['search_provider'] is not None:
+            sp = str(config['search_provider']).strip().lower()
+            if sp not in _ALLOWED_SEARCH_PROVIDERS:
+                raise AppError('INVALID_SOURCE', f'Unsupported search_provider: {sp}', 422)
+            config['search_provider'] = sp
+        if 'after_date' in config and config['after_date'] is not None:
+            ad = _parse_iso_date(config['after_date'])
+            if not ad:
+                raise AppError('INVALID_SOURCE', 'Web search after_date must be a valid YYYY-MM-DD date.', 422)
+            config['after_date'] = ad
+        if 'recency_days' in config and config['recency_days'] is not None:
+            rd = config['recency_days']
+            if isinstance(rd, bool) or not isinstance(rd, int) or rd < 1 or rd > 365:
+                raise AppError('INVALID_SOURCE', 'Web search recency_days must be an integer between 1 and 365.', 422)
+        if 'include_domains' in config and config['include_domains'] is not None:
+            raw_doms = config['include_domains']
+            if not isinstance(raw_doms, list) or not all(isinstance(d, str) and _DOMAIN_RE.match(d.strip()) for d in raw_doms):
+                raise AppError('INVALID_SOURCE', 'Web search include_domains must be a list of valid domain names.', 422)
+            config['include_domains'] = [d.strip().lower() for d in raw_doms[:10]]
+    elif stype == 'webpage':
+        _validate_http_url(endpoint, resolve_dns=False)
+        if 'max_chars' in config and config['max_chars'] is not None:
+            mc = config['max_chars']
+            if isinstance(mc, bool) or not isinstance(mc, int) or mc < 500 or mc > 12000:
+                raise AppError('INVALID_SOURCE', 'Webpage max_chars must be an integer between 500 and 12000.', 422)
+        if 'allow_jina_fallback' in config and not isinstance(config['allow_jina_fallback'], bool):
+            raise AppError('INVALID_SOURCE', 'Webpage allow_jina_fallback must be a boolean.', 422)
     elif stype == 'replay':
         rel = str(config.get('corpus_path') or endpoint.removeprefix('replay://')).strip()
         if not rel:
@@ -390,10 +455,11 @@ def _atom_link(elem: ET.Element) -> str:
 class RssConnector:
     """Resilient RSS 2.0 / Atom connector with bounded retry and strict timestamp parsing."""
 
-    def __init__(self, client=None, max_attempts: int = 2, timeout: float = 15.0):
+    def __init__(self, client=None, max_attempts: int = 2, timeout: float = 15.0, settings=None):
         self.client = client
         self.max_attempts = max(1, max_attempts)
         self.timeout = timeout
+        self.settings = settings
         self.last_stats: dict = {}
 
     def _fetch_text_following_safe_redirects(self, url: str, headers: dict) -> str:
@@ -502,10 +568,26 @@ class RssConnector:
             if len(results) >= max_items:
                 break
 
+        fetch_stats: dict = {}
+        if (source.get('config') or {}).get('fetch_full_text') is True and self.client is None and results:
+            allow_jina = bool(getattr(self.settings, 'web_fetch_jina_fallback', True)) if self.settings else True
+            jina_key = str(getattr(self.settings, 'jina_api_key', '') or '') if self.settings else ''
+            results, fetch_stats = enrich_items_with_web_fetch(
+                results,
+                validate_url=_validate_http_url,
+                build_evidence=_build_evidence,
+                existing_items=kwargs.get('existing_items'),
+                in_run_urls=kwargs.get('in_run_urls'),
+                max_fetch=min(6, max_items),
+                allow_jina_fallback=allow_jina,
+                jina_api_key=jina_key,
+            )
+
         self.last_stats = {
             'returned': len(results),
             'skipped_missing_timestamp': skipped_missing_timestamp,
             'future_filtered': future_filtered,
+            **fetch_stats,
         }
         return sorted(results, key=lambda e: (e['published_at'], e['external_id']))
 
@@ -570,13 +652,33 @@ class ManualConnector:
 
 
 class ConnectorRouter:
-    """Dispatches source fetches to Fixture, Replay, RSS, or Manual connectors."""
+    """Dispatches source fetches to Fixture, Replay, RSS, Manual, WebSearch, or Webpage connectors."""
 
-    def __init__(self, fixture_path: Path, corpus_root: Path | None = None, rss_client=None):
+    def __init__(self, fixture_path: Path, corpus_root: Path | None = None, rss_client=None, settings=None):
         self.fixture = FixtureConnector(fixture_path)
         self.replay = ReplayConnector(corpus_root or fixture_path.parent)
-        self.rss = RssConnector(client=rss_client)
+        self.rss = RssConnector(client=rss_client, settings=settings)
         self.manual = ManualConnector()
+        snapshot_dir = (
+            Path(settings.database_path).parent / 'webpage_snapshots'
+            if settings and getattr(settings, 'database_path', None)
+            else (corpus_root or fixture_path.parent) / '.webpage_snapshots'
+        )
+        self.web_search = WebSearchConnector(
+            settings=settings,
+            validate_url=_validate_http_url,
+            build_evidence=_build_evidence,
+            to_utc_dt=_to_utc_dt,
+            rss_connector=self.rss,
+            gnews_url_builder=_build_google_news_rss_url,
+        )
+        self.webpage = WebpageMonitorConnector(
+            settings=settings,
+            snapshot_dir=snapshot_dir,
+            validate_url=_validate_http_url,
+            build_evidence=_build_evidence,
+            to_utc_dt=_to_utc_dt,
+        )
         self.last_fetch_stats: dict = {}
 
     def fetch(self, source: dict, batch: str, **kwargs) -> list[dict]:
@@ -596,6 +698,14 @@ class ConnectorRouter:
         if stype == 'manual':
             items = self.manual.fetch(source, batch, **kwargs)
             self.last_fetch_stats = dict(self.manual.last_stats)
+            return items
+        if stype == 'web_search':
+            items = self.web_search.fetch(source, batch, **kwargs)
+            self.last_fetch_stats = dict(self.web_search.last_stats)
+            return items
+        if stype == 'webpage':
+            items = self.webpage.fetch(source, batch, **kwargs)
+            self.last_fetch_stats = dict(self.webpage.last_stats)
             return items
         raise AppError('INVALID_SOURCE', f'Unknown connector type: {stype}', 422)
 
@@ -1589,20 +1699,25 @@ def recommend_sources(
             continue
         if sid.startswith('gnews_') and sid != f'gnews_{topic_slug}' and sid not in approved_set:
             continue
+        if sid.startswith('websearch_') and sid != f'websearch_{topic_slug}' and sid not in approved_set:
+            continue
         if (
             sid.startswith('replay_')
             or sid.startswith('anchor_')
-            or (cfg.get('role') == 'anchor' and sid != f'gnews_{topic_slug}')
+            or (cfg.get('role') == 'anchor' and sid not in (f'gnews_{topic_slug}', f'websearch_{topic_slug}'))
         ) and sid not in approved_set:
             continue
         tier = cfg.get('tier', 'simulated')
         role = cfg.get('role') or (
-            'anchor' if (sid == f'gnews_{topic_slug}' or (src.get('type') == 'replay' and sid in approved_set)) else 'channel'
+            'anchor'
+            if (sid == f'websearch_{topic_slug}' or (src.get('type') == 'replay' and sid in approved_set))
+            else 'channel'
         )
-        # Unapproved branch rows in DB:
+        # Unapproved auto-generated branch rows (kw_*) in DB:
         # - If it has prior evidence, it was previously approved & retired -> show cleanly as 'archived' without badge loop.
         # - If it has NO prior evidence (e.g. legacy unapproved AI/0-token row), skip here; active 0-token candidates will be freshly emitted below.
-        if role == 'branch' and sid not in approved_set:
+        # Note: user-created custom sources (not starting with kw_) are ALWAYS shown so they can be checked & approved!
+        if role == 'branch' and sid.startswith('kw_') and sid not in approved_set:
             if sid in branch_evidence_sids:
                 recommended.append(
                     dict(
@@ -1714,22 +1829,24 @@ def recommend_sources(
                 )
             else:
                 kw_q = f'{anchor_prefix} {term}'.strip() if not _term_in_text(anchor_prefix, term.lower()) else term
-                kw_q = ' '.join(kw_q.split())
-                branch_cfg = {'tier': 'aggregator', 'max_items': 8, 'role': 'branch', 'branch_label': term}
+                kw_q = ' '.join(kw_q.split())[:180]
+                branch_cfg = {
+                    'query': kw_q,
+                    'recency_days': 30,
+                    'fetch_full_text': True,
+                    'tier': 'aggregator',
+                    'max_items': 8,
+                    'role': 'branch',
+                    'branch_label': term,
+                }
                 if primary_locale:
                     branch_cfg['search_language'] = primary_locale
                 dynamic_candidates.append(
                     dict(
                         source_id=sid,
-                        name=f"扩展关键词：{kw_q}（{info['first_date']} 提及 · {info['count']} 篇）",
-                        type='rss',
-                        endpoint=_build_google_news_rss_url(
-                            kw_q,
-                            recency_days=30,
-                            prefer_zh=prefer_zh,
-                            prefer_zh_hant=prefer_zh_hant,
-                            locale=primary_locale,
-                        ),
+                        name=f"扩展关键词：{kw_q}（{info['first_date']} 提及 · {info['count']} 篇）"[:200],
+                        type='web_search',
+                        endpoint=f'search://{quote_plus(kw_q)}'[:900],
                         config=branch_cfg,
                         reason=reason,
                         fact_evidence=fact_snip,
@@ -1741,27 +1858,54 @@ def recommend_sources(
                     )
                 )
 
-    # Always provide general live keyword RSS anchor + general world news channel
-    gnews_cfg = {'tier': 'aggregator', 'max_items': 10, 'role': 'anchor'}
+    # Always provide general live web_search anchor + fallback Google News RSS + BBC world channel
+    active_search_provider, active_search_label = _resolve_active_search_provider(settings)
+    ws_recency = 30 if any(k in text for k in ('最新', '近期', 'latest', 'recent')) else None
+    ws_cfg: dict = {
+        'query': query,
+        'max_items': 8,
+        'fetch_full_text': True,
+        'tier': 'aggregator',
+        'role': 'anchor',
+    }
+    if ws_recency:
+        ws_cfg['recency_days'] = ws_recency
+    if primary_locale:
+        ws_cfg['search_language'] = primary_locale
+    gnews_cfg = {'tier': 'aggregator', 'max_items': 10, 'role': 'channel'}
     if primary_locale:
         gnews_cfg['search_language'] = primary_locale
     dynamic_candidates.extend(
         [
             dict(
+                source_id=f'websearch_{topic_slug}',
+                name=f'全网网页搜索（含正文）：{query[:36]}',
+                type='web_search',
+                endpoint=f'search://{quote_plus(query)}'[:900],
+                config=ws_cfg,
+                reason=f'当前引擎：{active_search_label}。仅对新文章并发抓取全文并去重，失败优雅回退摘要。',
+                fact_evidence='',
+                role='anchor',
+                tier='aggregator',
+                registered=False,
+                health_status='active',
+                retirement_recommended=False,
+            ),
+            dict(
                 source_id=f'gnews_{topic_slug}',
-                name=f'实时关键词 RSS：{query[:40]}',
+                name=f'Google News RSS（轻量摘要）：{query[:36]}',
                 type='rss',
                 endpoint=_build_google_news_rss_url(
                     query,
-                    recency_days=30 if any(k in text for k in ('最新', '近期', 'latest', 'recent')) else None,
+                    recency_days=ws_recency,
                     prefer_zh=prefer_zh,
                     prefer_zh_hant=prefer_zh_hant,
                     locale=primary_locale,
                 ),
                 config=gnews_cfg,
-                reason='实时 Google News 关键词订阅（支持自动识别或手动指定多语种，无需预设领域词表）。',
+                reason='实时 Google News 关键词 RSS 备用通道（仅标题摘要、极低延迟与 0 抓取开销）。',
                 fact_evidence='',
-                role='anchor',
+                role='channel',
                 tier='aggregator',
                 registered=False,
                 health_status='active',
@@ -1894,25 +2038,27 @@ def recommend_sources(
                     sid = f'kw_{topic_slug}_cs_{slug}'
                     if sid in existing_by_id:
                         continue
+                    cs_cfg: dict = {
+                        'query': qry,
+                        'tier': 'aggregator',
+                        'max_items': 8,
+                        'fetch_full_text': True,
+                        'role': 'branch',
+                        'branch_label': lbl,
+                        'search_language': lang,
+                        'cold_start': True,
+                    }
+                    if prop.get('after_date'):
+                        cs_cfg['after_date'] = prop['after_date']
+                    if prop.get('recency_days'):
+                        cs_cfg['recency_days'] = prop['recency_days']
                     recommended.append(
                         dict(
                             source_id=sid,
                             name=f"AI 初始检索[{lang_label}]：{lbl}",
-                            type='rss',
-                            endpoint=_build_google_news_rss_url(
-                                qry,
-                                recency_days=prop.get('recency_days'),
-                                after_date=prop.get('after_date'),
-                                locale=lang,
-                            ),
-                            config={
-                                'tier': 'aggregator',
-                                'max_items': 10,
-                                'role': 'branch',
-                                'branch_label': lbl,
-                                'search_language': lang,
-                                'cold_start': True,
-                            },
+                            type='web_search',
+                            endpoint=f'search://{quote_plus(qry)}'[:900],
+                            config=cs_cfg,
                             reason=f"🚀 Cold-Start 初始建议（{lang_label}）：{prop['reason']}",
                             fact_evidence=prop['reason'],
                             role='branch',
@@ -2030,21 +2176,23 @@ def recommend_sources(
                     )
                 else:
                     prop_lang = prop.get('language') or primary_locale
-                    prop_cfg = {'tier': 'aggregator', 'max_items': 8, 'role': 'branch', 'branch_label': prop['label']}
+                    prop_cfg = {
+                        'query': prop['query'],
+                        'recency_days': 30,
+                        'fetch_full_text': True,
+                        'tier': 'aggregator',
+                        'max_items': 8,
+                        'role': 'branch',
+                        'branch_label': prop['label'],
+                    }
                     if prop_lang and prop_lang in _GNEWS_LOCALES:
                         prop_cfg['search_language'] = prop_lang
                     recommended.append(
                         dict(
                             source_id=sid,
                             name=f"AI 扩展建议：{prop['query']}",
-                            type='rss',
-                            endpoint=_build_google_news_rss_url(
-                                prop['query'],
-                                recency_days=30,
-                                prefer_zh=prefer_zh,
-                                prefer_zh_hant=prefer_zh_hant,
-                                locale=prop_lang if prop_lang in _GNEWS_LOCALES else None,
-                            ),
+                            type='web_search',
+                            endpoint=f"search://{quote_plus(prop['query'])}"[:900],
                             config=prop_cfg,
                             reason=f"🤖 AI 主动建议：{prop['reason']}",
                             fact_evidence=prop['reason'],
@@ -2069,8 +2217,10 @@ def recommend_sources(
     def _sort_key(s):
         sid = s['source_id']
         role = s.get('role', 'channel')
-        if role == 'anchor' and sid != f'gnews_{topic_slug}':
+        if role == 'anchor' and sid not in (f'gnews_{topic_slug}', f'websearch_{topic_slug}'):
             return (0, 0, sid)
+        if sid == f'websearch_{topic_slug}':
+            return (0, 1, sid)
         if role == 'branch' or sid.startswith(f'kw_{topic_slug}_'):
             if s.get('health_status') == 'archived':
                 return (1, 2, sid)
@@ -2089,5 +2239,7 @@ def recommend_sources(
         'llm_summary_error': llm_summary_error,
         'recommended_languages': recommended_languages,
         'llm_usage': llm_usage,
+        'search_provider': active_search_provider,
+        'search_label': active_search_label,
         'sources': recommended,
     }

@@ -12,11 +12,12 @@ from starlette.exceptions import HTTPException
 from .core import Settings, AppError
 from .domain import Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
 from .repositories import Repository
-from .connectors import SOURCES, recommend_sources, validate_source_definition
+from .connectors import SOURCES, ConnectorRouter, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
+from .web_connectors import save_search_settings, search_settings_status
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
@@ -24,6 +25,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name
 class SourceRecommendationInput(Model):
     llm_summary: bool | None = None
     search_languages: list[Literal['zh-CN', 'zh-HK', 'en-US', 'ko', 'ja']] | None = Field(default=None, max_length=5)
+
+
+class SearchSettingsInput(Model):
+    provider: Literal['auto', 'bocha', 'tavily', 'free'] | None = None
+    bocha_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    tavily_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    jina_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    web_fetch_jina_fallback: bool | None = None
 
 
 def create_app(settings=None):
@@ -45,7 +54,7 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        if origin and request.url.path.startswith('/api/settings/model') and request.method in ('POST','PUT'):
+        if origin and (request.url.path.startswith('/api/settings/model') or request.url.path.startswith('/api/settings/search')) and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
             except ValueError:
@@ -105,6 +114,48 @@ def create_app(settings=None):
             if assessment.evidence_id!=evidence_id:
                 raise AppError('PROVIDER_SCHEMA','The model returned an incorrect evidence reference.',502)
             return {'status':'ok','model':config.model,'attempts':provider.attempt}
+
+    @app.get('/api/settings/search')
+    def read_search_settings():
+        with config_lock:
+            return search_settings_status(config)
+
+    @app.put('/api/settings/search')
+    def update_search_settings(body: SearchSettingsInput):
+        with config_lock:
+            if repo.active_runs():
+                raise AppError('RUN_ACTIVE', 'Wait for all runs to finish before changing search settings.')
+            return save_search_settings(config, body)
+
+    @app.post('/api/settings/search/check')
+    def check_search():
+        with config_lock:
+            snap = replace(config)
+        status = search_settings_status(snap)
+        router = ConnectorRouter(snap.fixture_path, snap.corpus_root, settings=snap)
+        items = router.fetch(
+            {
+                'source_id': 'search_check',
+                'name': 'Search Check',
+                'type': 'web_search',
+                'endpoint': 'search://check',
+                'config': {
+                    'query': '人工智能 最新进展' if status['active_provider'] == 'bocha' else 'OpenAI',
+                    'search_provider': status['active_provider'],
+                    'max_items': 2,
+                    'fetch_full_text': False,
+                    'fallback_to_free': False,
+                },
+            },
+            'live',
+        )
+        return {
+            'status': 'ok',
+            'active_provider': status['active_provider'],
+            'active_label': status['active_label'],
+            'provider_used': router.last_fetch_stats.get('provider_used'),
+            'items': len(items),
+        }
 
     @app.get('/api/replay/corpora')
     def corpora():

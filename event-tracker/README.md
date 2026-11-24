@@ -18,6 +18,26 @@ After restarting Windows, run the start launcher again. Existing topics, databas
 The launcher reuses an already running instance of this workspace and refuses to stop an unrelated port owner.
 It creates no startup task or system service. Logs: `data/local-workspace.log`.
 
+### V2 preview and team topic settings
+
+在仓库根目录双击 **Start-TraceRadar-V2.cmd**，打开 `http://127.0.0.1:8629/`。
+V2 读取 `event-tracker/data/frontend-v2-preview.db`，启动日志在同目录的
+`local-workspace-8629.log`。用 **Stop-TraceRadar-V2.cmd** 停止。启动后可关闭命令窗口。
+首次在新电脑上运行时，先按下方说明安装 Python 依赖，并在 `event-tracker/frontend` 运行 `npm ci` 和 `npm run build`。
+
+仓库附带回放语料和部分默认追踪目标。网页里创建的主题配置保存在创建者自己的 SQLite 数据库。
+下列命令从仓库根目录运行。导出时，把 `tracker.db` 换成队友实际使用的数据库文件。
+
+```powershell
+python .\event-tracker\scripts\topic_settings.py export --database .\event-tracker\data\tracker.db --output .\event-tracker\data\teammate-topics.json
+python .\event-tracker\scripts\topic_settings.py import --database .\event-tracker\data\frontend-v2-preview.db --input .\event-tracker\data\teammate-topics.json --dry-run
+python .\event-tracker\scripts\topic_settings.py import --database .\event-tracker\data\frontend-v2-preview.db --input .\event-tracker\data\teammate-topics.json
+```
+
+先启动 V2 初始化目标数据库，导入后刷新页面。同 ID 的主题保留本地设置，同名但不同 ID 的主题可并存。
+导出内容包括主题名称、目标、类型、排除词、提醒偏好和已批准来源。事件、证据、运行记录和模型密钥不在导出范围内。
+分享前请检查自定义来源地址或配置中是否含有私密链接或令牌。
+
 Backend dependencies and `frontend/dist` must exist (already prepared in the current workspace).
 After editing frontend source, rebuild it with `npm run build` before using this launcher.
 The two-terminal instructions below are the development alternative; stop the bundled server first

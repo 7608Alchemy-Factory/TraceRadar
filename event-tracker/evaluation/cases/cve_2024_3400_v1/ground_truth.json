@@ -1,0 +1,276 @@
+{
+  "schema_version": "2.0",
+  "case_id": "cve_2024_3400_v1",
+  "annotation_status": "draft",
+  "events": [
+    {
+      "event_key": "panos_cve_2024_3400",
+      "boundary": "CVE-2024-3400 的披露、利用、修复和后续响应，均为同一漏洞"
+    }
+  ],
+  "evidence_labels": [
+    {
+      "item_id": "CVE3400-01",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "uncertain",
+      "scoring_exclusions": [],
+      "review_note": "create_event; 初版公告内容尚无历史快照；实际利用细节以可核查的 Volexity 当日报道为准"
+    },
+    {
+      "item_id": "CVE3400-02",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "add_independent_exploitation_evidence; 独立观察可以加强实际利用证据，但不应另建漏洞 Event 或重复发送同一披露警报"
+    },
+    {
+      "item_id": "CVE3400-03",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "uncertain",
+      "scoring_exclusions": [],
+      "review_note": "update_patch_availability"
+    },
+    {
+      "item_id": "CVE3400-04",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "uncertain",
+      "scoring_exclusions": [],
+      "review_note": "update_guidance_same_event"
+    },
+    {
+      "item_id": "CVE3400-05",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "add_post_exploit_detection_guidance"
+    },
+    {
+      "item_id": "CVE3400-06",
+      "relevance": "relevant",
+      "event_keys": [
+        "panos_cve_2024_3400"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "uncertain",
+      "scoring_exclusions": [
+        "timeliness",
+        "historical_fact_recall"
+      ],
+      "review_note": "mark_source_time_and_version_uncertain; 允许保留为待核实参考，不将其当前内容写成过去已确认事实；人工审核 Agent 对不确定性的表达"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "CVE3400-01-C1",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "厂商发布 CVE-2024-3400 公告",
+      "supporting_item_ids": [
+        "CVE3400-01"
+      ],
+      "first_visible_stage_id": "s1_disclosed"
+    },
+    {
+      "claim_id": "CVE3400-01-C2",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "漏洞影响特定 PAN-OS 版本与 GlobalProtect 配置",
+      "supporting_item_ids": [
+        "CVE3400-01"
+      ],
+      "first_visible_stage_id": "s1_disclosed"
+    },
+    {
+      "claim_id": "CVE3400-02-C1",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "Volexity 报告在其客户环境观察到实际入侵",
+      "supporting_item_ids": [
+        "CVE3400-02"
+      ],
+      "first_visible_stage_id": "s1_disclosed"
+    },
+    {
+      "claim_id": "CVE3400-03-C1",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "厂商时间线称4月15日所需修复版本已可用",
+      "supporting_item_ids": [
+        "CVE3400-03"
+      ],
+      "first_visible_stage_id": "s2_fixes"
+    },
+    {
+      "claim_id": "CVE3400-04-C1",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "厂商时间线称4月16日更新产品、缓解、利用和修复指引",
+      "supporting_item_ids": [
+        "CVE3400-04"
+      ],
+      "first_visible_stage_id": "s2_fixes"
+    },
+    {
+      "claim_id": "CVE3400-05-C1",
+      "event_key": "panos_cve_2024_3400",
+      "statement": "Volexity 于5月15日发布后续入侵检测分析",
+      "supporting_item_ids": [
+        "CVE3400-05"
+      ],
+      "first_visible_stage_id": "s3_followup"
+    }
+  ],
+  "stage_expectations": [
+    {
+      "stage_id": "s1_disclosed",
+      "events": [
+        {
+          "event_key": "panos_cve_2024_3400",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "vulnerability": "disclosed",
+            "exploitation": "observed_by_volexity",
+            "patch_availability": "not_yet_confirmed_available",
+            "customer_deployment": "unknown",
+            "post_exploit_assessment": "needed"
+          },
+          "required_claim_ids": [
+            "CVE3400-01-C1",
+            "CVE3400-01-C2",
+            "CVE3400-02-C1"
+          ],
+          "forbidden_assertions": [
+            "4月15日的全部修复版本在4月12日已经可用"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s2_fixes",
+      "events": [
+        {
+          "event_key": "panos_cve_2024_3400",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "vulnerability": "disclosed",
+            "exploitation": "observed_by_volexity",
+            "patch_availability": "available_as_of_april_15",
+            "customer_deployment": "unknown",
+            "post_exploit_assessment": "needed"
+          },
+          "required_claim_ids": [
+            "CVE3400-01-C1",
+            "CVE3400-01-C2",
+            "CVE3400-02-C1",
+            "CVE3400-03-C1",
+            "CVE3400-04-C1"
+          ],
+          "forbidden_assertions": [
+            "所有客户已完成升级",
+            "补丁可用意味着入侵调查结束"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s3_followup",
+      "events": [
+        {
+          "event_key": "panos_cve_2024_3400",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "vulnerability": "disclosed",
+            "exploitation": "observed_by_volexity",
+            "patch_availability": "available",
+            "customer_deployment": "unknown",
+            "post_exploit_assessment": "followup_guidance_published"
+          },
+          "required_claim_ids": [
+            "CVE3400-01-C1",
+            "CVE3400-01-C2",
+            "CVE3400-02-C1",
+            "CVE3400-03-C1",
+            "CVE3400-04-C1",
+            "CVE3400-05-C1"
+          ],
+          "forbidden_assertions": [
+            "后续检测文章意味着补丁未发布"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "CVE3400-01-panos_cve_2024_3400",
+      "event_key": "panos_cve_2024_3400",
+      "stage_id": "s1_disclosed",
+      "supporting_item_ids": [
+        "CVE3400-01"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "immediate",
+      "reason": "严重漏洞首次披露"
+    },
+    {
+      "milestone_id": "CVE3400-02-panos_cve_2024_3400",
+      "event_key": "panos_cve_2024_3400",
+      "stage_id": "s1_disclosed",
+      "supporting_item_ids": [
+        "CVE3400-02"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "独立研究补充实际利用证据，避免重复披露警报"
+    },
+    {
+      "milestone_id": "CVE3400-03-panos_cve_2024_3400",
+      "event_key": "panos_cve_2024_3400",
+      "stage_id": "s2_fixes",
+      "supporting_item_ids": [
+        "CVE3400-03"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "immediate",
+      "reason": "所需修复版本可用，是独立重大里程碑"
+    },
+    {
+      "milestone_id": "CVE3400-04-panos_cve_2024_3400",
+      "event_key": "panos_cve_2024_3400",
+      "stage_id": "s2_fixes",
+      "supporting_item_ids": [
+        "CVE3400-04"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "更新产品与缓解指引"
+    },
+    {
+      "milestone_id": "CVE3400-05-panos_cve_2024_3400",
+      "event_key": "panos_cve_2024_3400",
+      "stage_id": "s3_followup",
+      "supporting_item_ids": [
+        "CVE3400-05"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "后续入侵检测分析"
+    }
+  ],
+  "annotation_notes": "一篇来源可更新同一 Event 的多个维度；多个来源报道同一漏洞不产生多个 Event。按维度评分，不用单一 patched/resolved 标签覆盖利用、部署和后续检测状态。同一里程碑的多来源报道不应重复即时提醒。CVE3400-06 专门测试来源时间与版本不确定性；其 published_at 是连接器必填的回放占位时间，不是真实发布时间，排除时效和历史事实召回计分。厂商早期页面也缺历史快照，因此时间因果分数目前仅供开发反馈。"
+}

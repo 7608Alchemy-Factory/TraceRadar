@@ -1,0 +1,11 @@
+{
+  "case_id": "mcd_hk_campaigns_v1",
+  "frozen_on": "2026-11-22",
+  "status": "frozen",
+  "case_sha256": "e0d8f7b4519ab3bf48954f85276c05905988221fceb5e7c0c9dc9decd9b5ac51",
+  "fixture_sha256": "2487ae4d212daffbefc7a5f6a55371cfb5b5375a43e8934388d73efdb389c591",
+  "ground_truth_sha256": "da47090d7b70f0dfb473507363061fcf9dc353d6438621a7b473e6d68aebc6c1",
+  "hash_rule": "SHA-256 after normalizing CRLF to LF, so Git checkout line endings do not change the freeze identity",
+  "review_basis": "Project owner requested formal freeze after iterative case review; source claims and edge cases checked against the four linked McDonald's press releases on 2026-11-22.",
+  "review_limit": "A separate second human annotator's sign-off is not recorded. The fixture contains curated paraphrases rather than full historical page snapshots; hourly timeliness is excluded."
+}

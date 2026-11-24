@@ -1,12 +1,14 @@
 import json
 import httpx
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 from app.core import Settings,AppError
 from app.domain import ModelDiscoveryInput,ModelSettingsInput,Assessment,Association
-from app.llm import QwenProvider,MockProvider,provider_error
-from app.model_settings import discover_models,save_model_settings
+from app.llm import MODEL_DECISION,QwenProvider,MockProvider,get_provider,provider_error
+from app.model_settings import discover_models,save_model_settings,validate_address
 from app.main import create_app
+from app.services import StateManager
 from test_workflow import topic,run
 from test_connectors_and_pipeline import _wait_run
 
@@ -107,6 +109,51 @@ def test_deepseek_service_label_is_rejected_before_save(tmp_path):
         save_model_settings(settings,ModelSettingsInput(base_url='https://api.deepseek.com',model='Deepseek'))
     assert caught.value.code=='INVALID_MODEL_CONFIG'
     assert not settings.env_path.exists()
+
+
+@pytest.mark.parametrize('address', ['http://localhost:11434/v1', 'http://127.0.0.1:11434/v1'])
+def test_local_ollama_loopback_is_allowed(address):
+    assert validate_address(address) == address
+    settings = Settings(api_key='ollama', base_url=address, model='qwen3:4b')
+    assert isinstance(get_provider('qwen', settings), QwenProvider)
+
+
+@pytest.mark.parametrize('address', ['http://example.com/v1', 'http://localhost.example.com/v1',
+                                      'http://user:pass@localhost:11434/v1'])
+def test_nonlocal_or_credentialed_http_model_url_is_rejected(address):
+    with pytest.raises(AppError) as caught:
+        validate_address(address)
+    assert caught.value.code == 'INVALID_MODEL_CONFIG'
+
+
+@pytest.mark.parametrize('novelty', ['confirmation', 'no_change'])
+@pytest.mark.parametrize('extra', [
+    {'supported_claims': [{'fact': 'New patch is available', 'evidence_ids': ['ev']}]},
+    {'update_kind': 'fact_added'},
+    {'proposed_state': {'current_status': 'patched', 'key_facts': [], 'timeline': [], 'sources': ['ev']}},
+])
+def test_no_change_cannot_silently_discard_update(novelty, extra):
+    assessment = Assessment(evidence_id='ev', is_relevant=True,
+                            association=Association(type='new_event', title='Example', reason='Test'),
+                            novelty=novelty, reason_codes=['test'], **extra)
+    evidence = {'evidence_id': 'ev'}
+    with pytest.raises(ValidationError):
+        MODEL_DECISION.validate_python(assessment.model_dump(exclude={'evidence_id', 'is_relevant'}))
+    with pytest.raises(AppError) as caught:
+        StateManager(None).prepare_decision({'topic_id': 'topic'}, 'run', evidence, assessment, {}, {})
+    assert caught.value.code == 'INVALID_PROPOSAL'
+
+
+def test_clean_confirmation_still_records_supporting_evidence():
+    assessment = Assessment(evidence_id='ev', is_relevant=True,
+                            association=Association(type='existing_event', event_id='event', reason='Same fact'),
+                            novelty='confirmation', reason_codes=['corroboration'])
+    MODEL_DECISION.validate_python(assessment.model_dump(exclude={'evidence_id', 'is_relevant'}))
+    result = StateManager(None).prepare_decision(
+        {'topic_id': 'topic'}, 'run', {'evidence_id': 'ev'}, assessment,
+        {'event': {'event_id': 'event'}}, {},
+    )
+    assert result == {'outcome': 'no_change', 'event_id': 'event', 'relation': 'supporting'}
 
 
 def test_invalid_references_get_targeted_repair_instead_of_weakened_validation():

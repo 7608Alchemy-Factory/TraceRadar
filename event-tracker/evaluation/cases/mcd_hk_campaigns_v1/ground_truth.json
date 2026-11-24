@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "case_id": "mcd_hk_campaigns_v1",
-  "annotation_status": "draft",
+  "annotation_status": "frozen",
   "events": [
     {
       "event_key": "weekly_rewards",
@@ -143,7 +143,7 @@
     {
       "claim_id": "MCD-03-C3",
       "event_key": "tea_offer",
-      "statement": "茶飲優惠 2026-09-28 至 2026-10-02",
+      "statement": "麥當勞 App 的 $3 大淳茶舍茉莉綠茶（無糖）優惠於 2026-09-28 至 2026-10-02 提供",
       "supporting_item_ids": [
         "MCD-03"
       ],
@@ -420,7 +420,7 @@
       ],
       "trigger_type": "evidence",
       "expected_action": "digest",
-      "reason": "一篇公告同时公布套票和茶饮两项优惠"
+      "reason": "同一篇公告公布独立的 $3 茉莉绿茶 App 优惠"
     },
     {
       "milestone_id": "MCD-04-tomato_pasta",
@@ -442,7 +442,7 @@
       ],
       "trigger_type": "time",
       "expected_action": "record_only",
-      "reason": "公布第二周限时优惠"
+      "reason": "第二週優惠已於 9 月 13 日結束，僅記錄到期，不再次提醒"
     },
     {
       "milestone_id": "tea_offer_expiry",
@@ -453,8 +453,8 @@
       ],
       "trigger_type": "time",
       "expected_action": "record_only",
-      "reason": "一篇公告同时公布套票和茶饮两项优惠"
+      "reason": "$3 茉莉綠茶優惠已於 10 月 2 日結束，僅記錄到期，不再次提醒"
     }
   ],
-  "annotation_notes": "每项 claim 只对应一组独立事实；概括与细化表述不得重复计分。Event 由独立追踪和更新周期决定，不由文章数决定。MCD-03 一篇文章应支持套票和茶饮两个 Event，但仍只算一篇来源；两项优惠的交易叠加性原文未说明。MCD-02 的新品推出及关联优惠归一个系列 Event，各优惠分别记录期限；两项短期优惠过期不意味着新品或整组优惠全部结束。时间驱动的到期状态当前未实现时列为功能缺口。MCD-03 一条 Evidence 关联两个 Event 的评分待接口能力确认。"
+  "annotation_notes": "每项 claim 只对应一组独立事实；概括与细化表述不得重复计分。Event 由独立追踪和更新周期决定，不由文章数决定。MCD-03 一篇文章应支持套票和茶饮两个 Event，但仍只算一篇来源；两项优惠的交易叠加性原文未说明。MCD-02 的新品推出及关联优惠归一个系列 Event，各优惠分别记录期限；两项短期优惠过期不意味着新品或整组优惠全部结束。时间驱动的到期状态当前未实现时列为功能缺口。MCD-03 一条 Evidence 关联两个 Event 应按两个独立 Event 评分。"
 }

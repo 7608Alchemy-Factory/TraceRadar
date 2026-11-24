@@ -1,6 +1,7 @@
 import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
 import { SidebarTopics } from "./sidebar-topics";
 import { useTopicOrder } from "./topic-order";
+import { searchProviderLabel, SourceHealth } from "./source-health";
 import { TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
 import { WorkspaceClock } from "./clock";
 import { TopicReport } from "./topic-report";
@@ -21,6 +22,7 @@ import type {
   EventDetail,
   EvidenceDecision,
   ModelStatus,
+  SearchStatus,
   Corpus,
 } from "./types";
 import {
@@ -29,6 +31,7 @@ import {
   ManualEvidenceForm,
   ReviewPanel,
   ModelSettingsPanel,
+  SearchSettingsPanel,
   ReplaySetup,
 } from "./member-d";
 import { Icon, Modal, Empty } from "./ui";
@@ -78,6 +81,7 @@ type Dialog =
   | "source"
   | "manual"
   | "settings"
+  | "search"
   | "replay"
   | "delete"
   | null;
@@ -129,6 +133,7 @@ function App() {
   const [event, setEvent] = useState<EventDetail | null>(null),
     [evidenceId, setEvidenceId] = useState(""),
     [model, setModel] = useState<ModelStatus | null>(null),
+    [searchSettings, setSearchSettings] = useState<SearchStatus | null>(null),
     [corpora, setCorpora] = useState<Corpus[]>([]);
   const [dialog, setDialog] = useState<Dialog>(null),
     [busy, setBusy] = useState(false),
@@ -306,13 +311,15 @@ function App() {
       loadWorkspaceTopics(),
       api<{ status: string }>("/health"),
       api<ModelStatus>("/settings/model"),
+      api<SearchStatus>("/settings/search").catch(() => null),
       api<Corpus[]>("/replay/corpora"),
     ])
-      .then(([items, h, m, c]) => {
+      .then(([items, h, m, ss, c]) => {
         if (disposed) return;
         setTopics(items);
         setHealth(h.status === "ok");
         setModel(m);
+        setSearchSettings(ss);
         setCorpora(c);
         const requested = new URLSearchParams(location.search).get("topic");
         if (requested && items.some((topic) => topic.topic_id === requested)) {
@@ -1282,24 +1289,40 @@ function App() {
                   />
                 )}
                 {tab === "sources" && (() => {
-                  const visibleSources = sources.filter(
-                    (s) =>
-                      !s.source_id.startsWith("gnews_") ||
-                      s.source_id === `gnews_${selected.slice(0, 8).toLowerCase()}` ||
-                      approved.includes(s.source_id),
-                  );
+                  const visibleSources = sources.filter((s) => {
+                    const slug = selected.slice(0, 8).toLowerCase();
+                    if (
+                      s.source_id.startsWith("gnews_") &&
+                      s.source_id !== `gnews_${slug}` &&
+                      !approved.includes(s.source_id)
+                    ) {
+                      return false;
+                    }
+                    if (
+                      s.source_id.startsWith("websearch_") &&
+                      s.source_id !== `websearch_${slug}` &&
+                      !approved.includes(s.source_id)
+                    ) {
+                      return false;
+                    }
+                    return true;
+                  });
                   const isWatchlist = (s: Source) =>
                     s.role === "anchor" ||
                     s.role === "branch" ||
                     s.source_id.startsWith("kw_") ||
+                    s.source_id.startsWith("websearch_") ||
                     s.source_id.startsWith("anchor_");
                   const watchlistSources = visibleSources.filter(isWatchlist);
                   const channelSources = visibleSources.filter(
                     (s) => !isWatchlist(s),
                   );
-                  const renderSourceRow = (s: Source) => (
+                  const renderSourceRow = (s: Source) => {
+                    const isApproved = approved.includes(s.source_id);
+                    const isDimmed = !isApproved && s.ai_verdict === "skip";
+                    return (
                     <label
-                      className={`source-row ${approved.includes(s.source_id) ? "checked" : ""}`}
+                      className={`source-row ${isApproved ? "checked" : ""} ${isDimmed ? "dimmed" : ""}`}
                       key={s.source_id}
                     >
                       <input
@@ -1317,7 +1340,9 @@ function App() {
                       <span className="source-icon">
                         <Icon
                           name={
-                            s.type === "rss"
+                            s.type === "rss" ||
+                            s.type === "web_search" ||
+                            s.type === "webpage"
                               ? "sources"
                               : s.type === "manual"
                                 ? "plus"
@@ -1334,6 +1359,12 @@ function App() {
                         </small>
                       </span>
                       <span className="source-tags">
+                        {!isApproved && s.ai_verdict === "approve" && (
+                          <span className="tag ai-pick">{t("AI 推荐")}</span>
+                        )}
+                        {!isApproved && s.ai_verdict === "skip" && (
+                          <span className="tag quiet">{t("AI 建议跳过")}</span>
+                        )}
                         {typeof s.config?.search_language === "string" &&
                           SEARCH_LANGUAGE_MAP.has(s.config.search_language) && (
                             <span className="tag lang">
@@ -1353,12 +1384,15 @@ function App() {
                                     fixture: t("模拟来源"),
                                     replay: t("离线回放"),
                                     rss: "RSS",
+                                    web_search: t("全网搜索"),
+                                    webpage: t("网页监控"),
                                     manual: t("手动录入"),
                                   }[s.type]}
                         </span>
                       </span>
                     </label>
-                  );
+                    );
+                  };
                   const hasRelevantEvidence = evidence.some(
                     (v) => v.status === "review" || v.assessment?.is_relevant,
                   );
@@ -1407,12 +1441,21 @@ function App() {
                       <section className="section-block">
                         <div className="section-title">
                           <h2>{t("追踪词表与信息来源")}</h2>
-                          <button
-                            disabled={busy || running}
-                            onClick={() => showDialog("source")}
-                          >
-                            <Icon name="plus" size={15} /> {t("添加来源")}
-                          </button>
+                          <div className="watchlist-save-actions">
+                            <button
+                              type="button"
+                              disabled={busy || running}
+                              onClick={() => showDialog("search")}
+                            >
+                              {t("搜索引擎")}{searchSettings && ` · ${searchProviderLabel(searchSettings.active_provider)}`}
+                            </button>
+                            <button
+                              disabled={busy || running}
+                              onClick={() => showDialog("source")}
+                            >
+                              <Icon name="plus" size={15} /> {t("添加来源")}
+                            </button>
+                          </div>
                         </div>
                         <div
                           className={`watchlist-save-bar ${hasUnsavedSources ? "dirty" : ""}`}
@@ -1664,10 +1707,16 @@ function App() {
                               ["跳过", run.run.counts.skipped], ["待审核", run.run.counts.review],
                             ] as const).map(([label, count]) => <div key={label}><dt>{t(label)}</dt><dd>{count ?? 0}</dd></div>)}
                           </dl>
+                          <SourceHealth steps={run.steps}
+                            sources={run.run.snapshot.sources ?? dashboard.approved_sources}
+                            onSources={() => openTab("sources", true)} />
                           <h3 className="run-stage-title">{t("执行步骤")} <span>{run.steps.length}</span></h3>
-                          {run.run.error != null && (
-                            <pre className="error">{pretty(run.run.error)}</pre>
-                          )}
+                          {run.run.error != null && (run.steps.some((step) => step.step_name === "fetch_source" && step.status === "failed") ? (
+                            <details className="run-error-details">
+                              <summary>{t("技术错误详情")}</summary>
+                              <pre>{pretty(run.run.error)}</pre>
+                            </details>
+                          ) : <pre className="error">{pretty(run.run.error)}</pre>)}
                           {unfinished.length > 0 && !active(run.run.status) && (
                             <>
                               <div className="section-title">
@@ -1785,6 +1834,7 @@ function App() {
               source: t("添加信息来源"),
               manual: t("提交一条新闻"),
               settings: t("配置真实模型"),
+              search: t("配置联网搜索引擎"),
               replay: t("准备新闻回放"),
               delete: t("删除主题"),
             }[dialog]
@@ -1894,6 +1944,19 @@ function App() {
               disabled={busy || running}
               action={action}
               onSaved={setModel}
+            />
+          )}
+          {dialog === "search" && (
+            <SearchSettingsPanel
+              value={searchSettings}
+              disabled={busy || running}
+              action={action}
+              onSaved={async (next) => {
+                setSearchSettings(next);
+                if (selected && !llmSummaryOn) {
+                  await refreshSources(false);
+                }
+              }}
             />
           )}
           {dialog === "replay" && (

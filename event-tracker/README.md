@@ -54,7 +54,15 @@ Open [the screen and motion storyboard](docs/frontend-1124-storyboard.html) in a
 
 Use **New topic** to add one or more topic types, or enter a custom tag. Type filters on the homepage match tagged topics and show starter ideas for the built-in categories. Existing tags can be edited with the tracking goal.
 
-The sidebar and each topic page offer **Delete topic**. Deletion requires confirmation and removes the topic's events, runs and reviews while retaining shared evidence and sources. A topic with an active run cannot be deleted. Fixtures remain available to the API and automated tests.
+Use **Delete topic** on a topic page. Deletion requires confirmation and removes the topic's events, runs and reviews while retaining shared evidence and sources. A topic with an active run cannot be deleted. Fixtures remain available to the API and automated tests.
+
+## Live sources
+
+Open a topic's **Sources** tab to set up a web search, a monitored webpage, or an RSS subscription. Select the registered source and save the selection before running a check. A webpage monitor saves an initial snapshot and records later changes.
+
+**Search engine** shows the active search configuration and can test the saved engine from the backend. Auto mode uses Bocha or Tavily when configured, with key-free Bing and Google News available for public search. Set `SEARCH_PROVIDER` to `auto`, `bocha`, `tavily`, or `free` and provide the matching optional keys on the backend. See [the environment example](.env.example).
+
+If Google News keyword RSS is unavailable, a new check tries the configured search engine or key-free Bing for the same keywords. **Run history** records the fallback or names the failed sources. Deploy the frontend build and FastAPI backend from the same revision. Restart the backend after upgrading so it loads the new search endpoints and connectors.
 
 ## Checks
 

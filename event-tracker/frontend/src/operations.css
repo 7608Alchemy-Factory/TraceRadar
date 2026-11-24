@@ -62,16 +62,25 @@
 .radar-readout { display: grid; justify-items: start; gap: 6px; overflow-wrap: anywhere; }
 .radar-readout strong { color: var(--ink); font-weight: 650; margin-inline-end: .3em; }
 .radar-disc {
+  --radar-trace: #7447bc;
+  --radar-grain: color-mix(in srgb, currentColor 10%, transparent);
   position: relative; isolation: isolate; overflow: hidden; container-type: inline-size;
   justify-self: center; width: min(100%, 320px); aspect-ratio: 1;
   color: var(--radar-ink); border: 1px solid currentColor; border-radius: 50%;
-  background: color-mix(in srgb, var(--purple) 6%, var(--white));
-  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--purple) 7%, transparent);
+  background:
+    repeating-linear-gradient(0deg, var(--radar-grain) 0 1px, transparent 1px 5px),
+    radial-gradient(closest-side, var(--white) 16%, color-mix(in srgb, var(--white) 88%, var(--radar-trace)) 86%, var(--surface-selected));
+  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--radar-trace) 18%, var(--white)),
+    0 0 0 4px color-mix(in srgb, var(--radar-trace) 11%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--radar-trace) 6%, transparent);
 }
+[data-theme="dark"] .radar-disc { --radar-trace: #c19aff; }
 .radar-reticle {
-  position: absolute; inset: 3%; border-radius: 50%; opacity: .46;
-  background: repeating-conic-gradient(from -.45deg, currentColor 0 .9deg, transparent .9deg 10deg);
-  mask: radial-gradient(closest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+  position: absolute; inset: 2.8%; border-radius: 50%; opacity: .57;
+  background:
+    repeating-conic-gradient(from -.55deg, currentColor 0 1.1deg, transparent 1.1deg 30deg),
+    repeating-conic-gradient(from -.24deg, currentColor 0 .48deg, transparent .48deg 5deg);
+  mask: radial-gradient(closest-side, transparent calc(100% - 6px), #000 calc(100% - 6px));
 }
 .radar-range-rings {
   position: absolute; inset: 0; border-radius: 50%; opacity: .31;
@@ -83,25 +92,59 @@
 }
 .radar-disc .radar-glyph-field {
   position: absolute; inset: 0; display: grid; place-content: center; margin: 0; padding: 0; border: 0;
-  white-space: pre; color: currentColor; background: transparent; font: 2.51cqw/1.21 var(--mono); opacity: .76;
+  white-space: pre; color: currentColor; background: transparent; font: 2.51cqw/1.21 var(--mono); opacity: .66;
 }
 .radar-sweep {
-  position: absolute; inset: 0; border-radius: 50%; pointer-events: none; animation: radar-scan-live 6s linear infinite;
-  background: conic-gradient(transparent 75%, color-mix(in srgb, currentColor 23%, transparent) 99.25%,
-    currentColor 99.65%, color-mix(in srgb, currentColor 50%, transparent));
-  mask: radial-gradient(closest-side, #000 92%, transparent 97%);
+  position: absolute; inset: 0; border-radius: 50%; color: var(--radar-trace);
+  pointer-events: none; animation: radar-scan-live 6.4s linear infinite;
+}
+.radar-sweep i:first-child {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(transparent 70%, color-mix(in srgb, currentColor 9%, transparent) 82%,
+    transparent 82.3%, color-mix(in srgb, currentColor 22%, transparent) 94%,
+    color-mix(in srgb, currentColor 53%, transparent) 99.6%, transparent 100%);
+  mask: radial-gradient(closest-side, #000 12%, #000b 74%, #000 87%, transparent 96%);
+}
+.radar-sweep i:last-child {
+  position: absolute; inset: 2.4% auto 50% calc(50% - .24cqw); width: .48cqw;
+  background: linear-gradient(180deg, currentColor, color-mix(in srgb, currentColor 54%, transparent) 81%, transparent);
+  box-shadow: 0 0 1.4cqw color-mix(in srgb, currentColor 52%, transparent);
+}
+.radar-sweep i:last-child::before {
+  position: absolute; content: ""; top: 0; left: 50%; translate: -50% 0;
+  width: 2.1cqw; height: 1cqw; background: currentColor;
 }
 @keyframes radar-scan-live { to { transform: rotate(1turn); } }
+.radar-origin {
+  position: absolute; inset: 50% auto auto 50%; translate: -50% -50%; width: 3cqw; aspect-ratio: 1;
+  border: 1px solid currentColor;
+  background: linear-gradient(currentColor 0 0) center / .8cqw .8cqw no-repeat;
+}
+.radar-target { position: absolute; inset: 0; pointer-events: none; }
+.radar-vector {
+  position: absolute; top: 50%; left: 50%; width: var(--range); height: 1px;
+  transform-origin: 0 50%; rotate: var(--bearing);
+  background: repeating-linear-gradient(90deg, currentColor 0 3px, transparent 3px 6px);
+  opacity: .42; animation: radar-vector-in .45s var(--motion-out);
+}
 .radar-blip {
   position: absolute; left: var(--x); top: var(--y); translate: -50% -50%;
-  display: grid; place-items: center; width: 8cqw; aspect-ratio: 1;
-  background: linear-gradient(currentColor 0 0) center / 1.4cqw 1.4cqw no-repeat;
+  display: grid; place-items: center; width: 8.4cqw; aspect-ratio: 1;
+  background: linear-gradient(currentColor 0 0) center / 1.65cqw 1.65cqw no-repeat;
+  filter: drop-shadow(0 0 .85cqw var(--radar-trace));
 }
+.radar-blip::before, .radar-blip::after, .radar-blip i { content: ""; grid-area: 1 / 1; aspect-ratio: 1; }
+.radar-blip::before { width: 90%; border: 1px solid currentColor; animation: radar-echo .95s var(--motion-out) both; }
 .radar-blip::after {
-  content: ""; width: 75%; aspect-ratio: 1; border: 1px dashed currentColor;
-  animation: radar-acquire .5s var(--motion-out) both;
+  width: 100%; border: 1px solid currentColor;
+  clip-path: polygon(0 0, 30% 0, 30% 12%, 70% 12%, 70% 0, 100% 0, 100% 30%, 88% 30%, 88% 70%,
+    100% 70%, 100% 100%, 70% 100%, 70% 88%, 30% 88%, 30% 100%, 0 100%, 0 70%, 12% 70%, 12% 30%, 0 30%);
+  animation: radar-acquire .55s var(--motion-out) both;
 }
-@keyframes radar-acquire { from { transform: scale(1.8); opacity: .2; } }
+.radar-blip i { width: 65%; border: 1px dotted currentColor; opacity: .62; }
+@keyframes radar-vector-in { from { transform: scaleX(0); opacity: 0; } }
+@keyframes radar-acquire { from { transform: scale(1.6); opacity: .15; } }
+@keyframes radar-echo { from { transform: scale(.55); opacity: .85; } to { transform: scale(2.4); opacity: 0; } }
 .radar-readout button { color: var(--accent); border: 0; padding: 0; background: transparent; text-align: start; display: inline; overflow-wrap: anywhere; }
 
 .reel {
@@ -160,6 +203,16 @@
 .run-metrics > div, .report-metrics > div { min-width: 0; padding: 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--paper); display: grid; gap: 4px; }
 .run-metrics dt, .report-metrics span { color: var(--muted); font-size: .86rem; }
 .run-metrics dd, .report-metrics strong { margin: 0; font: 1.64rem var(--mono); }
+.source-health { padding: 13px; border: 1px solid var(--line); border-radius: 8px; }
+.source-health h3 { margin: 0; font-size: .95rem; }
+.source-health ul { display: grid; gap: 9px; list-style: none; margin: 10px 0; padding: 0; }
+.source-health li { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 8px; align-items: start; }
+.source-health li strong, .source-health li p { font-size: .83rem; overflow-wrap: anywhere; }
+.source-health li p { margin: 2px 0 0; color: var(--muted); }
+.source-health button, .run-error-details > summary { color: var(--accent); }
+.run-error-details { margin-block: 10px; }
+.run-error-details > summary { cursor: pointer; font-size: .83rem; }
+.sources-layout .section-title { flex-wrap: wrap; gap: 8px; }
 .activity-layout pre { max-height: 26rem; overflow: auto; }
 
 [data-impact="breaking"] { --impact: #e17a66; }
@@ -203,6 +256,7 @@
   .home-header nav .clock-options { inset-inline: auto 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .radar-sweep, .radar-blip::after { animation: none; }
+  .radar-sweep, .radar-vector, .radar-blip::after { animation: none; }
+  .radar-blip::before { display: none; }
   .reel-track > li, .reel-track .project-frame:is(:hover,:focus-visible) { transform: none; }
 }

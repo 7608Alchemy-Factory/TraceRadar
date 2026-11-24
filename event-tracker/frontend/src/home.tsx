@@ -4,10 +4,11 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { CoverImage } from "./covers";
 import { t } from "./i18n";
+import { formatScheduledTime } from "./clock";
 import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Icon } from "./ui";
 import { status, longDate, topicTitle, topicDescription } from "./display";
-import type { Topic } from "./types";
+import type { Schedule, Topic } from "./types";
 import { tagExamples, tagLabel, tagOptions } from "./topic-tags";
 
 export function topicUrl(id: string) {
@@ -45,6 +46,8 @@ gsap.registerPlugin(ScrollTrigger);
 
 type HomeProps = {
   topics: Topic[];
+  schedules: Schedule[];
+  timeZone: string;
   loading: boolean;
   busy: boolean;
   feedback: ReactNode;
@@ -56,7 +59,7 @@ type HomeProps = {
 };
 
 export function ProjectHome({
-  topics, loading, busy, feedback, preferences, onHome, onTopic, onNew, onSettings,
+  topics, schedules, timeZone, loading, busy, feedback, preferences, onHome, onTopic, onNew, onSettings,
 }: HomeProps) {
   const tr = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
@@ -190,7 +193,7 @@ export function ProjectHome({
             <p className="home-description">{t("按主题追踪新闻，按时间查看事件进展和证据。")}</p>
             <a className="browse-topics" href="#projects-title">{t("浏览主题")}</a>
           </div>
-          <EventRadar topics={topics} onTopic={onTopic} />
+          <EventRadar topics={topics} schedules={schedules} timeZone={timeZone} onTopic={onTopic} />
         </section>
 
         <section className="projects-section" aria-labelledby="projects-title">
@@ -224,11 +227,11 @@ export function ProjectHome({
               setSpotlight("");
             }}>
               <ul className="reel-track">
-                {items.map((topic, index) => {
+                {items.map((topic) => {
+                  const nextRun = schedules.find((plan) => plan.topic_id === topic.topic_id)?.next_at;
                   return (
                     <li key={topic.topic_id} className={spotlight === topic.topic_id ? "is-spotlit" : undefined}
                       onPointerMove={(event) => previewFrame(event, topic.topic_id)}>
-                      {index < items.length - 1 && <span className="reel-splice" aria-hidden="true" />}
                       <a className="project-frame" href={topicUrl(topic.topic_id)}
                         onFocus={(event) => {
                           const frame = event.currentTarget.closest("li");
@@ -241,7 +244,12 @@ export function ProjectHome({
                           <h3>{tr(topicTitle(topic.title))}</h3>
                           <p>{tr(topicDescription(topic.description))}</p>
                           {!!topic.tags?.length && <div className="frame-tags">{topic.tags.map((tag) => <span key={tag}>{tagLabel(tag)}</span>)}</div>}
-                          <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
+                          <div className="frame-dates">
+                            {nextRun && <time className="frame-next-check" dateTime={nextRun}>
+                              <Icon name="clock" size={13} />{t("下次检查 {0}", formatScheduledTime(nextRun, timeZone))}
+                            </time>}
+                            <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
+                          </div>
                         </div>
                       </a>
                     </li>

@@ -8,7 +8,7 @@ def decide_notification(update_kind, preference):
         'minor_update': ('low', 'record_only'),
     }[update_kind]
     reasons = [update_kind]
-    if action == 'immediate' and preference == 'digest_only':
+    if action != 'digest' and preference == 'digest_only':
         action = 'digest'
         reasons.append('digest_only_preference')
     return priority, action, reasons

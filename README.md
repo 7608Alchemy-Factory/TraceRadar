@@ -1,10 +1,9 @@
 # TraceRadar
-This repo is for COMP7608's final project.
 
-The runnable local topic-tracking agent is in [event-tracker](event-tracker/README.md).
-It includes a FastAPI backend, React research workspace, SQLite persistence, Mock demo and a configurable JSON-mode model adapter.
+COMP7608 Large Language Models 课程项目。TraceRadar 按主题持续跟进新闻，把来源、事件进展、结论变化和审核决定放在同一个本地工作台。
 
-- [成员 D 工作交付总结](event-tracker/docs/member-d-delivery.zh-CN.md)
-- [工作台使用与模型配置](event-tracker/docs/workspace-v2.zh-CN.md)
-- [v1.1 界面原型与转场分镜](event-tracker/docs/workspace-v1.1-prototype.html)
-- Windows: build the frontend and install backend requirements, then double-click `Start-TraceRadar.cmd`.
+- [启动、配置与使用手册](event-tracker/README.md)
+- [15 类主题示例与测试流程](event-tracker/docs/topic-examples.zh-CN.md)
+- [界面与交互分镜](event-tracker/docs/frontend-1124-storyboard.html)
+
+Windows 上安装依赖并构建前端后，双击 [Start-TraceRadar-V2.cmd](Start-TraceRadar-V2.cmd) 打开 [本地 V2 工作台](http://127.0.0.1:8629/)。使用 [Stop-TraceRadar-V2.cmd](Stop-TraceRadar-V2.cmd) 关闭后台服务。

@@ -151,7 +151,7 @@ def test_digest_only_and_low_update(client, monkeypatch):
         return data
     monkeypatch.setattr(manager.connector,'fetch',extra)
     assert run(client,identity,'empty')['run']['status']=='completed'
-    assert business_counts(client,identity)[2]['record_only']==1
+    assert business_counts(client,identity)[2] == {'immediate':0,'digest':5,'record_only':0}
 
 
 @pytest.mark.parametrize('corrupt', ['evidence', 'cross_topic', 'reference', 'version'])

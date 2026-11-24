@@ -47,6 +47,8 @@ export function Icon({ name, size = 18 }: { name: string; size?: number }) {
       </>
     ),
     plus: <path d="M12 5v14M5 12h14" />,
+    bell: <path d="M5 17h14l-2-3V9a5 5 0 0 0-10 0v5zM10 21h4" />,
+    clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7v5l3 2" /></>,
     arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,
     left: <path d="m14 6-6 6 6 6" />,
     right: <path d="m10 6 6 6-6 6" />,

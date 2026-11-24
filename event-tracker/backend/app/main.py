@@ -1,6 +1,7 @@
 import logging
 from threading import RLock
 from dataclasses import replace
+from datetime import datetime, timezone
 from urllib.parse import quote_plus, urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -13,12 +14,13 @@ from .core import Settings, AppError
 from .domain import (
     Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, SourcePatchInput,
     EventPatch, EventDismissInput, EventMergeInput, RunInput, ReviewResolutionInput,
-    ModelSettingsInput, ModelDiscoveryInput, uid, now,
+    ModelSettingsInput, ModelDiscoveryInput, ScheduleInput, uid, now,
 )
 from .repositories import Repository
 from .connectors import SOURCES, ConnectorRouter, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
+from .scheduler import Scheduler
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
 from .translation import TranslationInput, translate
@@ -45,13 +47,18 @@ def create_app(settings=None):
     repo = Repository(config.database_path)
     manager = RunManager(repo, config)
     config_lock = RLock()
+    scheduler = Scheduler(repo, manager, config, config_lock)
 
     @asynccontextmanager
     async def lifespan(app):
         repo.initialize(SOURCES)
         manager.start()
-        yield
-        manager.stop()
+        scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler.stop()
+            manager.stop()
 
     app = FastAPI(title='TraceRadar local tracker', lifespan=lifespan)
     app.state.repo, app.state.manager = repo, manager
@@ -297,6 +304,22 @@ def create_app(settings=None):
         repo.get('topics', identity)
         return repo.runs(identity)
 
+    @app.get('/api/schedules')
+    def schedules():
+        return repo.schedules()
+
+    @app.put('/api/topics/{identity}/schedule')
+    def save_schedule(identity: str, body: ScheduleInput):
+        with config_lock:
+            get_provider('qwen', config)
+            repo.save_schedule(identity, body, datetime.now(timezone.utc))
+            return next(plan for plan in repo.schedules() if plan['topic_id'] == identity)
+
+    @app.delete('/api/topics/{identity}/schedule', status_code=204)
+    def clear_schedule(identity: str):
+        with config_lock:
+            repo.clear_schedule(identity)
+
     @app.get('/api/runs/{identity}')
     def run_detail(identity: str):
         run = repo.get('runs', identity)
@@ -382,6 +405,25 @@ def create_app(settings=None):
     def notifications(identity: str, action: Literal['immediate', 'digest', 'record_only'] | None = None):
         repo.get('topics', identity)
         return repo.notifications(identity, action)
+
+    @app.get('/api/inbox')
+    def inbox(topic_id: str | None = None):
+        return repo.inbox(topic_id)
+
+    @app.get('/api/workspace-updates')
+    def workspace_updates(topic_id: str | None = None):
+        return dict(schedules=repo.schedules(), inbox=repo.inbox(),
+                    topic_inbox=repo.inbox(topic_id, limit=12) if topic_id else None)
+
+    @app.post('/api/inbox/read-all')
+    def read_all_notices():
+        repo.read_inbox()
+        return repo.inbox()
+
+    @app.post('/api/inbox/{notification_id}/read')
+    def read_notice(notification_id: str):
+        repo.read_inbox(notification_id)
+        return repo.inbox()
 
     return app
 

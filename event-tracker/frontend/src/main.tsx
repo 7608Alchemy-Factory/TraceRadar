@@ -3,7 +3,9 @@ import { SidebarTopics } from "./sidebar-topics";
 import { useTopicOrder } from "./topic-order";
 import { searchProviderLabel, SourceHealth } from "./source-health";
 import { MAX_TOPIC_TAGS, TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
-import { WorkspaceClock } from "./clock";
+import { formatScheduledTime, useWorkspaceZone, WorkspaceClock } from "./clock";
+import { ScheduleBadge, ScheduleEditor, type ScheduleInput } from "./schedule";
+import { InboxPanel, NoticeRows, useWorkspaceUpdates } from "./workspace-updates";
 import { TopicReport } from "./topic-report";
 import { TranslationContext, useWorkspaceTranslation } from "./reference-translation";
 import { applyTheme, initialTheme, locale, setLocale, t, type Locale } from "./i18n";
@@ -23,6 +25,7 @@ import type {
   EventDetail,
   EventSuggestion,
   EvidenceDecision,
+  InboxItem,
   ModelStatus,
   SearchStatus,
   Corpus,
@@ -49,7 +52,6 @@ import {
   status,
   title as eventTitle,
   provider as providerLabel,
-  actionLabel,
   stepLabel,
   text,
   headline,
@@ -85,6 +87,8 @@ type Dialog =
   | "settings"
   | "search"
   | "replay"
+  | "schedule"
+  | "inbox"
   | "delete"
   | "delete-event"
   | null;
@@ -130,6 +134,8 @@ function evidenceGroup(row: EvidenceDecision): EvidenceFilter {
 
 function App() {
   const sidebar = useSidebarWidth();
+  const clock = useWorkspaceZone();
+  const { timeZone } = clock;
   const [language, setLanguage] = useState(locale);
   const [theme, setTheme] = useState(initialTheme);
   const [translateContent, setTranslateContent] = useState(() => localStorage.getItem("traceradar-content-translation") === "on");
@@ -137,13 +143,20 @@ function App() {
     localStorage.setItem("traceradar-content-translation", value ? "on" : "off");
     setTranslateContent(value);
   }
-  const preferences = <><WorkspaceClock /><Preferences language={language} theme={theme}
+  const preferences = <><WorkspaceClock {...clock} /><Preferences language={language} theme={theme}
     onLanguage={(value: Locale) => { setLocale(value); setLanguage(value); toggleTranslation(true); }}
     onTheme={(value) => { applyTheme(value); setTheme(value); }} /></>;
 
   const [topics, setTopics] = useState<Topic[]>([]),
     [selected, setSelected] = useState(""),
     [tab, setTab] = useState<Tab>("overview");
+  const { updates, incoming, dismissIncoming, reload: reloadUpdates } = useWorkspaceUpdates(selected);
+  const schedules = updates?.schedules ?? [];
+  const schedule = schedules.find((plan) => plan.topic_id === selected);
+  const topicInbox = updates?.topicId === selected ? updates.topic_inbox : null;
+  const workspaceInbox = updates?.inbox;
+  const [inboxScope, setInboxScope] = useState(false);
+  const observedScheduleRun = useRef("");
   const { orderedTopics, pinned, togglePin, moveTopic, forgetTopic } = useTopicOrder(topics);
   const orderedTopicsRef = useRef(orderedTopics);
   orderedTopicsRef.current = orderedTopics;
@@ -170,6 +183,7 @@ function App() {
     [batch, setBatch] = useState("1"),
     [asOf, setAsOf] = useState("");
   const [agentMode, setAgentMode] = useState(false);
+  const [scheduledMode, setScheduledMode] = useState(false);
   const [replayCorpus, setReplayCorpus] = useState("lbj");
   const [showHistorySources, setShowHistorySources] = useState(false);
   const [evidenceFilters, setEvidenceFilters] = useState<EvidenceFilter[]>([]);
@@ -218,6 +232,8 @@ function App() {
   const dashboardReady = Boolean(dashboard);
   const running = active(dashboard?.recent_runs[0]?.status);
   const replay = dashboard?.approved_sources.some((s) => s.type === "replay");
+  const hasLiveSource = dashboard?.approved_sources.some((source) =>
+    ["rss", "web_search", "webpage"].includes(source.type)) ?? false;
   const fixture = fixtureOnly(dashboard?.approved_sources ?? []);
   const replayCorpora = corpora.filter((c) =>
     dashboard?.approved_sources.some(
@@ -298,6 +314,8 @@ function App() {
     setReplayCorpus("");
     setAsOf("");
     setAgentMode(false);
+    setScheduledMode(false);
+    observedScheduleRun.current = "";
     setLlmSummaryOn(false);
     setLlmSummaryNote(null);
     setLlmMode(null);
@@ -627,6 +645,20 @@ function App() {
     };
   }, [watchId, selected]);
 
+  useEffect(() => {
+    const id = schedule?.last_run_id;
+    const state = schedule?.last_run_status;
+    if (!id || !state || !dashboard || watchId) return;
+    const observation = `${id}:${state}`;
+    if (observedScheduleRun.current === observation) return;
+    observedScheduleRun.current = observation;
+    if (active(state)) {
+      setWatchId(id);
+    } else if (dashboard.recent_runs[0]?.run_id !== id || active(dashboard.recent_runs[0]?.status)) {
+      void refresh(false, { includeRecommendations: false }).catch(() => {});
+    }
+  }, [schedule?.last_run_id, schedule?.last_run_status, dashboard, watchId]);
+
   async function startRun(
     options: {
       batch?: string;
@@ -682,6 +714,44 @@ function App() {
     await action(async () => {
       const detail = await api<EventDetail>(`/events/${id}`);
       if (selectedRef.current === topicId) setEvent(detail);
+    });
+  }
+
+  function openInbox(topicOnly = false) {
+    setInboxScope(topicOnly);
+    showDialog("inbox");
+    void reloadUpdates().catch(() => {});
+  }
+
+  function openNotice(item: InboxItem) {
+    void action(async () => {
+      const detail = await api<EventDetail>(`/events/${item.event_id}`);
+      if (!item.read_at) await api(`/inbox/${item.notification_id}/read`, json("POST", {}));
+      if (incoming?.notification_id === item.notification_id) dismissIncoming();
+      setDialog(null);
+      selectTopic(item.topic_id);
+      setEvent(detail);
+      void reloadUpdates().catch(() => {});
+    });
+  }
+
+  function saveSchedule(input: ScheduleInput) {
+    void action(async () => {
+      await api(`/topics/${selected}/schedule`, json("PUT", input));
+      setDialog(null);
+      setScheduledMode(false);
+      setToast(t("定时更新计划已保存。"));
+      void reloadUpdates().catch(() => {});
+    });
+  }
+
+  function clearSchedule() {
+    void action(async () => {
+      await api(`/topics/${selected}/schedule`, { method: "DELETE" });
+      setDialog(null);
+      setScheduledMode(false);
+      setToast(t("已关闭后续定时更新。"));
+      void reloadUpdates().catch(() => {});
     });
   }
   async function removeExclusion(rule: string) {
@@ -948,17 +1018,17 @@ function App() {
         <span className="kicker">TRACKING SESSION</span>
         <span className={`status-dot ${running ? "working" : ""}`} />
       </div>
-      <h3>{replay ? t("按时间回放") : t("检查新进展")}</h3>
+      <h3>{scheduledMode ? t("设置定时更新") : replay ? t("按时间回放") : t("检查新进展")}</h3>
       <p className="hint">
-        {replay
+        {replay && !scheduledMode
           ? t("每次只读取截止时间之前的新闻。")
           : t("读取已批准来源，判断是否有值得记录的变化。")}
       </p>
       <label>
         {t("分析方式")}
         <select
-          value={provider}
-          disabled={busy || running}
+          value={scheduledMode ? "qwen" : provider}
+          disabled={busy || running || scheduledMode}
           onChange={(e) => {
             setProvider(e.target.value as "mock" | "qwen");
             setAgentMode(false);
@@ -973,7 +1043,7 @@ function App() {
           <option value="qwen">{t("真实模型分析")}</option>
         </select>
       </label>
-      {provider === "qwen" && (
+      {(provider === "qwen" || scheduledMode) && (
         <>
           <p className="model-note">
             {model?.configured ? model.model : t("尚未配置模型")}{" "}
@@ -992,7 +1062,12 @@ function App() {
           </label>
         </>
       )}
-      {fixture && (
+      <label className="check-row">
+        <input type="checkbox" checked={scheduledMode} disabled={busy}
+          onChange={(event) => setScheduledMode(event.target.checked)} />
+        {t("本次使用定时更新模式")}
+      </label>
+      {fixture && !scheduledMode && (
         <label>
           {t("新闻批次")}
           <select
@@ -1006,7 +1081,7 @@ function App() {
           </select>
         </label>
       )}
-      {replay && (
+      {replay && !scheduledMode && (
         <>
           <label>
             {t("回放语料")}
@@ -1057,15 +1132,16 @@ function App() {
       )}
       <button
         className="primary full"
-        disabled={busy || running || !dashboard?.approved_sources.length}
+        disabled={busy || (!scheduledMode && (running || !dashboard?.approved_sources.length))}
         onClick={() =>
-          provider === "qwen" && !model?.configured
+          scheduledMode ? showDialog("schedule")
+            : provider === "qwen" && !model?.configured
             ? showDialog("settings")
             : void action(() => startRun({ agentMode: provider === "qwen" && agentMode }))
         }
       >
-        <Icon name="play" size={14} />
-        {running
+        <Icon name={scheduledMode ? "clock" : "play"} size={14} />
+        {scheduledMode ? t("设置定时更新") : running
           ? t("正在检查…")
           : provider === "qwen" && !model?.configured
             ? t("打开模型配置")
@@ -1083,6 +1159,9 @@ function App() {
       >
         <Icon name="plus" size={15} />{" "}
         {manualAvailable ? t("手动提交新闻") : t("管理手动来源")}
+      </button>
+      <button type="button" className="text-button full" disabled={busy} onClick={() => showDialog("schedule")}>
+        <Icon name="clock" size={15} /> {t("管理更新频率")}
       </button>
       <div className="run-footnote">
         {replaySources.length ? replaySources.length : (dashboard?.approved_sources.length ?? 0)}{" "}
@@ -1127,6 +1206,11 @@ function App() {
     </button>
   );
   const currentTopic = dashboard?.topic ?? topics.find((topic) => topic.topic_id === selected);
+  const bell = <button type="button" className="icon-button inbox-bell" onClick={() => openInbox()}
+    aria-label={workspaceInbox?.unread ? t("站内提醒，{0} 条未读", workspaceInbox.unread) : t("站内提醒")}>
+    <Icon name="bell" />
+    {!!workspaceInbox?.unread && <span aria-hidden="true">{workspaceInbox.unread > 99 ? "99+" : workspaceInbox.unread}</span>}
+  </button>;
   const workspaceView = (
     <>
       <aside className="sidebar">
@@ -1146,7 +1230,7 @@ function App() {
           onSelect={selectTopic} onPin={togglePin} onMove={moveTopic} />
         <button className="sidebar-replay" onClick={() => showDialog("replay")}>
           <Icon name="play" size={14} />
-          <span>{t("准备新闻回放")}</span>
+          <span>{t("测试离线回放")}</span>
         </button>
         <div className="sidebar-bottom">
           <button aria-label={t("模型配置")} onClick={() => showDialog("settings")}>
@@ -1177,9 +1261,10 @@ function App() {
           <div className="topbar-actions">
             {preferences}
             {translationToggle}
+            {bell}
             <button
               className="icon-button mobile-replay"
-              aria-label={t("准备语料回放")}
+              aria-label={t("测试离线回放")}
               onClick={() => showDialog("replay")}
             >
               <Icon name="play" />
@@ -1232,6 +1317,7 @@ function App() {
                   {t("最近更新")}{" "}
                   {date(latest?.completed_at ?? dashboard.topic.updated_at)}
                 </span>
+                <ScheduleBadge schedule={schedule} timeZone={timeZone} onClick={() => showDialog("schedule")} />
               </div>
               <div
                 className="tabbar"
@@ -1339,44 +1425,23 @@ function App() {
                         </OverviewSection>
                         <OverviewSection
                           title={t("变化与提醒")}
-                          label={t("查看审核队列")}
-                          onOpen={() => openTab("review", true)}
+                          label={t("查看主题提醒")}
+                          onOpen={() => openInbox(true)}
                         >
                           {!!dashboard.reviews.length && (
-                            <p className="review-callout">
+                            <button type="button" className="review-callout review-inbox-link" onClick={() => openTab("review", true)}>
                               {dashboard.reviews.length} {t("条证据等待人工判断")}
-                            </p>
+                            </button>
                           )}
-                          {!notices.length ? (
+                          {!topicInbox?.items.length ? (
                             <p className="blank-line">
                               {t("有新的状态变化后，提醒会出现在这里。")}
                             </p>
                           ) : (
-                            notices.slice(0, 5).map((n) => (
-                              <button
-                                className="notification-row"
-                                key={n.notification_id}
-                                disabled={busy}
-                                onClick={() => void openEvent(n.event_id)}
-                              >
-                                <span
-                                  className={`notice-indicator ${n.action}`}
-                                />
-                                <span>
-                                  <strong>
-                                    {eventTitle(
-                                      dashboard.events.find(
-                                        (e) => e.event_id === n.event_id,
-                                      )?.title ?? t("事件更新"),
-                                    )}
-                                  </strong>
-                                  <small>{actionLabel(n.action)}</small>
-                                </span>
-                                <span className="meta">
-                                  {date(n.created_at)}
-                                </span>
-                              </button>
-                            ))
+                            <NoticeRows items={[...topicInbox.items]
+                              .sort((first, second) => Number(second.action === "immediate" && !second.read_at)
+                                - Number(first.action === "immediate" && !first.read_at)).slice(0, 5)}
+                              timeZone={timeZone} onOpen={openNotice} />
                           )}
                         </OverviewSection>
                       </div>
@@ -2048,7 +2113,9 @@ function App() {
                           </select>
                         </label>
                         <p className="hint">
-                          {t("普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。")}
+                          {dashboard.topic.notification_preferences === "digest_only"
+                            ? t("所有已记录的进展进入站内更新汇总。")
+                            : t("重大进展弹出站内提醒，普通进展进入汇总，次要变化保留在历史中。")}
                         </p>
                         <div className="context-divider" />
                         <h3>{t("想测试离线回放语料？")}</h3>
@@ -2090,7 +2157,7 @@ function App() {
                             className={`status-dot ${r.status === "completed" ? "online" : active(r.status) ? "working" : ""}`}
                           />
                           <span>
-                            <strong>{r.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(r.provider)}</strong>
+                            <strong>{r.trigger_type === "scheduled" ? t("定时检查") : r.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(r.provider)}</strong>
                             <small>
                               {date(r.started_at)} · {status(r.status)}
                             </small>
@@ -2104,11 +2171,12 @@ function App() {
                         <>
                           <div className="section-title">
                             <h2>
-                              {run.run.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(run.run.provider)}{" "}
+                              {run.run.trigger_type === "scheduled" ? t("定时检查") : run.run.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(run.run.provider)}{" "}
                               <span className="tag">
                                 {status(run.run.status)}
                               </span>
                             </h2>
+                            {run.run.scheduled_for && <span className="meta">{t("计划时间 {0}", formatScheduledTime(run.run.scheduled_for, timeZone))}</span>}
                             <span className="meta">
                               {date(run.run.started_at)}
                             </span>
@@ -2231,10 +2299,12 @@ function App() {
       {!selected ? (
         <ProjectHome
           topics={orderedTopics}
+          schedules={schedules}
+          timeZone={timeZone}
           loading={loading}
           busy={busy}
           feedback={feedback}
-          preferences={<>{preferences}{translationToggle}</>}
+          preferences={<>{preferences}{translationToggle}{bell}</>}
           onHome={() => navigateTopic("")}
           onTopic={navigateTopic}
           onNew={openNewTopic}
@@ -2242,6 +2312,15 @@ function App() {
         />
       ) : (
         workspaceView
+      )}
+      {incoming && (
+        <aside className="incoming-notice" role="status">
+          <Icon name="bell" />
+          <button type="button" onClick={() => openNotice(incoming)}>
+            <small>{t("重大进展")}</small><strong>{tr(eventTitle(incoming.event_title))}</strong>
+          </button>
+          <button type="button" className="icon-button" aria-label={t("关闭提醒")} onClick={dismissIncoming}><Icon name="close" /></button>
+        </aside>
       )}
       {dialog && (
         <Modal
@@ -2253,7 +2332,9 @@ function App() {
               manual: t("提交一条新闻"),
               settings: t("配置真实模型"),
               search: t("配置联网搜索引擎"),
-              replay: t("准备新闻回放"),
+              replay: t("测试离线回放"),
+              schedule: t("管理更新频率"),
+              inbox: t(inboxScope ? "主题提醒" : "站内提醒"),
               delete: t("删除主题"),
               "delete-event": t("删除事件"),
             }[dialog]
@@ -2266,6 +2347,15 @@ function App() {
               {error}
             </div>
           )}
+          {dialog === "schedule" && <ScheduleEditor schedule={schedule} timeZone={timeZone}
+            defaultAgent={agentMode} hasLiveSource={hasLiveSource} modelReady={!!model?.configured} busy={busy}
+            onModel={() => showDialog("settings")} onSave={saveSchedule} onClear={clearSchedule} />}
+          {dialog === "inbox" && <InboxPanel inbox={inboxScope ? topicInbox : workspaceInbox} timeZone={timeZone}
+            showTopic={!inboxScope} busy={busy} onOpen={openNotice} onReadAll={() => void action(async () => {
+              await api("/inbox/read-all", json("POST", {}));
+              dismissIncoming();
+              await reloadUpdates();
+            })} />}
           {dialog === "new" && (
             <form
               className="form-stack"

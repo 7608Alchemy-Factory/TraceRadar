@@ -284,6 +284,23 @@ class RunInput(Model):
     source_ids: list[str] | None = Field(default=None, min_length=1)
 
 
+class ScheduleInput(Model):
+    mode: Literal['dates', 'interval']
+    times: list[AwareDatetime] = Field(default_factory=list, max_length=3)
+    interval_minutes: int | None = Field(default=None, ge=1, le=43200)
+    starts_at: AwareDatetime | None = None
+    agent_mode: bool = False
+
+    @model_validator(mode='after')
+    def check_mode(self):
+        if self.mode == 'dates':
+            if not self.times or len(set(self.times)) != len(self.times) or self.interval_minutes is not None or self.starts_at is not None:
+                raise ValueError('Provide one to three distinct timestamps for a date schedule.')
+        elif self.times or self.interval_minutes is None:
+            raise ValueError('Provide an interval for a repeating schedule.')
+        return self
+
+
 RunStatus = Literal['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']
 StepStatus = Literal['pending', 'running', 'completed', 'skipped', 'failed']
 
@@ -321,7 +338,7 @@ class Notification(Model):
 class Run(Model):
     run_id: str
     topic_id: str
-    trigger_type: Literal['manual', 'resume', 'human_review'] = 'manual'
+    trigger_type: Literal['manual', 'resume', 'human_review', 'scheduled'] = 'manual'
     status: RunStatus
     provider: Literal['mock', 'qwen', 'human']
     fixture_batch_id: str
@@ -329,6 +346,7 @@ class Run(Model):
     prompt_version: str = 'assessment-v1'
     started_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
+    scheduled_for: AwareDatetime | None = None
     counts: dict[str, int] = Field(default_factory=dict)
     error: dict | None = None
     snapshot: dict

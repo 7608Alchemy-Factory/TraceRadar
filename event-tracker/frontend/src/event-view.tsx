@@ -10,6 +10,7 @@ import {
   headline,
 } from "./display";
 import { Icon } from "./ui";
+import { EventTimeline } from "./event-timeline";
 
 export function EventView({
   value,
@@ -56,17 +57,18 @@ export function EventView({
         <div
           className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
         >
-          <strong>[AI 当前状态总结] </strong>
+          <strong>当前状态 · </strong>
           {status(e.state.current_status)}
         </div>
       </div>
+      <EventTimeline value={value} onEvidence={onEvidence} />
       <div className="event-detail-grid">
         <div>
           <section className="detail-section">
-            <span className="kicker">WHAT WE KNOW · AI 提炼事实（最新优先）</span>
             <h3>
               当前事实 <span className="count">{e.state.key_facts.length}</span>
             </h3>
+            {!newestFactsFirst.length && <p className="hint">暂时没有提炼出的事实。</p>}
             <ul className="fact-list">
               {newestFactsFirst.map((f, i) => {
                 const isNew = latestAddedFactSet.has(JSON.stringify(f));
@@ -84,7 +86,7 @@ export function EventView({
                           onClick={() => onEvidence(id)}
                           aria-label={`查看事实 ${i + 1} 的证据`}
                         >
-                          {e.state.sources.indexOf(id) + 1}
+                          {e.state.sources.includes(id) ? e.state.sources.indexOf(id) + 1 : "依据"}
                         </button>
                       ))}
                     </span>
@@ -93,27 +95,8 @@ export function EventView({
               })}
             </ul>
           </section>
-          <section className="detail-section">
-            <span className="kicker">HOW IT EVOLVED · 时间线（最新优先）</span>
-            <h3>事件时间线</h3>
-            <ol className="timeline">
-              {[...e.state.timeline].reverse().map((t, i) => (
-                <li key={i}>
-                  <time>{date(t.occurred_at)}</time>
-                  <p>{headline(t.description)}</p>
-                  <button
-                    className="text-button"
-                    onClick={() => onEvidence(t.evidence_ids[0])}
-                  >
-                    查看依据 <Icon name="arrow" size={13} />
-                  </button>
-                </li>
-              ))}
-            </ol>
-          </section>
-          <section className="detail-section">
-            <span className="kicker">STATE HISTORY</span>
-            <h3>状态变化历史</h3>
+          {!!value.history.length && <details className="detail-section audit-history">
+            <summary>状态修改记录 <span className="count">{value.history.length}</span></summary>
             {[...value.history].reverse().map((h) => {
               const added = h.after_state.key_facts.filter(
                 (f) =>
@@ -155,15 +138,14 @@ export function EventView({
                 </details>
               );
             })}
-          </section>
+          </details>}
         </div>
         <aside className="evidence-rail">
-          <span className="kicker">ORIGINAL HEADLINES · 原新闻标题（最新优先）</span>
           <h3>
             关联证据 <span className="count">{value.evidence.length}</span>
           </h3>
           <p className="hint">
-            右侧为原新闻标题，左侧为 AI 提炼事实；事实旁的数字对应原文编号。
+            选择标题查看原文。事实旁的数字对应新闻编号。
           </p>
           {newestEvidenceFirst.map((ev) => (
             <button

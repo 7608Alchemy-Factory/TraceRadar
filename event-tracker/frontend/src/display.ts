@@ -16,6 +16,16 @@ export const localInput = (iso: string) => {
     .toISOString()
     .slice(0, 16);
 };
+const fullDate = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Hong_Kong",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+export function longDate(value: string) {
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? value : fullDate.format(time);
+}
 export const title = (value: string) =>
   value.replace("ExampleSoft vulnerability ", "ExampleSoft 漏洞 ");
 export const status = (value: string) =>

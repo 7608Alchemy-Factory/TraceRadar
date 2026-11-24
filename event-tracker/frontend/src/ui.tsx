@@ -47,6 +47,8 @@ export function Icon({ name, size = 18 }: { name: string; size?: number }) {
     ),
     plus: <path d="M12 5v14M5 12h14" />,
     arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,
+    left: <path d="m14 6-6 6 6 6" />,
+    right: <path d="m10 6 6 6-6 6" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     check: <path d="m5 12 4 4L19 6" />,
     play: <path d="m8 4 12 8-12 8z" />,

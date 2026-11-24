@@ -23,6 +23,7 @@ import {
 import { Icon, Modal, Empty } from "./ui";
 import { EventView, EvidenceView } from "./event-view";
 import { OverviewSection, OverviewSummary } from "./overview";
+import { BrandLink, ProjectHome, topicUrl } from "./home";
 import "@fontsource-variable/host-grotesk/wght.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import {
@@ -40,6 +41,7 @@ import {
 } from "./display";
 import "./style.css";
 import "./workspace-v11.css";
+import "./radar.css";
 
 const tabs = [
   ["overview", "概览", "grid"],
@@ -134,6 +136,8 @@ function App() {
     [newDescription, setNewDescription] = useState("");
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
+  const knownTopics = useRef(topics);
+  knownTopics.current = topics;
   const viewedRun = useRef("");
   const actionPending = useRef(false);
   const tabStrip = useRef<HTMLDivElement>(null);
@@ -189,6 +193,7 @@ function App() {
   }, [tab, dashboardReady]);
 
   function openTab(id: Tab, focus = false) {
+    if (id !== tab) setQuery("");
     setTab(id);
     if (focus) {
       requestAnimationFrame(() => {
@@ -199,11 +204,13 @@ function App() {
     }
   }
 
-  function selectTopic(id: string) {
+  function selectTopic(id: string, fromHistory = false) {
     if (id === selectedRef.current) {
+      setQuery("");
       setTab("overview");
       return;
     }
+    if (!fromHistory) history.pushState(null, "", topicUrl(id));
     selectedRef.current = id;
     setSelected(id);
     setDashboard(null);
@@ -223,11 +230,6 @@ function App() {
     setLastLlmLangs("");
     setRecommendedLanguages([]);
     setLlmUsage(null);
-    localStorage.setItem("traceradar-topic", id);
-    const address = new URL(location.href);
-    if (id) address.searchParams.set("topic", id);
-    else address.searchParams.delete("topic");
-    history.replaceState({}, "", address);
     setWatchId("");
     setEvent(null);
     setEvidenceId("");
@@ -235,8 +237,21 @@ function App() {
     setShowHistorySources(false);
     setTab("overview");
     setError("");
+    requestAnimationFrame(() => {
+      window.scrollTo(0, 0);
+      document.getElementById(id ? "topic-title" : "home-title")?.focus({ preventScroll: true });
+    });
   }
   useEffect(() => {
+    function restoreRoute() {
+      const id = new URLSearchParams(location.search).get("topic");
+      selectTopic(knownTopics.current.find((topic) => topic.topic_id === id)?.topic_id ?? "", true);
+    }
+    window.addEventListener("popstate", restoreRoute);
+    return () => window.removeEventListener("popstate", restoreRoute);
+  }, []);
+  useEffect(() => {
+    let disposed = false;
     void Promise.all([
       api<Topic[]>("/topics"),
       api<{ status: string }>("/health"),
@@ -244,27 +259,25 @@ function App() {
       api<Corpus[]>("/replay/corpora"),
     ])
       .then(([items, h, m, c]) => {
+        if (disposed) return;
         setTopics(items);
         setHealth(h.status === "ok");
         setModel(m);
         setCorpora(c);
-        const previous = localStorage.getItem("traceradar-topic");
         const requested = new URLSearchParams(location.search).get("topic");
-        selectTopic(
-          items.find((t) => t.topic_id === requested)?.topic_id ??
-            items.find((t) => t.topic_id === previous)?.topic_id ??
-            [...items].reverse().find((t) => t.title.includes("三步演示"))
-              ?.topic_id ??
-            items.find((t) => t.title.includes("D验收"))?.topic_id ??
-            items.at(-1)?.topic_id ??
-            "",
-        );
-        if (!items.length) setLoading(false);
+        if (requested && items.some((topic) => topic.topic_id === requested)) {
+          selectTopic(requested, true);
+        } else {
+          if (requested) history.replaceState(null, "", topicUrl(""));
+          setLoading(false);
+        }
       })
       .catch((e) => {
+        if (disposed) return;
         setError(String(e));
         setLoading(false);
       });
+    return () => { disposed = true; };
   }, []);
 
   useEffect(() => {
@@ -556,7 +569,11 @@ function App() {
     await refresh();
   }
   async function openEvent(id: string) {
-    await action(async () => setEvent(await api<EventDetail>(`/events/${id}`)));
+    const topicId = selected;
+    await action(async () => {
+      const detail = await api<EventDetail>(`/events/${id}`);
+      if (selectedRef.current === topicId) setEvent(detail);
+    });
   }
   async function resumeRun(id: string) {
     const result = await api<{ run_id: string }>(
@@ -577,7 +594,7 @@ function App() {
         json("POST", {
           title: "ExampleSoft · 三步演示",
           description:
-            "Track ExampleSoft vulnerabilities, affected versions and official patches. Keep conflicting reports for review.",
+            "用三批模拟新闻追踪 ExampleSoft 的漏洞披露、受影响版本和修复进展，并核对冲突报道。",
         }),
       );
       await api(
@@ -620,48 +637,50 @@ function App() {
     );
   const nextDemo = demoSteps.find((s) => !done(s.id)) ?? demoSteps[2];
 
-  const eventList = (
-    <div className="event-table">
-      {events.length ? (
-        events.map((e, i) => (
-          <button
-            className="event-row"
-            key={e.event_id}
-            disabled={busy}
-            onClick={() => void openEvent(e.event_id)}
-          >
-            <span className="row-index">{String(i + 1).padStart(2, "0")}</span>
-            <span className="event-row-main">
-              <strong>{eventTitle(e.title)}</strong>
-              <span>{text(e.state.key_facts.at(-1)?.fact ?? "")}</span>
-            </span>
-            <span
-              className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
+  function renderEventList(limit?: number) {
+    const visibleEvents = limit
+      ? [...events].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, limit)
+      : events;
+    return (
+      <div className="event-table">
+        {events.length ? (
+          visibleEvents.map((e) => (
+            <button
+              className="event-row"
+              key={e.event_id}
+              disabled={busy}
+              onClick={() => void openEvent(e.event_id)}
             >
-              {status(e.state.current_status)}
-            </span>
-            <span className="event-row-meta">
-              {e.state.key_facts.length} 条事实
-              <br />
-              {e.state.sources.length} 份依据
-            </span>
-            <Icon name="arrow" size={17} />
-          </button>
-        ))
-      ) : (
-        <Empty
-          title={search ? "没有符合筛选条件的事件" : "事件会在这里逐步形成"}
-          detail={
-            search
-              ? "试试事件名称、状态或事实中的其他关键词。"
-              : fixture
-                ? "运行第一批演示新闻，查看漏洞 A 如何被建档。"
-                : "批准来源并运行检查。系统会按独立事项组织事件。"
-          }
-        />
-      )}
-    </div>
-  );
+              <span className="event-row-main">
+                <strong>{eventTitle(e.title)}</strong>
+                <span>{text(e.state.key_facts.at(-1)?.fact ?? "")}</span>
+              </span>
+              <span
+                className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
+              >
+                {status(e.state.current_status)}
+              </span>
+              <span className="event-row-meta">
+                {e.state.timeline.length} 条进展
+              </span>
+              <Icon name="arrow" size={17} />
+            </button>
+          ))
+        ) : (
+          <Empty
+            title={search ? "没有符合筛选条件的事件" : "事件会在这里逐步形成"}
+            detail={
+              search
+                ? "试试事件名称、状态或事实中的其他关键词。"
+                : fixture
+                  ? "运行第一批演示新闻，查看漏洞 A 如何被建档。"
+                  : "批准来源并运行检查。系统会按独立事项组织事件。"
+            }
+          />
+        )}
+      </div>
+    );
+  }
 
   const runControls = (
     <aside className="run-panel">
@@ -809,48 +828,33 @@ function App() {
     </aside>
   );
 
-  return (
-    <div className="workspace">
-      <aside className="sidebar">
-        <a
-          href="#"
-          className="brand"
-          onClick={(e) => {
-            e.preventDefault();
-            setTab("overview");
-          }}
-        >
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <i />
-            <i />
-          </span>
-          TraceRadar<span className="brand-period">.</span>
-        </a>
-        <div className="workspace-label">
-          <span className="workspace-avatar">65</span>
-          <span>
-            Group 65<small>研究工作台</small>
-          </span>
+  const feedback = (
+    <div className="workspace-feedback" hidden={!(error && !dialog) && !toast}>
+      {error && !dialog && (
+        <div role="alert" className="error">
+          {error}
+          <button
+            className="icon-button"
+            aria-label="关闭错误提示"
+            onClick={() => setError("")}
+          >
+            <Icon name="close" size={14} />
+          </button>
         </div>
-        <div className="sidebar-section-label">工作区</div>
-        <nav className="side-nav">
-          {tabs
-            .filter((t) => ["overview", "review", "activity"].includes(t[0]))
-            .map(([id, label, icon]) => (
-              <button
-                key={id}
-                className={tab === id ? "selected" : ""}
-                onClick={() => openTab(id, true)}
-              >
-                <Icon name={icon} />
-                {label}
-                {id === "review" && !!dashboard?.reviews.length && (
-                  <span className="nav-count">{dashboard.reviews.length}</span>
-                )}
-              </button>
-            ))}
-        </nav>
+      )}
+      {toast && (
+        <div role="status" className="toast">
+          <Icon name="check" size={16} />
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+
+  const workspaceView = (
+    <>
+      <aside className="sidebar">
+        <BrandLink onHome={() => selectTopic("")} />
         <div className="sidebar-section-label topic-label">
           追踪主题
           <button
@@ -868,6 +872,7 @@ function App() {
               disabled={busy}
               className={`topic-link ${selected === t.topic_id ? "selected" : ""}`}
               key={t.topic_id}
+              aria-current={selected === t.topic_id ? "page" : undefined}
               onClick={() => selectTopic(t.topic_id)}
             >
               <span className="topic-dot" />
@@ -878,10 +883,7 @@ function App() {
         </div>
         <button className="sidebar-replay" onClick={() => showDialog("replay")}>
           <Icon name="play" size={14} />
-          <span>
-            准备语料回放<small>LBJ / NBA</small>
-          </span>
-          <Icon name="arrow" size={14} />
+          <span>准备新闻回放</span>
         </button>
         <div className="sidebar-bottom">
           <button aria-label="看懂这个演示" onClick={() => showDialog("help")}>
@@ -900,15 +902,17 @@ function App() {
               : loading
                 ? "正在连接本地服务"
                 : "本地服务不可用"}
-            <span>v1.1</span>
           </div>
         </div>
       </aside>
       <div className="main-shell">
         <header className="topbar">
           <div className="breadcrumb">
-            工作台 <span>/</span>{" "}
-            {dashboard ? eventTitle(dashboard.topic.title) : "追踪主题"}
+            <a href={topicUrl("")} onClick={(e) => {
+              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+              e.preventDefault();
+              selectTopic("");
+            }}>追踪主题</a>
           </div>
           <div className="topbar-actions">
             <button
@@ -926,28 +930,15 @@ function App() {
             >
               <Icon name="plus" />
             </button>
-            <button
-              className="icon-button"
-              aria-label="打开模型配置"
-              onClick={() => showDialog("settings")}
-            >
-              <Icon name="settings" />
-            </button>
           </div>
         </header>
         <main>
           <div className="page-heading">
             <div>
-              <span className="kicker">TRACERADAR / WORKSPACE</span>
-              <h1>
-                {dashboard
-                  ? eventTitle(dashboard.topic.title)
-                  : "让进展，有迹可循。"}
+              <h1 id="topic-title" tabIndex={-1}>
+                {eventTitle(dashboard?.topic.title ?? topics.find((t) => t.topic_id === selected)?.title ?? "追踪主题")}
               </h1>
-              <p>
-                {dashboard?.topic.description ??
-                  "把分散的信息组织成事件，保留每一次变化的依据。"}
-              </p>
+              {dashboard && <p>{dashboard.topic.description}</p>}
             </div>
             {dashboard && (
               <button
@@ -959,46 +950,8 @@ function App() {
               </button>
             )}
           </div>
-          {error && !dialog && (
-            <div role="alert" className="error">
-              {error}
-              <button
-                className="icon-button"
-                aria-label="关闭错误提示"
-                onClick={() => setError("")}
-              >
-                <Icon name="close" size={14} />
-              </button>
-            </div>
-          )}
-          {toast && (
-            <div role="status" className="toast">
-              <Icon name="check" size={16} />
-              {toast}
-            </div>
-          )}
+          {feedback}
           {loading && <p className="loading">正在读取工作区…</p>}
-          {!selected && !loading && (
-            <div className="welcome">
-              <span className="kicker">START WITH A STORY</span>
-              <h2>
-                从一条信息，
-                <br />
-                看到事件的来龙去脉。
-              </h2>
-              <p>先用三批模拟新闻了解工作流程，或准备真实模型的新闻回放。</p>
-              <div className="button-row">
-                <button
-                  className="primary"
-                  disabled={busy}
-                  onClick={() => void createDemo()}
-                >
-                  创建三步演示 <Icon name="arrow" size={16} />
-                </button>
-                <button onClick={() => showDialog("new")}>新建主题</button>
-              </div>
-            </div>
-          )}
           {dashboard && (
             <>
               <div className="topic-meta">
@@ -1066,7 +1019,7 @@ function App() {
                 ))}
                 <span className="tab-indicator" aria-hidden="true" />
               </div>
-              {(["overview", "events", "evidence"] as Tab[]).includes(tab) && (
+              {(tab === "events" || tab === "evidence") && (
                 <label className="search-box">
                   <Icon name="search" size={17} />
                   <input
@@ -1115,56 +1068,11 @@ function App() {
                       />
                       <div className="overview-sections">
                         <OverviewSection
-                          title="事件一览"
+                          title="近期事件"
                           label="查看全部事件"
                           onOpen={() => openTab("events", true)}
                         >
-                          {eventList}
-                        </OverviewSection>
-                        <OverviewSection
-                          title="近期证据"
-                          label="进入证据库"
-                          onOpen={() => openTab("evidence", true)}
-                        >
-                          {currentEvidence.length ? (
-                            [...currentEvidence]
-                              .sort(
-                                (a, b) =>
-                                  Date.parse(b.evidence.published_at) -
-                                  Date.parse(a.evidence.published_at),
-                              )
-                              .slice(0, 3)
-                              .map(
-                                ({
-                                  evidence: item,
-                                  status: evidenceStatus,
-                                }) => (
-                                  <button
-                                    className="recent-evidence"
-                                    key={item.evidence_id}
-                                    onClick={() =>
-                                      setEvidenceId(item.evidence_id)
-                                    }
-                                  >
-                                    <Icon name="evidence" size={17} />
-                                    <span>
-                                      <strong>{headline(item.title)}</strong>
-                                      <small>
-                                        {item.source_id} ·{" "}
-                                        {date(item.published_at, false)}
-                                      </small>
-                                    </span>
-                                    {evidenceStatus === "review" && (
-                                      <span className="tag amber">待审核</span>
-                                    )}
-                                  </button>
-                                ),
-                              )
-                          ) : (
-                            <p className="blank-line">
-                              开始检查后，最新读入的证据会出现在这里。
-                            </p>
-                          )}
+                          {renderEventList(3)}
                         </OverviewSection>
                         <OverviewSection
                           title="变化与提醒"
@@ -1274,7 +1182,7 @@ function App() {
                         选择一行查看事实、时间线与依据
                       </span>
                     </div>
-                    {eventList}
+                    {renderEventList()}
                   </section>
                 )}
                 {tab === "evidence" && (
@@ -1844,6 +1752,27 @@ function App() {
           </footer>
         </main>
       </div>
+    </>
+  );
+
+  return (
+    <div className="workspace">
+      {!selected ? (
+        <ProjectHome
+          topics={topics}
+          loading={loading}
+          busy={busy}
+          feedback={feedback}
+          onHome={() => selectTopic("")}
+          onTopic={selectTopic}
+          onNew={() => showDialog("new")}
+          onDemo={createDemo}
+          onReplay={() => showDialog("replay")}
+          onSettings={() => showDialog("settings")}
+        />
+      ) : (
+        workspaceView
+      )}
       {dialog && (
         <Modal
           title={

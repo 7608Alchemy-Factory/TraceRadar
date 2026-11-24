@@ -873,7 +873,7 @@ Object.assign(messages, {
 
 Object.assign(messages, {
   "教育": ["Education", "教育"], "科学": ["Science", "科學"], "法律": ["Law", "法律"],
-  "社区民生": ["Community", "社區民生"], "国际": ["International", "國際"],
+  "民生": ["Community", "民生"], "国际": ["International", "國際"],
   "学校招生与课程调整": ["School admissions and curriculum changes", "學校招生與課程調整"],
   "考试与奖学金政策": ["Exam and scholarship policies", "考試與獎學金政策"],
   "科研发现与后续验证": ["Research findings and follow-up studies", "科研發現與後續驗證"],
@@ -894,6 +894,9 @@ Object.assign(messages, {
   "检查仍在运行，结束后才能删除事件。": ["Wait for the active check to finish before deleting this event.", "請等檢查完成後再刪除事件。"],
   "将永久删除此事件、进展时间线与提醒。新闻原文和运行记录会保留。": ["This permanently deletes the event, its timeline and alerts. Source articles and run records are kept.", "這會永久刪除此事件、進展時間軸與提醒。新聞原文和執行紀錄會保留。"],
   "审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。": ["Review decisions are recorded. Accepted changes appear in event history and run records.", "審核決定會留在紀錄中。採納後的狀態變化會出現在事件歷史和執行紀錄中。"],
+  "最近更新：": ["Last updated", "最近更新："],
+  "关闭审核": ["Close review", "關閉審核"],
+  "采纳依据": ["Reason for accepting", "採納依據"],
 });
 
 Object.assign(messages, {

@@ -2,6 +2,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api } from "./api";
 import { date, title, topicTitle } from "./display";
 import { t } from "./i18n";
+import { Icon } from "./ui";
 import { useTranslation } from "./reference-translation";
 import type { Topic } from "./types";
 
@@ -71,8 +72,16 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
           </ol></>}
           <div className="radar-readout">
             {current && topic ? (
-              <><small><strong>{t("最近更新")}</strong>{" "}{tr(topicTitle(topic.title))} · {date(current.updated_at)}</small>
-                <button type="button" onClick={() => onTopic(topic.topic_id)}>{t("查看主题")}</button></>
+              <>
+                <small>{t("最近更新：")}</small>
+                <div className="radar-readout-meta">
+                  <strong>{tr(topicTitle(topic.title))}</strong>
+                  <time dateTime={current.updated_at}>{date(current.updated_at)}</time>
+                </div>
+                <button type="button" onClick={() => onTopic(topic.topic_id)}>
+                  {t("查看主题")} <Icon name="arrow" size={14} />
+                </button>
+              </>
             ) : <small>{t(signals ? "暂无事件信号" : "正在读取事件信号…")}</small>}
           </div>
         </div>

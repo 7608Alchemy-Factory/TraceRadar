@@ -22,8 +22,13 @@ export function CoverImage({ topic, className = "" }: { topic?: Topic; className
   return (
     <div className={`cover-art ${className}`} data-cover={cover} data-topic-cover={topic?.topic_id}
       style={{ "--cover-position": positions[cover] } as CSSProperties} aria-hidden="true">
-      <div className="cover-photo" />
-      <pre className="cover-glyphs">{coverGlyphs[cover]}</pre>
+      <div className="cover-print">
+        <span className="cover-glyphs">
+          {coverGlyphs[cover].map(([x, y, glyph]) => (
+            <span key={`${x}-${y}`} style={{ left: `${x}%`, top: `${y}%` }}>{glyph}</span>
+          ))}
+        </span>
+      </div>
     </div>
   );
 }

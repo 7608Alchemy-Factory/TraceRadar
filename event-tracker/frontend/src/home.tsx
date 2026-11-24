@@ -25,7 +25,9 @@ export function BrandLink({ onHome, current }: { onHome: () => void; current?: b
       onClick={(event) => follow(event, onHome)}
     >
       <span className="brand-mark" aria-hidden="true"><i /><i /><i /></span>
-      TraceRadar<span className="brand-period">.</span>
+      <span className="brand-wordmark" aria-hidden="true">
+        <span>Trace</span><span>Radar</span><span className="brand-period">.</span>
+      </span>
     </a>
   );
 }
@@ -89,8 +91,7 @@ export function ProjectHome({
         .from(".home-radar", { clipPath: "inset(11% 9% 12% 9%)", opacity: .4 }, .04);
       gsap.timeline({
         scrollTrigger: { trigger: ".home-hero", start: "top top", end: "+=310", scrub: .35 },
-      }).to(".home-radar .cover-photo", { yPercent: 9, scale: 1.12, ease: "none" })
-        .to(".home-radar .cover-glyphs", { opacity: .85, ease: "none" }, 0);
+      }).to(".home-radar .cover-print", { yPercent: 3, scale: 1.06, ease: "none" });
       gsap.from(".projects-heading, .reel, .reel-empty, .home-tools", {
         y: 26, opacity: 0, duration: .62, stagger: .09, ease: "power3.out",
         clearProps: "opacity,transform",
@@ -98,10 +99,10 @@ export function ProjectHome({
       });
       const scroller = reel.current;
       if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
-      gsap.utils.toArray<HTMLElement>(".frame-cover .cover-photo").forEach((photo) => {
-        gsap.fromTo(photo, { xPercent: -5, scale: 1.12 }, {
-          xPercent: 5, scale: 1.12, ease: "none",
-          scrollTrigger: { trigger: photo.closest("li"), scroller, horizontal: true,
+      gsap.utils.toArray<HTMLElement>(".frame-cover .cover-print").forEach((print) => {
+        gsap.fromTo(print, { xPercent: -2, scale: 1.04 }, {
+          xPercent: 2, scale: 1.04, ease: "none",
+          scrollTrigger: { trigger: print.closest("li"), scroller, horizontal: true,
             start: "left right", end: "right left", scrub: true },
         });
       });

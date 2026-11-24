@@ -441,31 +441,56 @@ def web_fetch(
 
 
 def _preserve_existing_revisions(items: list[dict], existing_items: list[dict] | None, build_evidence) -> list[dict]:
-    """Preserve previously ingested content/hash for identical (source_id, external_id) keys so repeat runs
-    never raise SOURCE_REVISION (422) due to dynamic search snippets or skipped full-text enrichment.
+    """Preserve previously ingested content/hash for:
+    1. Identical (source_id, external_id) keys so repeat runs never raise SOURCE_REVISION (422);
+    2. Cross-source identical canonical HTTP(S) URLs so skipping web_fetch still matches exact_hash dedup (0 LLM tokens).
     """
     if not existing_items:
         return items
-    existing_by_key: dict[tuple[str, str], dict] = {
-        (str(ex['source_id']), str(ex['external_id'])): ex
-        for ex in existing_items
-        if ex.get('source_id') and ex.get('external_id')
-    }
-    if not existing_by_key:
+    existing_by_key: dict[tuple[str, str], dict] = {}
+    existing_by_url: dict[str, dict] = {}
+    for ex in existing_items:
+        if ex.get('source_id') and ex.get('external_id'):
+            existing_by_key[(str(ex['source_id']), str(ex['external_id']))] = ex
+        cu = canonicalize_url(str(ex.get('url') or ''))
+        if cu and cu.startswith(('http://', 'https://')) and not _is_google_news_opaque_url(cu):
+            existing_by_url.setdefault(cu, ex)
+    if not existing_by_key and not existing_by_url:
         return items
     out: list[dict] = []
     for item in items:
         key = (str(item.get('source_id') or ''), str(item.get('external_id') or ''))
         prior = existing_by_key.get(key)
-        if prior is not None and prior.get('content_hash') != item.get('content_hash'):
+        if prior is not None:
+            if prior.get('content_hash') != item.get('content_hash'):
+                out.append(
+                    build_evidence(
+                        source_id=item['source_id'],
+                        external_id=item['external_id'],
+                        url=prior.get('url') or item.get('url', ''),
+                        title=prior.get('title') or item['title'],
+                        content=prior.get('content') or item['content'],
+                        published_at=prior.get('published_at') or item['published_at'],
+                    )
+                )
+            else:
+                out.append(item)
+            continue
+        cu = canonicalize_url(str(item.get('url') or ''))
+        prior_url = (
+            existing_by_url.get(cu)
+            if cu and cu.startswith(('http://', 'https://')) and not _is_google_news_opaque_url(cu)
+            else None
+        )
+        if prior_url is not None and prior_url.get('content') and prior_url.get('content_hash') != item.get('content_hash'):
             out.append(
                 build_evidence(
                     source_id=item['source_id'],
                     external_id=item['external_id'],
-                    url=prior.get('url') or item.get('url', ''),
-                    title=prior.get('title') or item['title'],
-                    content=prior.get('content') or item['content'],
-                    published_at=prior.get('published_at') or item['published_at'],
+                    url=item.get('url', ''),
+                    title=item['title'],
+                    content=prior_url['content'],
+                    published_at=item['published_at'],
                 )
             )
         else:

@@ -755,6 +755,7 @@ _CJK_STOP_PHRASES = {
     '我們', '我们', '他們', '他们', '以及', '包括', '成為', '成为', '獲得', '获得', '進行', '进行',
     '部分', '全部', '主要', '重要', '可能', '預計', '预计', '據報', '据报', '傳聞', '传闻',
     '媒體', '媒体', '網友', '网友', '用戶', '用户', '情況', '情况', '方式', '問題', '问题',
+    '為假', '为假', '解決', '解决', '證明', '证明', '原文摘录', '原文摘錄',
 }
 
 # Pure script-level orthography sets for Simplified vs Traditional Chinese Google News locale selection.
@@ -857,11 +858,17 @@ def _clean_str(val: object, max_len: int) -> str:
     return val.strip()[:max_len] if isinstance(val, str) else ''
 
 
-def _clean_gnews_query(val: object, max_len: int = 70) -> str:
+def _clean_gnews_query(val: object, max_len: int = 80) -> str:
     if not isinstance(val, str):
         return ''
     cleaned = _GNEWS_OP_RE.sub(' ', val)
-    return ' '.join(cleaned.split()).strip()[:max_len]
+    norm = ' '.join(cleaned.split()).strip()
+    if len(norm) <= max_len:
+        return norm
+    cut = norm[:max_len]
+    if cut[-1].isascii() and cut[-1].isalnum() and norm[max_len].isascii() and norm[max_len].isalnum() and ' ' in cut:
+        cut = cut.rsplit(' ', 1)[0]
+    return cut.strip()
 
 
 def _parse_iso_date(val: object) -> str | None:
@@ -1186,7 +1193,7 @@ def _advise_watchlist_with_llm(
         '  "retire_branches": [{"source_id": "<approved_branch_source_id>", "reason": "1 concise Chinese sentence explaining why this branch is now settled, expired, or superseded based on current_events"}],\n'
         '  "suggested_queries": [{"label": "concise entity or sub-topic name", "query": "2-4 focused search keywords (no site:/inurl:/after:/before:/when: operators)", "language": "optional: zh-CN, zh-HK, en-US, ko, or ja", "reason": "1 concise Chinese sentence grounded in current_events"}]\n'
         '}\n'
-        'Rules: Never invent facts outside the input. If latest_evidence_date is supplied, anchor any year or season wording strictly to latest_evidence_date and never assume an older year or invent dates beyond it. Only put a branch into retire_branches if current_events clearly show its storyline ended, expired, or lost out to a finalized resolution (silence alone is NOT a reason to retire). Return at most 2 suggested_queries only if they are genuinely missing from unapproved_candidates and approved_branches.'
+        'Rules: Never invent facts outside the input. If latest_evidence_date is supplied, anchor any year or season wording strictly to latest_evidence_date and never assume an older year or invent dates beyond it. Only put a branch into retire_branches if current_events clearly show its storyline ended, expired, or lost out to a finalized resolution (silence alone is NOT a reason to retire). Return at most 2 suggested_queries only if they are genuinely missing from unapproved_candidates and approved_branches; keep each query concise (2-5 keywords, <= 75 chars) and strictly in the script of its chosen language (never mix Chinese characters into en-US/ko/ja queries).'
     )
     parsed, usage, err = _call_watchlist_llm(settings, system, payload)
     if usage and usage_out is not None:
@@ -1218,7 +1225,7 @@ def _advise_watchlist_with_llm(
         for item in raw_suggested[:2]:
             if isinstance(item, dict):
                 lbl = _clean_str(item.get('label'), 40)
-                qry = _clean_gnews_query(item.get('query'), 60)
+                qry = _clean_gnews_query(item.get('query'), 80)
                 rsn = _clean_str(item.get('reason'), 220) or f'结合当前已追踪事件脉络建议补充关注「{lbl}」。'
                 lang = _clean_str(item.get('language'), 16)
                 if valid_langs:
@@ -1336,7 +1343,7 @@ def _build_google_news_rss_url(
 
 def _extract_general_terms(text: str) -> list[str]:
     """Domain-agnostic 0-Token phrase extraction: quoted phrases, capitalized/branded Latin phrases, and clean CJK phrases."""
-    cleaned = _strip_publisher_suffix(text)
+    cleaned = re.sub(r'\[(?:原文摘录|指定网页内容变更检测)\]', ' ', _strip_publisher_suffix(text))
     found: list[str] = []
 
     for m in _QUOTED_PHRASE_RE.findall(cleaned):
@@ -1789,10 +1796,12 @@ def recommend_sources(
             anchor_terms=replay_anchor_terms,
         )
         anchor_words = [t for t in query.split() if t.lower() not in _QUERY_ACTION_STOP]
+        prefix_len = 2
         if len(anchor_words) >= 3 and anchor_words[1].lower() in ('vs', 'vs.', 'and', '&'):
-            anchor_prefix = ' '.join(anchor_words[:3]).strip() or query
-        else:
-            anchor_prefix = ' '.join(anchor_words[:2]).strip() or query
+            prefix_len = 3
+        elif len(anchor_words) >= 4 and anchor_words[2].lower() in ('vs', 'vs.', 'and', '&'):
+            prefix_len = 4
+        anchor_prefix = ' '.join(anchor_words[:prefix_len]).strip() or query
         for info in discovered:
             term = info['term']
             slug = hashlib.sha256(_fold_latin(term).encode('utf-8')).hexdigest()[:8]

@@ -462,3 +462,112 @@ def test_redteam_p0_repeat_web_search_custom_source_and_webpage_revert(tmp_path,
         spoof = {'external_id': 'webpage-rev-fake', 'url': 'https://news.example/story', 'title': 'Same headline news story', 'content': 'ExampleSoft released patch version 1.2 today for enterprise users!!', 'content_hash': 'h2'}
         assert find_duplicate_match(spoof, existing, enable_near_duplicate=True) is not None
 
+
+def test_e2e_polish_cross_source_url_dedup_entity_clean_and_query_boundary(tmp_path, monkeypatch):
+    """Regression tests for E2E findings #2 (cross-source same URL reuses full-text hash -> exact_hash skip),
+    #5 ([原文摘录] & generic CJK verbs filtered + '两大AI厂商 P vs NP' anchor prefix intact),
+    and #6 (_clean_gnews_query truncates at word boundary instead of mid-word).
+    """
+    from app.connectors import _clean_gnews_query, _extract_general_terms, recommend_sources
+
+    # #5: template marker and generic CJK verbs excluded
+    terms = _extract_general_terms('简要总结\n\n[原文摘录]\nOpenAI 宣称解决并证明指数时间假设为假。')
+    assert '原文摘录' not in terms
+    assert not any(w in terms for w in ('为假', '解决', '证明'))
+    assert 'OpenAI' in terms
+
+    # #5: anchor_prefix does not chop '两大AI厂商 P vs NP' at 'P'
+    recs = recommend_sources(
+        {'topic_id': '11223344-pnp', 'title': '两大AI厂商 P vs NP 与千禧年难题进展', 'description': '追踪 OpenAI Anthropic P vs NP'},
+        [],
+        current_events=[],
+        evidence_decisions=[
+            {
+                'status': 'completed',
+                'assessment': {'is_relevant': True},
+                'evidence': {
+                    'source_id': 'ws_1',
+                    'published_at': '2026-11-01T00:00:00Z',
+                    'title': 'OpenAI publishes Navier-Stokes proof draft',
+                    'content': 'OpenAI and Anthropic researchers discuss Navier-Stokes and Lean 4 formalization.',
+                },
+            }
+        ],
+    )
+    branch_queries = [
+        (s.get('config') or {}).get('query', '')
+        for s in recs['sources']
+        if s.get('role') == 'branch' and s.get('type') == 'web_search'
+    ]
+    assert branch_queries
+    assert all('两大AI厂商 P ' not in q or '两大AI厂商 P vs NP' in q for q in branch_queries), branch_queries
+
+    # #6: word-boundary truncation never cuts mid-word ('mathemati')
+    long_q = 'Navier-Stokes partial solution verification OpenAI Anthropic mathematicians peer review 2026'
+    cleaned_80 = _clean_gnews_query(long_q, 80)
+    assert len(cleaned_80) <= 80
+    assert not cleaned_80.endswith('mathemati')
+    assert 'mathematicians' in cleaned_80
+    cleaned_60 = _clean_gnews_query('Navier-Stokes partial solution verification OpenAI mathematicians', 60)
+    assert cleaned_60 == 'Navier-Stokes partial solution verification OpenAI'
+
+    # #2: Cross-source same URL skips web_fetch AND hits exact_hash dedup (0 redundant LLM assessment!)
+    shared_url = 'https://cnbc.example/2026/09/09/openai-navier-stokes-math'
+    full_body = 'ExampleSoft vulnerability A disclosed. ' + ('Detailed full article body paragraph text. ' * 60)
+    monkeypatch.setattr(
+        wc_mod.httpx,
+        'post',
+        lambda *a, **kw: httpx.Response(
+            200,
+            json={
+                'code': 200,
+                'data': {
+                    'webPages': {
+                        'value': [
+                            {
+                                'name': 'OpenAI Navier-Stokes report',
+                                'url': shared_url,
+                                'summary': 'ExampleSoft vulnerability A disclosed. Short 120-char snippet.',
+                                'datePublished': '2026-11-01T09:00:00Z',
+                            }
+                        ]
+                    }
+                },
+            },
+        ),
+    )
+    fetch_calls = {'n': 0}
+
+    def fake_fetch(url, **kw):
+        fetch_calls['n'] += 1
+        return {
+            'ok': True,
+            'url': url,
+            'title': 'OpenAI Navier-Stokes report',
+            'content': full_body,
+            'full_text': full_body,
+            'published_at': '2026-11-01T09:00:00Z',
+            'modified_at': None,
+            'method': 'direct_httpx',
+            'error': None,
+        }
+
+    st = Settings(database_path=str(tmp_path / 'cross.db'), env_path=tmp_path / '.env', search_provider='bocha', bocha_api_key='sk-test')
+    with TestClient(create_app(st), base_url='http://127.0.0.1:5173') as client:
+        tid = client.post('/api/topics', json={'title': 'ExampleSoft security', 'description': 'Track vulnerabilities'}).json()['topic_id']
+        client.post('/api/sources', json={'source_id': 'ws_src_a', 'name': 'Src A', 'type': 'web_search', 'endpoint': 'search://a', 'config': {'query': '千禧年 A', 'fetch_full_text': True}})
+        client.post('/api/sources', json={'source_id': 'ws_src_b', 'name': 'Src B', 'type': 'web_search', 'endpoint': 'search://b', 'config': {'query': '千禧年 B', 'fetch_full_text': True}})
+        client.put(f'/api/topics/{tid}/sources', json={'approved_source_ids': ['ws_src_a']})
+        with patch.object(wc_mod, 'web_fetch', side_effect=fake_fetch):
+            r1 = _wait_run(client, client.post(f'/api/topics/{tid}/runs', json={'fixture_batch_id': 'live', 'provider': 'mock'}).json()['run_id'])
+            assert r1['run']['counts']['committed'] == 1 and fetch_calls['n'] == 1
+
+            # Round 2 adds second source ws_src_b returning the SAME URL with a short snippet
+            client.put(f'/api/topics/{tid}/sources', json={'approved_source_ids': ['ws_src_b']})
+            r2 = _wait_run(client, client.post(f'/api/topics/{tid}/runs', json={'fixture_batch_id': 'live', 'provider': 'mock'}).json()['run_id'])
+        assert r2['run']['status'] == 'completed'
+        assert r2['run']['counts']['skipped'] == 1
+        assert r2['run']['counts']['committed'] == 0 and r2['run']['counts']['no_change'] == 0 and r2['run']['counts']['errors'] == 0
+        assert fetch_calls['n'] == 1  # No redundant web_fetch AND no redundant LLM assessment!
+
+

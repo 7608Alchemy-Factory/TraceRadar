@@ -125,7 +125,7 @@ export type Run = {
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string }; resume_of?: string; sources?: Source[] };
+  snapshot: { options?: { as_of?: string; agent_mode?: boolean }; resume_of?: string; sources?: Source[] };
 };
 export type Step = {
   step_id: string;
@@ -136,7 +136,7 @@ export type Step = {
   attempt: number;
   input_refs: string[];
   output_refs: string[];
-  decision: unknown;
+  decision: { agent?: { model_calls: number; calls: { name: string; status: string }[] } } & Record<string, unknown>;
   error: unknown;
   started_at: string;
   completed_at: string | null;

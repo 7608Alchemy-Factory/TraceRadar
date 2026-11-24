@@ -149,6 +149,7 @@ function App() {
   const [provider, setProvider] = useState<"mock" | "qwen">("mock"),
     [batch, setBatch] = useState("1"),
     [asOf, setAsOf] = useState("");
+  const [agentMode, setAgentMode] = useState(false);
   const [replayCorpus, setReplayCorpus] = useState("lbj");
   const [showHistorySources, setShowHistorySources] = useState(false);
   const [llmSummaryOn, setLlmSummaryOn] = useState(false);
@@ -275,6 +276,7 @@ function App() {
     setNotices([]);
     setReplayCorpus("");
     setAsOf("");
+    setAgentMode(false);
     setLlmSummaryOn(false);
     setLlmSummaryNote(null);
     setLlmMode(null);
@@ -607,6 +609,7 @@ function App() {
     options: {
       batch?: string;
       provider?: "mock" | "qwen";
+      agentMode?: boolean;
       manualItems?: Record<string, string>[];
     } = {},
   ) {
@@ -635,10 +638,12 @@ function App() {
             : (options.batch ?? batch),
         ...(sourceIds ? { source_ids: [...new Set(sourceIds)] } : {}),
         provider: engine,
+        ...(options.agentMode ? { agent_mode: true } : {}),
         ...(cutoff ? { as_of: new Date(cutoff).toISOString() } : {}),
         ...(options.manualItems ? { manual_items: options.manualItems } : {}),
       }),
     );
+    if (options.agentMode) setAgentMode(false);
     setEvent(null);
     viewedRun.current = result.run_id;
     setWatchId(result.run_id);
@@ -926,7 +931,10 @@ function App() {
         <select
           value={provider}
           disabled={busy || running}
-          onChange={(e) => setProvider(e.target.value as "mock" | "qwen")}
+          onChange={(e) => {
+            setProvider(e.target.value as "mock" | "qwen");
+            setAgentMode(false);
+          }}
         >
           <option
             value="mock"
@@ -938,16 +946,23 @@ function App() {
         </select>
       </label>
       {provider === "qwen" && (
-        <p className="model-note">
-          {model?.configured ? model.model : t("尚未配置模型")}{" "}
-          <button
-            className="text-button"
-            onClick={() => showDialog("settings")}
-          >
-            {model?.configured ? t("更改") : t("去配置")}{" "}
-            <Icon name="arrow" size={12} />
-          </button>
-        </p>
+        <>
+          <p className="model-note">
+            {model?.configured ? model.model : t("尚未配置模型")}{" "}
+            <button
+              className="text-button"
+              onClick={() => showDialog("settings")}
+            >
+              {model?.configured ? t("更改") : t("去配置")}{" "}
+              <Icon name="arrow" size={12} />
+            </button>
+          </p>
+          <label className="check-row">
+            <input type="checkbox" checked={agentMode} disabled={busy || running}
+              onChange={(e) => setAgentMode(e.target.checked)} />
+            {t("本次使用 Agent 模式")}
+          </label>
+        </>
       )}
       {fixture && (
         <label>
@@ -1018,7 +1033,7 @@ function App() {
         onClick={() =>
           provider === "qwen" && !model?.configured
             ? showDialog("settings")
-            : void action(() => startRun())
+            : void action(() => startRun({ agentMode: provider === "qwen" && agentMode }))
         }
       >
         <Icon name="play" size={14} />
@@ -2053,7 +2068,7 @@ function App() {
                             className={`status-dot ${r.status === "completed" ? "online" : active(r.status) ? "working" : ""}`}
                           />
                           <span>
-                            <strong>{providerLabel(r.provider)}</strong>
+                            <strong>{r.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(r.provider)}</strong>
                             <small>
                               {date(r.started_at)} · {status(r.status)}
                             </small>
@@ -2067,7 +2082,7 @@ function App() {
                         <>
                           <div className="section-title">
                             <h2>
-                              {providerLabel(run.run.provider)}{" "}
+                              {run.run.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(run.run.provider)}{" "}
                               <span className="tag">
                                 {status(run.run.status)}
                               </span>
@@ -2151,7 +2166,8 @@ function App() {
                                       {date(s.started_at)} →{" "}
                                       {date(s.completed_at)}
                                     </small>
-                                    <pre>{pretty(s.error ?? s.decision)}</pre>
+                                    {Boolean(s.error) && <pre>{pretty(s.error)}</pre>}
+                                    {(!s.error || s.decision?.agent) && <pre>{pretty(s.decision)}</pre>}
                                   </div>
                                 </details>
                               </li>

@@ -1,12 +1,9 @@
 """Local configuration. Responses never include credentials or credential fragments."""
-import os
-import tempfile
-from pathlib import Path
 from urllib.parse import urlsplit
-from dotenv import set_key
 import httpx
 from .core import AppError
 from .llm import is_local_model_url, request_provider, valid_model_url
+from .secret_storage import save_env
 
 
 def model_status(settings):
@@ -50,17 +47,9 @@ def save_model_settings(settings, body):
     key = body.api_key.strip() if body.api_key else settings.api_key
     if not key or any(c in key for c in '\r\n'):
         raise AppError('INVALID_MODEL_CONFIG', 'An API key is required; leave blank only to retain an existing key.', 422)
-    target = Path(settings.env_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix='.model-', suffix='.tmp')
-    os.close(fd)
-    try:
-        Path(temporary).write_text(target.read_text(encoding='utf-8') if target.exists() else '', encoding='utf-8')
-        for name,value in [('QWEN_BASE_URL',address),('QWEN_MODEL',model),('QWEN_API_KEY',key)]:
-            set_key(temporary,name,value)
-        os.replace(temporary,target)
-    finally:
-        if Path(temporary).exists():
-            Path(temporary).unlink()
+    updates = {'QWEN_BASE_URL': address, 'QWEN_MODEL': model}
+    if body.api_key:
+        updates['QWEN_API_KEY'] = key
+    save_env(settings.env_path, updates)
     settings.base_url, settings.model, settings.api_key = address, model, key
     return model_status(settings)

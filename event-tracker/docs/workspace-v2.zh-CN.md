@@ -81,17 +81,7 @@ API 文档为 `http://127.0.0.1:5173/docs`，日志在 `event-tracker/data/local
 
 ### 实际保存位置
 
-```text
-D:\Hku\Comp7608\TraceRadar\event-tracker\.env
-```
-
-字段沿用原仓库的名称，以保持接口兼容：
-
-```dotenv
-QWEN_BASE_URL=填你们选定的兼容 API 基础地址
-QWEN_MODEL=填实际模型 ID
-QWEN_API_KEY=填本地 Key
-```
+后端把配置保存在 `event-tracker/.env`。`QWEN_BASE_URL` 和 `QWEN_MODEL` 是普通配置，`QWEN_API_KEY` 使用 Windows DPAPI 加密后保存。搜索和网页抓取的密钥也使用同一种保护。升级后第一次启动后端会加密文件里已有的明文密钥。更换 Windows 账号或电脑时，请在界面重新输入密钥。
 
 代码里的 provider 标识仍为 qwen，但实际使用哪个模型取决于这个配置。不同服务是否完全兼容仍需连接测试和真实新闻验证。
 若选择直接手工编辑 `.env`，需要重启后端；通过界面保存则不用。重新打开配置窗口不会回显 Key；留空表示保留已有 Key。

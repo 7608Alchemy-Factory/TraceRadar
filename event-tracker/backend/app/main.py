@@ -271,6 +271,10 @@ def create_app(settings=None):
         provider = body.provider or config.provider
         request = dict(fixture_batch_id=body.fixture_batch_id, provider=provider)
         options = {}
+        if body.agent_mode:
+            if provider != 'qwen':
+                raise AppError('AGENT_REQUIRES_MODEL', 'Agent mode requires a configured model.', 422)
+            options['agent_mode'] = True
         if body.source_ids is not None:
             options['source_ids']=body.source_ids
         if body.as_of is not None:

@@ -99,7 +99,7 @@ npm run dev
 
 ## 6. 第三步：真实模型 + C 的 LBJ 回放（尚待执行）
 
-1. 使用团队已经选定的 OpenAI-compatible JSON-mode 模型服务，把配置只写在 event-tracker/.env：QWEN_API_KEY、QWEN_BASE_URL、QWEN_MODEL。不要把 key 发到群聊或提交 Git。
+1. 使用团队已经选定的 OpenAI-compatible JSON-mode 模型服务，在工作台的“模型配置”中保存地址、模型名和密钥。Windows 后端会加密保存密钥。
 2. 当前 provider 标识仍叫 qwen，以保持现有接口兼容；真实模型由后端配置决定。并非任意服务都一定兼容，需联调确认。
 3. 重启后端。新建独立 Topic，例如“LeBron James 转会进展”，目标明确要求区分谈判、传闻、协议与正式签约。
 4. 添加“LBJ · 30 条回放语料”，新 ID 如 lbj_replay；只批准该回放来源，使输入可重复。

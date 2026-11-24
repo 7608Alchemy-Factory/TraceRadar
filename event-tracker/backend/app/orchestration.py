@@ -5,7 +5,7 @@ from .core import AppError
 from .domain import Assessment, EvidenceAssessment, uid, now
 from .connectors import ConnectorRouter
 from .evidence_processing import find_duplicate_match, score_relevance
-from .llm import RETRYABLE_PROVIDER_ERRORS, get_provider
+from .llm import RETRYABLE_PROVIDER_ERRORS, EvidenceAssessmentAgent, get_provider
 from .services import StateManager
 
 logger = logging.getLogger(__name__)
@@ -187,15 +187,30 @@ class RunManager:
                         record('irrelevant')
                         continue
                 trace = step('assess_evidence', evidence['evidence_id'])
+                agent = None
                 try:
-                    assessment = provider.assess(topic, self.repo.events(topic['topic_id']), evidence, run['snapshot']['sources'])
+                    assessor_options = {}
+                    if options.get('agent_mode'):
+                        agent = EvidenceAssessmentAgent(
+                            lambda event_id: self.repo.event_evidence_as_of(topic['topic_id'], event_id, evidence['published_at']),
+                            lambda event_id, keyword: self.repo.get_event_history(
+                                topic['topic_id'], event_id, evidence['published_at'], keyword,
+                            ),
+                        )
+                        assessor_options['agent'] = agent
+                    assessment = provider.assess(topic, self.repo.events(topic['topic_id']), evidence,
+                                                 run['snapshot']['sources'], **assessor_options)
                 finally:
                     attempts = getattr(provider, 'attempt', 1)
                     trace['attempt'] = attempts
+                    if agent is not None:
+                        trace['decision']['agent'] = agent.trace
                 if not isinstance(assessment, (EvidenceAssessment, Assessment)):
                     schema = EvidenceAssessment if isinstance(assessment, dict) and 'event_decisions' in assessment else Assessment
                     assessment = schema.model_validate(assessment)
-                end(trace, decision={'assessment': assessment.model_dump(mode='json'), 'usage': getattr(provider, 'usage', None),'state_assembly':getattr(provider,'state_assembly',None)})
+                end(trace, decision={**trace['decision'], 'assessment': assessment.model_dump(mode='json'),
+                                     'usage': getattr(provider, 'usage', None),
+                                     'state_assembly': getattr(provider, 'state_assembly', None)})
                 trace = step('validate_and_commit', evidence['evidence_id'])
                 report = self.state_manager.apply(topic, identity, evidence, assessment, position, attempts)
                 outcome, results = report['status'], report['event_outcomes']
@@ -214,7 +229,7 @@ class RunManager:
                 failure = 'failed_retryable' if retryable else 'failed'
                 if evidence and self.repo.processing(topic['topic_id'], evidence['evidence_id']) not in ('completed', 'review'):
                     self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], failure, error=error)
-                end(trace, 'failed', error=error)
+                end(trace, 'failed', decision=trace['decision'], error=error)
                 record(failure, error)
                 if error['code'] in PROVIDER_ERRORS_THAT_STOP_RUN:
                     blocking_error = error

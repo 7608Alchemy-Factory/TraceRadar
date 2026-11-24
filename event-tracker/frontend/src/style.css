@@ -907,7 +907,7 @@ legend {
   color: #77866a;
 }
 .run-panel select,
-.run-panel input {
+.run-panel input:not([type="checkbox"]) {
   font-size: 11px;
   padding: 10px 8px;
   background: #fdfef9;
@@ -1895,6 +1895,7 @@ footer > span:last-child {
   .run-panel > h3,
   .run-panel > .hint,
   .run-panel > .model-note,
+  .run-panel > .check-row,
   .run-panel > .cutoff-buttons,
   .run-panel > .run-footnote {
     grid-column: 1/-1;

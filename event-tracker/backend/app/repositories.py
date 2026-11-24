@@ -1,6 +1,7 @@
 """All SQL lives here. Connections are short-lived and never shared across threads."""
 import json
 import sqlite3
+from collections import deque
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -414,6 +415,49 @@ class Repository:
         with self.connection() as db:
             return {r[0]: json.loads(r[1]) for r in db.execute('''SELECT e.id,e.data FROM evidence e
                 JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=?''', (topic_id,))}
+
+    def event_evidence_as_of(self, topic_id, event_id, published_at):
+        with self.connection() as db:
+            rows = db.execute('''SELECT e.data, ee.relation FROM evidence e
+                JOIN event_evidence ee ON ee.evidence_id=e.id
+                JOIN events ev ON ev.id=ee.event_id
+                JOIN topic_evidence te ON te.evidence_id=e.id AND te.topic_id=ev.topic_id
+                WHERE ev.topic_id=? AND ev.id=? AND julianday(json_extract(e.data, '$.published_at')) <= julianday(?)
+                ORDER BY julianday(json_extract(e.data, '$.published_at')) DESC, e.rowid DESC LIMIT 5''',
+                (topic_id, event_id, published_at))
+            return [dict(json.loads(row[0]), relation=row[1]) for row in rows]
+
+    def get_event_history(self, topic_id, event_id, published_at, keyword=None):
+        changes = deque(maxlen=3)
+        records = 0
+        keyword = keyword.casefold().strip() if keyword else ''
+        with self.connection() as db:
+            rows = db.execute('''
+                SELECT json_extract(t.data, '$.before_state.current_status') AS before_status,
+                       json_extract(t.data, '$.after_state.current_status') AS after_status,
+                       json_extract(t.data, '$.evidence_ids') AS evidence_ids,
+                       strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(json_extract(e.data, '$.published_at')))) AS published_at,
+                       COUNT(*) = COUNT(julianday(json_extract(e.data, '$.published_at')))
+                           AND MAX(julianday(json_extract(e.data, '$.published_at'))) <= julianday(?) AS visible
+                FROM transitions t
+                JOIN events ev ON ev.id=t.event_id
+                LEFT JOIN json_each(t.data, '$.evidence_ids') ref ON 1
+                LEFT JOIN evidence e ON e.id=ref.value
+                WHERE ev.topic_id=? AND ev.id=?
+                GROUP BY t.rowid ORDER BY t.rowid
+            ''', (published_at, topic_id, event_id))
+            for row in rows:
+                # Later changes may carry a future transition's state in their before_status.
+                if not row['visible']:
+                    break
+                records += 1
+                before, after = row['before_status'], row['after_status']
+                if before == after or (keyword and keyword not in (before or '').casefold() and keyword not in after.casefold()):
+                    continue
+                changes.append(dict(before_status=before[:240] if before is not None else None,
+                                    after_status=after[:240], published_at=row['published_at'],
+                                    evidence_ids=json.loads(row['evidence_ids'])))
+        return {'event_id': event_id, 'record_count': records, 'changes': list(changes)}
 
     def commit_assessment(self, topic_id, evidence_id, assessment, changes, run_id, position, attempts, fault=None):
         results = []

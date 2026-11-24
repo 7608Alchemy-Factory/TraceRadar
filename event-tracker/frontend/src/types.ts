@@ -1,5 +1,6 @@
 // API responses are defined by backend/app/domain.py. Keep these projections aligned.
 export type Topic = {
+  tags?: string[];
   topic_id: string;
   title: string;
   description: string;
@@ -156,12 +157,14 @@ export type Transition = {
   after_state: EventState;
   evidence_ids: string[];
   committed_at: string;
+  impact_reason?: string;
 };
 export type EventDetail = {
   event: Event;
   evidence: Evidence[];
   history: Transition[];
   reviews: Review[];
+  updates?: Array<Notification & { provider: Run["provider"] }>;
 };
 export type Dashboard = {
   topic: Topic;

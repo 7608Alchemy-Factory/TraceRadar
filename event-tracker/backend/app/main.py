@@ -18,6 +18,7 @@ from .orchestration import RunManager
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
 from .web_connectors import save_search_settings, search_settings_status
+from .translation import TranslationInput, translate
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
@@ -54,7 +55,12 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        if origin and (request.url.path.startswith('/api/settings/model') or request.url.path.startswith('/api/settings/search')) and request.method in ('POST','PUT'):
+        provider_route = (
+            request.url.path.startswith('/api/settings/model')
+            or request.url.path.startswith('/api/settings/search')
+            or request.url.path == '/api/translation'
+        )
+        if origin and provider_route and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
             except ValueError:
@@ -161,6 +167,16 @@ def create_app(settings=None):
     def corpora():
         return replay_catalog(config)
 
+    @app.post('/api/translation')
+    def reference_translation(body: TranslationInput):
+        with config_lock:
+            settings = replace(config)
+        return translate(settings, body)
+
+    @app.get('/api/radar')
+    def radar():
+        return repo.radar()
+
     @app.post('/api/topics', status_code=201, response_model=Topic)
     def create_topic(body: TopicInput):
         stamp = now()
@@ -177,6 +193,11 @@ def create_app(settings=None):
     @app.patch('/api/topics/{identity}', response_model=Topic)
     def patch_topic(identity: str, body: TopicPatch):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
+
+    @app.delete('/api/topics/{identity}')
+    def delete_topic(identity: str):
+        repo.delete_topic(identity)
+        return {'topic_id': identity}
 
     @app.post('/api/topics/{identity}/source-recommendations')
     def recommendations(

@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import React, { useLayoutEffect, useRef } from "react";
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -47,7 +48,13 @@ export function Icon({ name, size = 18 }: { name: string; size?: number }) {
     ),
     plus: <path d="M12 5v14M5 12h14" />,
     arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,
+    left: <path d="m14 6-6 6 6 6" />,
+    right: <path d="m10 6 6 6-6 6" />,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>,
+    moon: <path d="M20.8 15A8.8 8.8 0 0 1 9 3.2 9 9 0 1 0 20.8 15z" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
+    trash: <path d="M4 6h16m-13 0 1 14h8l1-14M9 6V4h6v2m-5 4v6m4-6v6" />,
+    pin: <path d="M8 4h8l-1 6 3 4H6l3-4-1-6ZM12 14v6" />,
     check: <path d="m5 12 4 4L19 6" />,
     play: <path d="m8 4 12 8-12 8z" />,
     help: (
@@ -91,12 +98,14 @@ export function Modal({
   children,
   wide = false,
   sheet = false,
+  compact = false,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   wide?: boolean;
   sheet?: boolean;
+  compact?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const exit = useRef<Animation | null>(null);
@@ -143,9 +152,11 @@ export function Modal({
   return (
     <dialog
       ref={ref}
-      className={`dialog ${wide ? "wide" : ""} ${sheet ? "sheet" : ""}`}
+      className={`dialog ${wide ? "wide" : ""} ${sheet ? "sheet" : ""} ${compact ? "compact" : ""}`}
       onCancel={(e) => {
+        if (e.target !== ref.current) return;
         e.preventDefault();
+        e.stopPropagation();
         dismiss();
       }}
       onClick={(e) => {
@@ -158,7 +169,7 @@ export function Modal({
           <span className="kicker">TRACERADAR</span>
           <h2>{title}</h2>
         </div>
-        <button className="icon-button" onClick={dismiss} aria-label="关闭窗口">
+        <button className="icon-button" onClick={dismiss} aria-label={t("关闭窗口")}>
           <Icon name="close" />
         </button>
       </div>

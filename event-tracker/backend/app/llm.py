@@ -16,7 +16,7 @@ class AssessmentProvider(Protocol):
     def assess(self, topic: dict, events: list[dict], evidence: dict, sources: list[dict]) -> EvidenceAssessment | Assessment: ...
 
 
-PROMPT_VERSION = 'assessment-v7'
+PROMPT_VERSION = 'assessment-v8'
 
 RETRYABLE_PROVIDER_ERRORS = frozenset({
     'PROVIDER_TIMEOUT', 'PROVIDER_NETWORK', 'PROVIDER_RATE_LIMIT', 'PROVIDER_SERVER_ERROR', 'PROVIDER_UNAVAILABLE',
@@ -135,6 +135,8 @@ def assessment_prompt():
             'For major_milestone, always supply the new proposed_state.current_status for a material change supported by current evidence, '
             'such as a confirmed agreement/completion, official decision, patch release or incident resolution. '
             'Do not promote a rumor or a repeat report to a major milestone. '
+            'For new_fact, give an impact_reason in one short sentence comparing the supported change with the prior conclusion. '
+            'Base the explanation on the supplied evidence and earlier state, using the language of the topic goal. '
             'Do not assert facts beyond current evidence and the supplied prior state. '
             'Use reason_codes to record concise decision labels; do not output private chain-of-thought.')
 

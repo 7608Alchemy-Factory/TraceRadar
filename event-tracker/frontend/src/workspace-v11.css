@@ -608,8 +608,8 @@ button:not(:disabled) {
   opacity: 1;
 }
 .tag.ai-pick {
-  background: #e3f5ec;
-  color: #145c43;
-  border: 1px solid #9fd3bb;
+  background: var(--green-bg, #e3f5ec);
+  color: var(--green, #145c43);
+  border: 1px solid color-mix(in srgb, var(--green, #145c43) 32%, transparent);
   font-weight: 600;
 }

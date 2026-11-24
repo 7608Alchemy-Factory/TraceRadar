@@ -1,0 +1,20 @@
+{
+  "schema_version": "2.0",
+  "case_id": "REPLACE_WITH_CASE_ID",
+  "annotation_status": "draft",
+  "events": [
+    {"event_key": "event_a", "boundary": "What belongs to this independently tracked event"}
+  ],
+  "evidence_labels": [
+    {"item_id": "ITEM-01", "relevance": "relevant", "event_keys": ["event_a"], "duplicate_of": null, "provenance_status": "verified", "scoring_exclusions": []}
+  ],
+  "claims": [
+    {"claim_id": "claim_a", "event_key": "event_a", "statement": "A fact the agent should represent accurately", "supporting_item_ids": ["ITEM-01"], "first_visible_stage_id": "stage_1"}
+  ],
+  "stage_expectations": [
+    {"stage_id": "stage_1", "events": [{"event_key": "event_a", "lifecycle_status": "active", "state_facets": {}, "required_claim_ids": ["claim_a"], "forbidden_assertions": []}]}
+  ],
+  "milestones": [
+    {"milestone_id": "milestone_a", "event_key": "event_a", "stage_id": "stage_1", "supporting_item_ids": ["ITEM-01"], "trigger_type": "evidence", "expected_action": "digest", "reason": "Why one notification is appropriate"}
+  ]
+}

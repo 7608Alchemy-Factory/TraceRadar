@@ -46,16 +46,15 @@ npm run dev
 
 Open http://127.0.0.1:5173. API documentation: http://127.0.0.1:8000/docs. Vite proxies `/api` to port 8000. If ports conflict, change the API port and proxy target together in `frontend/vite.config.ts`; change the Vite server port there as needed.
 
-## Fixed demo
+## Frontend storyboard
 
-1. Select **看懂这个演示** in the sidebar, then **新建一个干净的三步演示**. ExampleSoft content, URLs, dates and sources are fictional simulated input; both fixture sources are approved automatically.
-2. Keep **规则演示** selected.
-3. Run **发现事件**, **补充与归类**, then **修复与冲突**, waiting for each to complete.
-4. Expect 2 events, 4 transitions, 3 digest notifications, 1 immediate notification and 2 review records. Event A becomes patched; conflicting and unclear reports never overwrite confirmed state.
-5. Inspect Event A for the four state fields, raw evidence, duplicate/conflicting relations and before/after history. Expand Trace steps to see actual decisions, references, attempt and timestamps.
-6. Run the same batches again. Event, transition and notification counts stay unchanged. Refresh or restart to verify persistence.
+Open [the screen and motion storyboard](docs/frontend-1124-storyboard.html) in a browser to walk through the screens and transitions. The top-right language and theme settings are saved in the current browser. Article and user-entered text retain their source language.
 
-Notifications are in-app decisions only. Digest means a list of routine updates. No email, scheduled summary or phone delivery is implemented.
+## Topic management
+
+Use **New topic** to add one or more topic types, or enter a custom tag. Type filters on the homepage match tagged topics and show starter ideas for the built-in categories. Existing tags can be edited with the tracking goal.
+
+The sidebar and each topic page offer **Delete topic**. Deletion requires confirmation and removes the topic's events, runs and reviews while retaining shared evidence and sources. A topic with an active run cannot be deleted. Fixtures remain available to the API and automated tests.
 
 ## Checks
 
@@ -86,7 +85,7 @@ To generate the Hong Kong McDonald's benchmark report from `event-tracker/backen
 .\.venv\Scripts\python.exe ..\scripts\run_benchmark.py --provider mock
 ```
 
-Each stage lists every visible evidence item and its processing outcome. Use `--provider qwen` to run with your configured model. The draft labels and Mock run are for development checks.
+Each run writes `report.json` with processing outcomes and counts, plus `review.md` with stage-by-stage expected claims, actual Event facts/status, citation structure, and notification checks for human adjudication. Use `--cases mcd_hk_campaigns_v1 --provider qwen` to run the frozen MCD case with your configured model; `qwen` is the legacy provider identifier. Mock runs are pipeline checks, not semantic scores. Frozen input hashes are checked against the case manifest. The evaluation design for future live search is in `evaluation/ONLINE_EVALUATION_DESIGN.zh-CN.md`.
 
 ## Model setup
 
@@ -123,3 +122,9 @@ See `docs/decisions.md`, `data_contracts.md`, `api_contracts.md`, `progress.md` 
 ## Current limits
 
 Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. In **检查历史**, select a failed run and use **续跑未完成证据** to retry failed and unattempted items from its saved input snapshot. SQLite schema version 3 adds run input snapshots. Changed content at an existing source external ID requires a new revision ID. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.
+
+## Event radar, reports and translations
+
+The homepage radar shows recent recorded events. Its dot positions represent display order and do not encode locations. The topic report uses the same stored update classifications as event milestones. Items awaiting verification are counted separately.
+
+The interface language can request model translations for workspace text. Article translations are requested from the evidence dialog and labeled as a reference. These requests use the configured model provider and leave the source text intact.

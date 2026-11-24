@@ -1,3 +1,5 @@
+import { EventRadar } from "./radar";
+import { useTranslation } from "./reference-translation";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { CoverImage } from "./covers";
@@ -57,6 +59,7 @@ type HomeProps = {
 export function ProjectHome({
   topics, loading, busy, feedback, preferences, onHome, onTopic, onNew, onDemo, onReplay, onSettings,
 }: HomeProps) {
+  const tr = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
   const reel = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
@@ -67,6 +70,13 @@ export function ProjectHome({
     if (!element) return;
     function update() {
       if (!element) return;
+      const midpoint = element.scrollLeft + element.clientWidth / 2;
+      element.querySelectorAll("li").forEach((frame) => {
+        const position = (frame.offsetLeft + frame.offsetWidth / 2 - midpoint) / Math.max(1, element.clientWidth / 2);
+        const relative = Math.max(-1.1, Math.min(1.1, position));
+        frame.style.setProperty("--reel-angle", `${relative * -21}deg`);
+        frame.style.setProperty("--reel-shift", `${relative * 42}px`);
+      });
       setEdges({
         start: element.scrollLeft <= 2,
         end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2,
@@ -142,7 +152,7 @@ export function ProjectHome({
             <p className="home-description">{t("按主题追踪新闻，按时间查看事件进展和证据。")}</p>
             <a className="browse-topics" href="#projects-title">{t("浏览主题")}</a>
           </div>
-          <CoverImage className="home-radar" />
+          <EventRadar topics={topics} onTopic={onTopic} />
         </section>
 
         <section className="projects-section" aria-labelledby="projects-title">
@@ -173,8 +183,8 @@ export function ProjectHome({
                         <CoverImage topic={topic} className="frame-cover" />
                         <div className="frame-copy">
                           <span className={`frame-status ${topic.status}`}><i aria-hidden="true" />{status(topic.status)}</span>
-                          <h3>{topicTitle(topic.title)}</h3>
-                          <p>{topicDescription(topic.description)}</p>
+                          <h3>{tr(topicTitle(topic.title))}</h3>
+                          <p>{tr(topicDescription(topic.description))}</p>
                           <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
                         </div>
                       </a>

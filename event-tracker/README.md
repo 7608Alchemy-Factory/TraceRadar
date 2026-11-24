@@ -127,3 +127,9 @@ See `docs/decisions.md`, `data_contracts.md`, `api_contracts.md`, `progress.md` 
 ## Current limits
 
 Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. In **检查历史**, select a failed run and use **续跑未完成证据** to retry failed and unattempted items from its saved input snapshot. SQLite schema version 3 adds run input snapshots. Changed content at an existing source external ID requires a new revision ID. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.
+
+## Event radar, reports and translations
+
+The homepage radar shows recent recorded events. Its dot positions represent display order and do not encode locations. The topic report uses the same stored update classifications as event milestones. Items awaiting verification are counted separately.
+
+The interface language can request model translations for workspace text. Article translations are requested from the evidence dialog and labeled as a reference. These requests use the configured model provider and leave the source text intact.

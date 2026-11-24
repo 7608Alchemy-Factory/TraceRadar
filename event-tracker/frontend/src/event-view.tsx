@@ -1,3 +1,4 @@
+import { ReferenceTranslation, useTranslation } from "./reference-translation";
 import { t } from "./i18n";
 import React from "react";
 import type { EventDetail, EvidenceDecision } from "./types";
@@ -20,6 +21,7 @@ export function EventView({
   value: EventDetail;
   onEvidence: (id: string) => void;
 }) {
+  const tr = useTranslation();
   const e = value.event;
   const latestTransition = value.history[value.history.length - 1];
   const latestRunTransitions = latestTransition?.run_id
@@ -54,12 +56,12 @@ export function EventView({
         <span className="meta">
           {t("版本 v")}{e.version} {t("· 更新于")} {date(e.updated_at)}
         </span>
-        <h2>{title(e.title)}</h2>
+        <h2>{tr(title(e.title))}</h2>
         <div
           className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
         >
           <strong>{t("当前状态 ·")} </strong>
-          {status(e.state.current_status)}
+          {tr(status(e.state.current_status))}
         </div>
       </div>
       <EventTimeline value={value} onEvidence={onEvidence} />
@@ -77,7 +79,7 @@ export function EventView({
                   <li key={i} className={isNew ? "fact-new" : ""}>
                     <span>
                       {isNew && <span className="new-pill">{t("本轮新增")}</span>}
-                      {text(f.fact)}
+                      {tr(text(f.fact))}
                     </span>
                     <span className="citation-group">
                       {f.evidence_ids.map((id) => (
@@ -124,12 +126,12 @@ export function EventView({
                   </summary>
                   {added.map((f, i) => (
                     <p className="diff-added" key={i}>
-                      ＋ {text(f.fact)}
+                      ＋ {tr(text(f.fact))}
                     </p>
                   ))}
                   {removed.map((f, i) => (
                     <p className="diff-removed" key={i}>
-                      − {text(f.fact)}
+                      − {tr(text(f.fact))}
                     </p>
                   ))}
                   <details className="quiet-details">
@@ -160,7 +162,7 @@ export function EventView({
                   : "·"}
               </span>
               <span>
-                <strong>{headline(ev.title)}</strong>
+                <strong>{tr(headline(ev.title))}</strong>
                 <small>
                   {ev.source_id} · {date(ev.published_at, false)}
                 </small>
@@ -194,6 +196,7 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
         <time>{date(e.published_at)}</time>
       </div>
       <h2>{headline(e.title)}</h2>
+      <ReferenceTranslation key={e.evidence_id} title={e.title} body={e.content} />
       <p className="article-body">{text(e.content)}</p>
       {url && (
         <a

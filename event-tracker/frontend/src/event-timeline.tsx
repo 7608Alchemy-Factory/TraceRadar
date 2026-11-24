@@ -2,6 +2,8 @@ import { t } from "./i18n";
 import { useLayoutEffect, useRef, useState } from "react";
 import { headline, longDate, status, text } from "./display";
 import type { EventDetail, TimelineItem, Transition } from "./types";
+import { priorityLabel, type Priority } from "./topic-report";
+import { useTranslation } from "./reference-translation";
 
 type Tone = "first" | "update" | "resolved" | "review";
 type Milestone = {
@@ -14,6 +16,9 @@ type Milestone = {
   evidenceIds: string[];
   previous?: string;
   next?: string;
+  impact: Priority | "review";
+  reason?: string;
+  origin?: string;
 };
 
 const entryKey = (item: TimelineItem) =>
@@ -34,13 +39,14 @@ function changeBadge(transition: Transition): Pick<Milestone, "tone" | "label" |
   return { tone: "first", label: t("状态变化"), previous, next };
 }
 
-function milestones({ event, history, reviews }: EventDetail): Milestone[] {
+function milestones({ event, history, reviews, updates }: EventDetail): Milestone[] {
+  const assessments = new Map(updates?.map((update) => [update.transition_id, update]));
   const confirmed = new Map<string, Milestone>();
   for (const item of event.state.timeline) {
     const id = entryKey(item);
     confirmed.set(id, {
       id, at: item.occurred_at, dateLabel: t("进展日期"), tone: "update", label: t("进展更新"),
-      description: headline(item.description), evidenceIds: item.evidence_ids,
+      description: headline(item.description), evidenceIds: item.evidence_ids, impact: "low",
     });
   }
 
@@ -50,7 +56,21 @@ function milestones({ event, history, reviews }: EventDetail): Milestone[] {
     const newItems = transition.after_state.timeline
       .filter((item) => !oldItems.has(entryKey(item)))
       .sort((a, b) => sortDate(b.occurred_at, a.occurred_at));
-    const badge = changeBadge(transition);
+    const update = assessments.get(transition.transition_id);
+    const kind = update?.reason_codes[0];
+    const impact: Priority = update?.priority === "breaking" ? "breaking" :
+      update?.priority === "routine" ? "routine" : "low";
+    const badge = {
+      ...changeBadge(transition),
+      impact: !update && !transition.before_state ? "routine" as const : impact,
+      reason: transition.impact_reason ?? (kind === "major_milestone" ? t("核心结论或事件阶段发生实质变化。") :
+        kind === "fact_added" ? t("新增可影响理解的事实，保留原有核心结论。") :
+        !transition.before_state ? t("首次建立事件及其证据基线。") :
+        t("补充记录或细节，对核心结论的影响有限。")),
+      origin: t(transition.impact_reason && update?.provider === "qwen" ? "模型归类与说明" :
+        update?.provider === "qwen" ? "模型归类 · 规则解释" :
+        update?.provider === "human" ? "人工归类 · 规则解释" : "依据已记录的变化"),
+    };
     const stage = newItems.find((item) => confirmed.has(entryKey(item)));
     if (stage) {
       Object.assign(confirmed.get(entryKey(stage))!, badge);
@@ -77,7 +97,7 @@ function milestones({ event, history, reviews }: EventDetail): Milestone[] {
   const pending = reviews.map(({ evidence, assessment }): Milestone => ({
     id: `review-${evidence.evidence_id}`, at: evidence.published_at, dateLabel: t("报道日期"),
     description: [headline(evidence.title), ...assessment.conflicts.map(text)].join("\n"),
-    label: t("待审核"), tone: "review", evidenceIds: [evidence.evidence_id],
+    label: t("待审核"), tone: "review", evidenceIds: [evidence.evidence_id], impact: "review",
   }));
   return [...confirmed.values(), ...checkpoints, ...pending].sort((a, b) => sortDate(a.at, b.at));
 }
@@ -85,6 +105,7 @@ function milestones({ event, history, reviews }: EventDetail): Milestone[] {
 export function EventTimeline({
   value, onEvidence,
 }: { value: EventDetail; onEvidence: (id: string) => void }) {
+  const tr = useTranslation();
   const nodes = milestones(value);
   const [chosenId, setChosenId] = useState("");
   const rail = useRef<HTMLOListElement>(null);
@@ -128,7 +149,7 @@ export function EventTimeline({
           <ol className="milestone-rail" ref={rail} aria-label={t("事件进展时间轴")}>
             {nodes.map((node, i) => (
               <li key={node.id}>
-                <button type="button" data-tone={node.tone} aria-controls="milestone-detail"
+                <button type="button" data-tone={node.tone} data-impact={node.impact} aria-controls="milestone-detail"
                   aria-pressed={node.id === selected.id} onClick={() => setChosenId(node.id)}
                   onKeyDown={(event) => {
                     const nextIndex = { ArrowLeft: i - 1, ArrowRight: i + 1, Home: 0, End: nodes.length - 1 }[event.key];
@@ -141,21 +162,25 @@ export function EventTimeline({
                   }}>
                   <span className="milestone-light" aria-hidden="true"><i /></span>
                   <time dateTime={node.at}>{longDate(node.at)}</time>
-                  <span className="milestone-label">{node.label}</span>
+                  <span className="milestone-label">{node.impact === "review" ? node.label : priorityLabel(node.impact)}</span>
                 </button>
               </li>
             ))}
           </ol>
-          <div className="milestone-detail" data-tone={selected.tone} id="milestone-detail" aria-live="polite">
+          <div className="milestone-detail" data-tone={selected.tone} data-impact={selected.impact} id="milestone-detail" aria-live="polite">
             <div key={selected.id} className="milestone-content">
               <div className="milestone-meta">
-                <span>{selected.label}</span>
+                <span>{selected.impact === "review" ? selected.label : priorityLabel(selected.impact)}</span>
                 <time dateTime={selected.at}>{selected.dateLabel} {longDate(selected.at)}</time>
               </div>
-              <p>{selected.description}</p>
+              <p>{tr(selected.description)}</p>
+              {selected.reason && <p className="milestone-note">{tr(selected.reason)} <small>· {selected.origin}</small></p>}
               {selected.tone === "review" && <p className="milestone-note">{t("这条报道等待核实，事件当前结论仍以已记录的进展为准。")}</p>}
-              {selected.next && selected.next !== selected.label && (
-                <p className="milestone-note">{selected.previous ? t("状态由「{0}」更新为「{1}」。", selected.previous, selected.next) : t("记录时的状态为「{0}」。", selected.next)}</p>
+              {selected.next && (
+                <details className="milestone-note">
+                  <summary>{t("查看前后结论")}</summary>
+                  <p>{selected.previous ? t("状态由「{0}」更新为「{1}」。", tr(selected.previous), tr(selected.next)) : t("记录时的状态为「{0}」。", tr(selected.next))}</p>
+                </details>
               )}
               {!!selected.evidenceIds.length && (
                 <div className="milestone-evidence" aria-label={t("新闻依据")}>
@@ -164,7 +189,7 @@ export function EventTimeline({
                     const label = item && headline(item.title);
                     return (
                       <button key={id} type="button" onClick={() => onEvidence(id)}>
-                        {!label || selected.description.startsWith(label) ? t("查看这条新闻的依据") : label}
+                        {!label || selected.description.startsWith(label) ? t("查看这条新闻的依据") : tr(label)}
                       </button>
                     );
                   })}

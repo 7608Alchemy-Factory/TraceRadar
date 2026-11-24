@@ -17,6 +17,7 @@ from .llm import get_provider
 from .orchestration import RunManager
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
+from .translation import TranslationInput, translate
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
@@ -45,7 +46,8 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        if origin and request.url.path.startswith('/api/settings/model') and request.method in ('POST','PUT'):
+        provider_route = request.url.path.startswith('/api/settings/model') or request.url.path == '/api/translation'
+        if origin and provider_route and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
             except ValueError:
@@ -109,6 +111,16 @@ def create_app(settings=None):
     @app.get('/api/replay/corpora')
     def corpora():
         return replay_catalog(config)
+
+    @app.post('/api/translation')
+    def reference_translation(body: TranslationInput):
+        with config_lock:
+            settings = replace(config)
+        return translate(settings, body)
+
+    @app.get('/api/radar')
+    def radar():
+        return repo.radar()
 
     @app.post('/api/topics', status_code=201, response_model=Topic)
     def create_topic(body: TopicInput):

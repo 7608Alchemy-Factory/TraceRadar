@@ -151,6 +151,8 @@ class StateManager:
         transition = dict(transition_id=uid(), event_id=event['event_id'], run_id=run_id,
                           before_state=existing['state'] if existing else None, after_state=state,
                           evidence_ids=[evidence['evidence_id']], idempotency_key=key, committed_at=stamp)
+        if a.impact_reason and a.impact_reason.strip():
+            transition['impact_reason'] = a.impact_reason.strip()
         priority, action, reasons = decide_notification(proposal.update_kind, topic['notification_preferences'])
         notification = dict(notification_id=uid(), topic_id=topic['topic_id'], event_id=event['event_id'],
                             transition_id=transition['transition_id'], priority=priority, action=action,

@@ -1,3 +1,6 @@
+import { WorkspaceClock } from "./clock";
+import { TopicReport } from "./topic-report";
+import { TranslationContext, useWorkspaceTranslation } from "./reference-translation";
 import { applyTheme, initialTheme, locale, setLocale, t, type Locale } from "./i18n";
 import { flushSync } from "react-dom";
 import { CoverImage } from "./covers";
@@ -49,6 +52,7 @@ import "./style.css";
 import "./workspace-v11.css";
 import "./radar.css";
 import "./signal.css";
+import "./operations.css";
 
 const tabs = [
   ["overview", "概览", "grid"],
@@ -57,6 +61,7 @@ const tabs = [
   ["review", "待审核", "review"],
   ["sources", "信息源", "sources"],
   ["activity", "运行记录", "activity"],
+  ["report", "追踪报告", "evidence"],
 ] as const;
 type Tab = (typeof tabs)[number][0];
 const fixtureOnly = (sources: Source[]) =>
@@ -104,9 +109,14 @@ document.documentElement.dataset.theme = initialTheme();
 function App() {
   const [language, setLanguage] = useState(locale);
   const [theme, setTheme] = useState(initialTheme);
-  const preferences = <Preferences language={language} theme={theme}
-    onLanguage={(value: Locale) => { setLocale(value); setLanguage(value); }}
-    onTheme={(value) => { applyTheme(value); setTheme(value); }} />;
+  const [translateContent, setTranslateContent] = useState(() => localStorage.getItem("traceradar-content-translation") === "on");
+  function toggleTranslation(value: boolean) {
+    localStorage.setItem("traceradar-content-translation", value ? "on" : "off");
+    setTranslateContent(value);
+  }
+  const preferences = <><WorkspaceClock /><Preferences language={language} theme={theme}
+    onLanguage={(value: Locale) => { setLocale(value); setLanguage(value); toggleTranslation(true); }}
+    onTheme={(value) => { applyTheme(value); setTheme(value); }} /></>;
 
   const [topics, setTopics] = useState<Topic[]>([]),
     [selected, setSelected] = useState(""),
@@ -647,12 +657,22 @@ function App() {
       setToast(t("演示已准备好。从「第一步：发现事件」开始。"));
     });
   }
+  const { lookup: tr, failed: translationFailed } = useWorkspaceTranslation(language, [
+    ...topics.flatMap((item) => [item.title, item.description]),
+    ...(dashboard?.events ?? []).flatMap((item) => [item.title, item.state.current_status, item.state.key_facts.at(-1)?.fact ?? ""]),
+    ...(event ? [event.event.title, event.event.state.current_status,
+      ...event.event.state.key_facts.map((item) => item.fact),
+      ...event.event.state.timeline.map((item) => item.description),
+      ...event.history.flatMap((item) => item.impact_reason ? [item.impact_reason] : [])] : []),
+    ...evidence.slice(0, 40).map((item) => item.evidence.title),
+  ], translateContent && !!model?.configured);
+
   const selectedEvidence = evidence.find(
     (e) => e.evidence.evidence_id === evidenceId,
   );
   const search = query.trim().toLowerCase();
   const events = (dashboard?.events ?? []).filter((e) =>
-    `${e.title} ${eventTitle(e.title)} ${e.state.current_status} ${status(e.state.current_status)} ${e.state.key_facts.map((fact) => text(fact.fact)).join(" ")}`
+    `${e.title} ${tr(eventTitle(e.title))} ${e.state.current_status} ${tr(status(e.state.current_status))} ${e.state.key_facts.map((fact) => text(fact.fact)).join(" ")}`
       .toLowerCase()
       .includes(search),
   );
@@ -691,13 +711,13 @@ function App() {
               onClick={() => void openEvent(e.event_id)}
             >
               <span className="event-row-main">
-                <strong>{eventTitle(e.title)}</strong>
-                <span>{text(e.state.key_facts.at(-1)?.fact ?? "")}</span>
+                <strong>{tr(eventTitle(e.title))}</strong>
+                <span>{tr(text(e.state.key_facts.at(-1)?.fact ?? ""))}</span>
               </span>
               <span
                 className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
               >
-                {status(e.state.current_status)}
+                {tr(status(e.state.current_status))}
               </span>
               <span className="event-row-meta">
                 {e.state.timeline.length} {t("条进展")}
@@ -890,6 +910,14 @@ function App() {
     </div>
   );
 
+  const translationToggle = (
+    <button type="button" className="translation-switch" disabled={!model?.configured}
+      title={!model?.configured || translationFailed ? t("翻译暂不可用，请检查模型配置后重试。") : t("机器参考译文")}
+      aria-pressed={translateContent && !!model?.configured}
+      onClick={() => toggleTranslation(!translateContent)}>
+      {t(translationFailed ? "翻译未完成" : translateContent && model?.configured ? "显示原文" : "翻译当前内容")}
+    </button>
+  );
   const currentTopic = dashboard?.topic ?? topics.find((topic) => topic.topic_id === selected);
   const workspaceView = (
     <>
@@ -916,7 +944,7 @@ function App() {
               onClick={() => selectTopic(t.topic_id)}
             >
               <span className="topic-dot" />
-              <span>{topicTitle(t.title)}</span>
+              <span>{tr(topicTitle(t.title))}</span>
             </button>
           ))}
           {!topics.length && <p className="sidebar-hint">{t("创建第一个追踪主题")}</p>}
@@ -956,6 +984,7 @@ function App() {
           </div>
           <div className="topbar-actions">
             {preferences}
+            {translationToggle}
             <button
               className="icon-button mobile-replay"
               aria-label={t("准备语料回放")}
@@ -974,12 +1003,13 @@ function App() {
           </div>
         </header>
         <main>
-          <div className="page-heading">
+          <div className="page-heading topic-heading">
+            {currentTopic && <CoverImage topic={currentTopic} className="topic-banner" />}
             <div>
               <h1 id="topic-title" tabIndex={-1}>
-                {currentTopic ? topicTitle(currentTopic.title) : t("追踪主题")}
+                {currentTopic ? tr(topicTitle(currentTopic.title)) : t("追踪主题")}
               </h1>
-              {currentTopic && <p>{topicDescription(currentTopic.description)}</p>}
+              {currentTopic && <p>{tr(topicDescription(currentTopic.description))}</p>}
             </div>
             {dashboard && (
               <button
@@ -991,7 +1021,6 @@ function App() {
               </button>
             )}
           </div>
-          {currentTopic && <CoverImage topic={currentTopic} className="topic-banner" />}
           {feedback}
           {loading && <p className="loading">{t("正在读取工作区…")}</p>}
           {dashboard && (
@@ -1284,7 +1313,7 @@ function App() {
                                 {String(i + 1).padStart(2, "0")}
                               </span>
                               <span>
-                                <strong>{headline(v.evidence.title)}</strong>
+                                <strong>{tr(headline(v.evidence.title))}</strong>
                                 <small>
                                   {v.evidence.source_id} ·{" "}
                                   {date(v.evidence.published_at)}
@@ -1647,10 +1676,10 @@ function App() {
                     </div>
                   );
                 })()}
+                {tab === "report" && <TopicReport dashboard={dashboard} notices={notices} onEvent={(id) => void openEvent(id)} />}
                 {tab === "activity" && (
                   <div className="activity-layout">
                     <section className="run-list">
-                      <span className="kicker">SESSIONS</span>
                       <h2>{t("检查历史")}</h2>
                       {dashboard.recent_runs.map((r) => (
                         <button
@@ -1695,12 +1724,13 @@ function App() {
                               {date(run.run.started_at)}
                             </span>
                           </div>
-                          <div className="run-summary">
-                            {t("读取")} <b>{run.run.counts.fetched ?? 0}</b> {t("· 状态更新")}{" "}
-                            <b>{run.run.counts.committed ?? 0}</b> {t("· 跳过")}{" "}
-                            <b>{run.run.counts.skipped ?? 0}</b> {t("· 待审")}{" "}
-                            <b>{run.run.counts.review ?? 0}</b>
-                          </div>
+                          <dl className="run-metrics">
+                            {([
+                              ["读取", run.run.counts.fetched], ["已记录更新", run.run.counts.committed],
+                              ["跳过", run.run.counts.skipped], ["待审核", run.run.counts.review],
+                            ] as const).map(([label, count]) => <div key={label}><dt>{t(label)}</dt><dd>{count ?? 0}</dd></div>)}
+                          </dl>
+                          <h3 className="run-stage-title">{t("执行步骤")} <span>{run.steps.length}</span></h3>
                           {run.run.error != null && (
                             <pre className="error">{pretty(run.run.error)}</pre>
                           )}
@@ -1742,7 +1772,7 @@ function App() {
                                 <span className={`trace-dot ${s.status}`} />
                                 <details>
                                   <summary>
-                                    <span>{stepLabel(s.step_name)}</span>
+                                    <span className="trace-stage"><b>{String(s.sequence).padStart(2, "0")}</b>{stepLabel(s.step_name)}</span>
                                     <span className="meta">
                                       {status(s.status)} · {s.attempt} {t("次")}
                                     </span>
@@ -1796,14 +1826,14 @@ function App() {
   );
 
   return (
-    <div className="workspace">
+    <TranslationContext.Provider value={tr}><div className="workspace">
       {!selected ? (
         <ProjectHome
           topics={topics}
           loading={loading}
           busy={busy}
           feedback={feedback}
-          preferences={preferences}
+          preferences={<>{preferences}{translationToggle}</>}
           onHome={() => navigateTopic("")}
           onTopic={navigateTopic}
           onNew={() => showDialog("new")}
@@ -2008,7 +2038,7 @@ function App() {
           <EvidenceView value={selectedEvidence} />
         </Modal>
       )}
-    </div>
+    </div></TranslationContext.Provider>
   );
 }
 createRoot(document.getElementById("root")!).render(

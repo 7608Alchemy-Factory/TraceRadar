@@ -403,13 +403,28 @@ class Repository:
             items = [json.loads(r[0]) for r in db.execute('SELECT data FROM notifications WHERE topic_id=? ORDER BY rowid DESC', (topic_id,))]
         return [n for n in items if not action or n['action'] == action]
 
+    def radar(self):
+        with self.connection() as db:
+            rows = db.execute("""
+                SELECT data FROM events
+                ORDER BY json_extract(data, '$.updated_at') DESC, rowid DESC LIMIT 9
+            """)
+            return [
+                {key: event[key] for key in ('event_id', 'topic_id', 'title', 'updated_at')}
+                for event in (json.loads(row[0]) for row in rows)
+            ]
+
     def event_detail(self, identity):
         event = self.get('events', identity)
         with self.connection() as db:
             history = [json.loads(r[0]) for r in db.execute('SELECT data FROM transitions WHERE event_id=? ORDER BY rowid', (identity,))]
             evidence = [dict(json.loads(r[0]), relation=r[1]) for r in db.execute('''SELECT e.data,ee.relation FROM evidence e
                 JOIN event_evidence ee ON e.id=ee.evidence_id WHERE ee.event_id=? ORDER BY e.rowid''', (identity,))]
-        return dict(event=event, history=history, evidence=evidence, reviews=self.reviews(event['topic_id'], identity))
+            updates = [dict(json.loads(row['notice']), provider=json.loads(row['run'])['provider'])
+                       for row in db.execute('''SELECT n.data AS notice, r.data AS run
+                           FROM notifications n JOIN transitions t ON t.id=n.transition_id
+                           JOIN runs r ON r.id=t.run_id WHERE n.event_id=?''', (identity,))]
+        return dict(event=event, history=history, evidence=evidence, updates=updates, reviews=self.reviews(event['topic_id'], identity))
 
     def reviews(self, topic_id, event_id=None):
         with self.connection() as db:

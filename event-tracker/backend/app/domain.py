@@ -133,6 +133,7 @@ class EventDecision(Model):
     requires_review: bool = False
     reason_codes: list[str]
     update_kind: UpdateKind | None = None
+    impact_reason: str | None = Field(default=None, max_length=280)
     expected_version: int | None = None
 
 

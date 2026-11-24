@@ -43,6 +43,8 @@ export const status = (value: string) =>
     completed: t("已完成"),
     completed_with_errors: t("部分失败"),
     running: t("运行中"),
+    processing: t("处理中"),
+    skipped: t("跳过"),
     pending: t("等待中"),
     failed: t("失败"),
     failed_retryable: t("服务故障，可重试"),

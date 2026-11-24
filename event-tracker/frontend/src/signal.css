@@ -151,44 +151,16 @@ body, .workspace { color: var(--ink); }
 .browse-topics:hover { text-decoration: underline; text-underline-offset: 4px; }
 .cover-art {
   position: relative;
-  overflow: hidden;
-  isolation: isolate;
-  container-type: inline-size;
-  color: #525252;
-  background: #fff;
-}
-.cover-print, .cover-glyphs {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  display: grid;
+  place-items: center start;
+  min-width: 0;
 }
 .cover-print {
-  background: url("/covers/risograph-sheet.webp") var(--cover-position) / 200% 300% no-repeat;
-  filter: grayscale(1) contrast(1.04);
-}
-.cover-glyphs {
-  font: clamp(6px, 1.4cqw, 10px)/1 var(--mono);
-  opacity: .64;
-  pointer-events: none;
-}
-.cover-glyphs > span { position: absolute; }
-.home-hero .home-radar {
   display: block;
+  width: min(100%, 250px);
+  height: 100%;
   min-height: 0;
-  aspect-ratio: 1.75;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  box-shadow: 0 16px 36px #13100d16;
-  animation: none;
-  background: #fff;
-}
-.home-radar .cover-print {
-  height: auto;
-  aspect-ratio: 2.25;
-  top: 50%;
-  bottom: auto;
-  translate: 0 -50%;
+  object-fit: contain;
 }
 .reel {
   background: #24242b;
@@ -206,17 +178,6 @@ body, .workspace { color: var(--ink); }
 .frame-status { color: var(--orange); }
 .frame-status.active { color: var(--green); }
 .reel-empty { border-color: var(--line); }
-.topic-banner {
-  height: clamp(85px, 10vw, 148px);
-  margin-bottom: 18px;
-  border-radius: 8px;
-}
-.topic-banner .cover-print {
-  width: min(100%, 46vh, 530px);
-  left: 50%;
-  translate: -50% 0;
-}
-.topic-banner .cover-glyphs { display: none; }
 ::view-transition-group(topic-cover) { animation-duration: .49s; animation-timing-function: var(--motion-out); }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .24s; }
 
@@ -279,7 +240,6 @@ body, .workspace { color: var(--ink); }
   .home-hero { grid-template-columns: 1fr; gap: 0; min-height: 0; }
   .home-intro h1 { font-size: clamp(2.7rem, 10.5vw, 4rem); }
   .home-intro { padding-bottom: 10px; }
-  .home-hero .home-radar { max-height: none; aspect-ratio: 2; }
   .topbar { height: auto; min-height: 50px; flex-wrap: wrap; gap: 4px; }
   .topbar-actions { margin-inline-start: auto; flex-wrap: wrap; }
 }

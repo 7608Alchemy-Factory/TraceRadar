@@ -99,7 +99,7 @@ export type ReviewResolution = {
   resolution_id: string;
   evidence_id: string;
   decision: "dismiss" | "accept";
-  note: string;
+  note: string | null;
   actor: string;
   resolved_at: string;
   original_assessment: Assessment | EvidenceAssessment;
@@ -125,7 +125,7 @@ export type Run = {
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string }; resume_of?: string };
+  snapshot: { options?: { as_of?: string }; resume_of?: string; sources?: Source[] };
 };
 export type Step = {
   step_id: string;

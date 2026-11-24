@@ -13,6 +13,13 @@ def dump(value):
     return json.dumps(value, ensure_ascii=False)
 
 
+def pending_review_decisions(assessment):
+    if 'event_decisions' not in assessment:
+        return [assessment]
+    return [decision for decision in assessment['event_decisions'] if decision['requires_review']
+            or decision['conflicts'] or decision['novelty'] == 'conflict' or decision['association']['type'] == 'unresolved']
+
+
 class Repository:
     def __init__(self, path):
         self.path = str(path)
@@ -284,6 +291,30 @@ class Repository:
     def events(self, topic_id):
         with self.connection() as db:
             return [json.loads(r[0]) for r in db.execute('SELECT data FROM events WHERE topic_id=? ORDER BY rowid', (topic_id,))]
+
+    def delete_event(self, identity):
+        with self.connection(True) as db:
+            event = db.execute('SELECT topic_id FROM events WHERE id=?', (identity,)).fetchone()
+            if not event:
+                raise AppError('NOT_FOUND', 'Event not found.', 404)
+            topic_id = event['topic_id']
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before deleting the event.')
+
+            db.execute('DELETE FROM notifications WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM transitions WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM event_evidence WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM events WHERE id=?', (identity,))
+
+            # Keep the original assessment for evidence history. Close a review only when
+            # deleting this event leaves it without any live or unassigned decisions.
+            remaining = {row[0] for row in db.execute('SELECT id FROM events WHERE topic_id=?', (topic_id,))}
+            pending = db.execute("SELECT evidence_id,assessment FROM topic_evidence WHERE topic_id=? AND status='review'", (topic_id,))
+            for row in pending.fetchall():
+                ids = {decision['association']['event_id'] for decision in pending_review_decisions(json.loads(row['assessment']))}
+                if identity in ids and None not in ids and not ids.intersection(remaining):
+                    db.execute("UPDATE topic_evidence SET status='completed' WHERE topic_id=? AND evidence_id=?",
+                               (topic_id, row['evidence_id']))
 
     def topic_evidence_items(self, topic_id):
         with self.connection() as db:
@@ -557,6 +588,15 @@ class Repository:
                 if changed.rowcount:
                     suppressed += 1
 
+            # Also close any pending review rows whose decisions only referenced this removed event.
+            remaining = {r[0] for r in db.execute('SELECT id FROM events WHERE topic_id=?', (topic_id,))}
+            pending = db.execute("SELECT evidence_id,assessment FROM topic_evidence WHERE topic_id=? AND status='review'", (topic_id,))
+            for prow in pending.fetchall():
+                ids = {decision['association']['event_id'] for decision in pending_review_decisions(json.loads(prow['assessment']))}
+                if identity in ids and None not in ids and not ids.intersection(remaining):
+                    db.execute("UPDATE topic_evidence SET status='completed' WHERE topic_id=? AND evidence_id=?",
+                               (topic_id, prow['evidence_id']))
+
             topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
             topic = json.loads(topic_row[0])
             added_rule = None
@@ -690,20 +730,21 @@ class Repository:
         with self.connection() as db:
             items = [dict(evidence=json.loads(r[0]), assessment=json.loads(r[1])) for r in db.execute('''SELECT e.data,t.assessment
                 FROM topic_evidence t JOIN evidence e ON e.id=t.evidence_id WHERE t.topic_id=? AND t.status='review' ORDER BY e.rowid''', (topic_id,))]
+            live_events = {row[0] for row in db.execute('SELECT id FROM events WHERE topic_id=?', (topic_id,))}
         reviews = []
         for item in items:
             assessment = item['assessment']
-            if 'event_decisions' not in assessment:
-                if not event_id or assessment['association']['event_id'] == event_id:
-                    reviews.append(item)
-                continue
-            pending = [decision for decision in assessment['event_decisions'] if decision['requires_review']
-                       or decision['conflicts'] or decision['novelty'] == 'conflict' or decision['association']['type'] == 'unresolved']
+            pending = [decision for decision in pending_review_decisions(assessment)
+                       if decision['association']['event_id'] is None or decision['association']['event_id'] in live_events]
             if event_id:
                 pending = [decision for decision in pending if decision['association']['event_id'] == event_id]
-            if pending:
-                reviews.append(dict(evidence=item['evidence'], event_decisions=pending,
-                                    assessment=dict(pending[0], evidence_id=assessment['evidence_id'], is_relevant=True)))
+            if not pending:
+                continue
+            if 'event_decisions' not in assessment:
+                reviews.append(item)
+                continue
+            reviews.append(dict(evidence=item['evidence'], event_decisions=pending,
+                                assessment=dict(pending[0], evidence_id=assessment['evidence_id'], is_relevant=True)))
         return reviews
 
     def resolve_review(self, topic_id, evidence_id, decision, note):

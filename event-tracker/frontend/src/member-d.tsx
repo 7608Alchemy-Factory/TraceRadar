@@ -1,4 +1,4 @@
-import { TopicTagPicker } from "./topic-tags";
+import { MAX_TOPIC_TAGS, TopicTagPicker } from "./topic-tags";
 import { t } from "./i18n";
 import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
@@ -13,6 +13,7 @@ import type {
   Corpus,
 } from "./types";
 import { date, text, title as eventTitle, headline } from "./display";
+import { searchProviderLabel } from "./source-health";
 import { Icon, Empty } from "./ui";
 export type Act = (task: () => Promise<void>) => Promise<void>;
 
@@ -122,7 +123,7 @@ export function GoalEditor({
       <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
       </p>
-      <button className="primary" disabled={disabled}>
+      <button className="primary" disabled={disabled || tags.length > MAX_TOPIC_TAGS}>
         {t("保存追踪目标")} <Icon name="arrow" size={16} />
       </button>
     </form>
@@ -188,9 +189,9 @@ export function RegisterSource({
               source_id: id,
               name:
                 kind === "web_search"
-                  ? t("全网搜索：{0}", cleanQuery.slice(0, 36))
+                  ? `${t("全网搜索")} · ${cleanQuery.slice(0, 36)}`
                   : kind === "webpage"
-                    ? t("网页监控：{0}", endpoint.replace(/^https?:\/\//i, "").slice(0, 40))
+                    ? `${t("网页监控")} · ${(() => { try { return new URL(endpoint).hostname; } catch { return endpoint.replace(/^https?:\/\//i, "").slice(0, 40); } })()}`
                     : kind === "manual"
                       ? t("手动录入")
                       : kind === "rss"
@@ -215,7 +216,7 @@ export function RegisterSource({
                       branch_label: cleanQuery.slice(0, 40),
                     }
                   : type === "webpage"
-                    ? { allow_jina_fallback: true, role: "channel" }
+                    ? { role: "channel" }
                     : type === "replay"
                       ? { corpus_path: path }
                       : type === "rss"
@@ -234,9 +235,9 @@ export function RegisterSource({
       <label>
         {t("来源类型")}
         <select value={kind} onChange={(e) => handleKindChange(e.target.value)}>
-          <option value="web_search">{t("全网关键词搜索（web_search + 正文）")}</option>
-          <option value="webpage">{t("指定网页变更监控（官网/安全公告 Diff）")}</option>
-          <option value="rss">{t("RSS 订阅（支持抓全文）")}</option>
+          <option value="web_search">{t("全网搜索")}</option>
+          <option value="webpage">{t("网页监控")}</option>
+          <option value="rss">{t("RSS 订阅")}</option>
           <option value="manual">{t("手动录入新闻")}</option>
           <option value="lbj">{t("LBJ 离线语料 · 30 条")}</option>
           <option value="nba">{t("NBA 离线语料 · 18 条")}</option>
@@ -250,7 +251,7 @@ export function RegisterSource({
           value={id}
           onChange={(e) => setId(e.target.value)}
         />
-        <small>{t("使用小写字母、数字和下划线，如 ws_custom、mcd_hk_page。")}</small>
+        <small>{t("使用小写字母、数字和下划线，如 my_news。")}</small>
       </label>
       {kind === "web_search" && (
         <>
@@ -261,7 +262,7 @@ export function RegisterSource({
               maxLength={200}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t("例如：香港麦当劳 2026 优惠 联名 或 OpenAI Anthropic P vs NP")}
+              placeholder={t("例如 香港岛铁路规划")}
             />
           </label>
           <label className="check-row">
@@ -270,22 +271,22 @@ export function RegisterSource({
               checked={fetchFullText}
               onChange={(e) => setFetchFullText(e.target.checked)}
             />
-            {t("仅对新文章并发抓取正文（web_fetch，失败自动回退摘要）")}
+            {t("优先读取新文章全文，失败时使用摘要")}
           </label>
         </>
       )}
       {kind === "webpage" && (
         <label>
-          {t("目标网页 URL")}
+          {t("目标网页地址")}
           <input
             type="url"
             required
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder={t("https://www.mcdonalds.com.hk/en/ 或安全公告页面 URL")}
+            placeholder="https://example.org/news"
           />
           <small>
-            {t("每次检查抓取正文并与上次快照比对，仅把变更段落作为新修订证据入库（无变更 0 Token）。")}
+            {t("每次检查对比上次网页快照。有变化时才记录更新。")}
           </small>
         </label>
       )}
@@ -307,7 +308,7 @@ export function RegisterSource({
               checked={fetchFullText}
               onChange={(e) => setFetchFullText(e.target.checked)}
             />
-            {t("抓取文章全文（web_fetch，适合只有短摘要的 RSS）")}
+            {t("优先读取新文章全文，失败时使用摘要")}
           </label>
         </>
       )}
@@ -504,7 +505,7 @@ function ReviewItem({
               json(
                 "POST",
                 mode === "dismiss"
-                  ? { decision: "dismiss", note }
+                  ? { decision: "dismiss" }
                   : {
                       decision: "accept",
                       note,
@@ -622,23 +623,19 @@ function ReviewItem({
             </label>
           </>
         )}
-        <label>
+        {mode === "accept" && <label>
           {t("处理依据")}
           <textarea
             required
             maxLength={2000}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder={
-              mode === "dismiss"
-                ? t("为什么保留现有判断？")
-                : t("为什么采纳这条证据？")
-            }
+            placeholder={t("为什么采纳这条证据？")}
           />
-        </label>
+        </label>}
         <button
           className={mode === "accept" ? "primary" : ""}
-          disabled={disabled || !note.trim() || (mode === "accept" && stale)}
+          disabled={disabled || (mode === "accept" && (!note.trim() || !selected || stale))}
         >
           {mode === "accept" ? t("采纳并更新事件") : t("保留原状态并关闭")}{" "}
           <Icon name="check" size={16} />
@@ -691,7 +688,7 @@ export function ReviewPanel({
         <span className="kicker">REVIEW HISTORY</span>
         <h3>{t("人工处理记录")}</h3>
         <p className="hint">
-          {t("每次处理都会留下依据。采纳后的状态变化会出现在事件历史和运行记录中。")}
+          {t("审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。")}
         </p>
         {!resolutions.length && <p className="meta">{t("尚无处理记录")}</p>}
         {resolutions.map((r) => (
@@ -699,7 +696,7 @@ export function ReviewPanel({
             <span className={`tag ${r.decision === "accept" ? "green" : ""}`}>
               {r.decision === "accept" ? t("已采纳") : t("保留原状态")}
             </span>
-            <p>{r.note}</p>
+            {r.note && <p>{r.note}</p>}
             <small>{date(r.resolved_at)} {t("· 本地用户")}</small>
           </div>
         ))}
@@ -903,13 +900,8 @@ export function SearchSettingsPanel({
   return (
     <div className="form-stack">
       <div className="settings-summary">
-        <strong>{t("当前生效引擎：{0}", value?.active_label ?? t("免 Key 模式"))}</strong>
-        <p className="hint">
-          {t("博查 Key：{0} · Tavily Key：{1} · 密钥仅存于本地 .env，不会回传浏览器。",
-            value?.bocha_configured ? t("已配置") : t("未配置"),
-            value?.tavily_configured ? t("已配置") : t("未配置"),
-          )}
-        </p>
+        <strong>{t("当前搜索引擎")} · {value ? searchProviderLabel(value.active_provider) : t("状态未知")}</strong>
+        <p className="hint">{t("API 密钥由服务器保存。已配置的密钥留空即可保留。")}</p>
       </div>
       <form
         className="form-stack"
@@ -927,10 +919,10 @@ export function SearchSettingsPanel({
               "/settings/search",
               json("PUT", payload),
             );
-            await onSaved(saved);
             setBochaKey("");
             setTavilyKey("");
-            setMessage(t("已保存，当前生效：{0}", saved.active_label));
+            setMessage(t("搜索配置已保存。"));
+            await onSaved(saved);
           });
         }}
       >
@@ -942,32 +934,28 @@ export function SearchSettingsPanel({
               setProvider(e.target.value as SearchStatus["provider"])
             }
           >
-            <option value="auto">{t("自动（优先博查 → Tavily → 免 Key 降级）")}</option>
-            <option value="bocha">{t("博查全网搜索（Bocha API）")}</option>
-            <option value="tavily">{t("Tavily 全网搜索")}</option>
-            <option value="free">{t("仅免 Key 模式（Bing/Google News + web_fetch）")}</option>
+            <option value="auto">{t("自动按语种选择搜索引擎")}</option>
+            <option value="bocha">{t("博查 API")}</option>
+            <option value="tavily">Tavily</option>
+            <option value="free">{t("免密钥模式")} · Bing / Google News</option>
           </select>
         </label>
         <label>
-          {t("博查 API Key（BOCHA_API_KEY）")}
+          {t("博查 API 密钥")}
           <input
             type="password"
             value={bochaKey}
             onChange={(e) => setBochaKey(e.target.value)}
-            placeholder={
-              value?.bocha_configured ? t("已配置，留空保持不变") : "sk-…"
-            }
+            placeholder={value?.bocha_configured ? t("已配置，留空保留") : "sk-…"}
           />
         </label>
         <label>
-          {t("Tavily API Key（可选，TAVILY_API_KEY）")}
+          {t("Tavily API 密钥")}
           <input
             type="password"
             value={tavilyKey}
             onChange={(e) => setTavilyKey(e.target.value)}
-            placeholder={
-              value?.tavily_configured ? t("已配置，留空保持不变") : "tvly-…"
-            }
+            placeholder={value?.tavily_configured ? t("已配置，留空保留") : "tvly-…"}
           />
         </label>
         <label className="check-row">
@@ -976,7 +964,7 @@ export function SearchSettingsPanel({
             checked={jinaFallback}
             onChange={(e) => setJinaFallback(e.target.checked)}
           />
-          {t("网页抓取遇到 JS 空壳/403 时自动降级到免费 Jina Reader（r.jina.ai，严格拦截内网地址）")}
+          {t("无法直接读取公开网页时，尝试使用 Jina Reader")}
         </label>
         <div className="action-row">
           <button className="primary" disabled={disabled}>
@@ -990,13 +978,11 @@ export function SearchSettingsPanel({
                 setMessage(t("正在测试搜索连接…"));
                 try {
                   const res = await api<{
-                    status: string;
-                    active_label: string;
                     provider_used: string;
                     items: number;
                   }>("/settings/search/check", json("POST", {}));
                   setMessage(
-                    t("连接成功 · {0}（{1} 返回 {2} 条）", res.active_label, res.provider_used, res.items),
+                    t("连接成功，{0} 返回 {1} 条结果。", searchProviderLabel(res.provider_used), res.items),
                   );
                 } catch (err) {
                   setMessage(t("连接失败，请检查上方错误信息。"));
@@ -1005,7 +991,7 @@ export function SearchSettingsPanel({
               })
             }
           >
-            {t("测试搜索连接")}
+            {t("测试已保存的引擎")}
           </button>
         </div>
         {message && (

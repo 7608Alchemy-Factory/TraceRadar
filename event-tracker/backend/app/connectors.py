@@ -1,5 +1,5 @@
 """Source connectors (Fixture, time-sliced Replay, RSS/Atom, Manual) and topic source recommendations."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import ipaddress
 import json
@@ -9,7 +9,7 @@ import socket
 import time
 from typing import Protocol
 import unicodedata
-from urllib.parse import quote_plus, urljoin, urlsplit
+from urllib.parse import parse_qs, quote_plus, urljoin, urlsplit
 import xml.etree.ElementTree as ET
 import httpx
 
@@ -530,6 +530,8 @@ class RssConnector:
             root = ET.fromstring(xml_text)
         except ET.ParseError as exc:
             raise AppError('SOURCE_PARSE_ERROR', f'Malformed RSS/Atom XML: {exc}', 422)
+        if _local_name(root.tag) not in ('rss', 'feed', 'rdf'):
+            raise AppError('SOURCE_PARSE_ERROR', 'The source returned a document instead of an RSS or Atom feed.', 422)
 
         as_of = kwargs.get('as_of')
         cutoff = _to_utc_dt(as_of) if as_of else None
@@ -681,6 +683,58 @@ class ConnectorRouter:
         )
         self.last_fetch_stats: dict = {}
 
+    def _fetch_rss(self, source: dict, batch: str, **kwargs) -> list[dict]:
+        url = urlsplit(source['endpoint'])
+        params = parse_qs(url.query)
+        query = params.get('q', [''])[0].strip()
+        can_fallback = url.hostname == 'news.google.com' and url.path.rstrip('/') == '/rss/search' and query
+        unavailable = kwargs.get('unavailable_rss_hosts', set())
+        primary_error = 'SOURCE_UNAVAILABLE'
+        if not can_fallback or url.hostname not in unavailable:
+            try:
+                items = self.rss.fetch(source, batch, **kwargs)
+                self.last_fetch_stats = dict(self.rss.last_stats)
+                return items
+            except AppError as exc:
+                if not can_fallback or exc.code not in ('SOURCE_UNAVAILABLE', 'SOURCE_HTTP_ERROR', 'SOURCE_PARSE_ERROR'):
+                    raise
+                primary_error = exc.code
+                if isinstance(exc.__cause__, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+                    unavailable.add(url.hostname)
+
+        config = source.get('config') or {}
+        after = re.search(r'(?<!\S)after:(\d{4}-\d{2}-\d{2})(?!\S)', query)
+        recent = re.search(r'(?<!\S)when:(\d{1,3})d(?!\S)', query)
+        search_query = re.sub(r'(?<!\S)(?:after:\d{4}-\d{2}-\d{2}|when:\d{1,3}d)(?!\S)', '', query).strip()
+        if not search_query:
+            raise AppError('SOURCE_UNAVAILABLE', 'Google News RSS is unavailable and has no fallback keywords.', 502)
+        after_date = _parse_iso_date(after[1]) if after else None
+        recency_days = int(recent[1]) if recent else None
+        if not after_date and recency_days:
+            cutoff = _to_utc_dt(kwargs['as_of']) if kwargs.get('as_of') else datetime.now(timezone.utc)
+            after_date = (cutoff - timedelta(days=recency_days)).date().isoformat()
+
+        fallback = {**source, 'config': {
+            'query': search_query,
+            'max_items': _parse_max_items(config),
+            'search_language': config.get('search_language') or params.get('hl', [''])[0],
+            'fetch_full_text': config.get('fetch_full_text') is True,
+            'after_date': after_date,
+            'recency_days': recency_days,
+        }}
+        try:
+            items = self.web_search.fetch(fallback, batch, skip_google_news=True, **kwargs)
+        except AppError as exc:
+            if exc.code == 'SOURCE_UNAVAILABLE':
+                raise AppError('RSS_FALLBACK_UNAVAILABLE', f'Google News RSS and backup search are unavailable. {exc.message}', 502) from exc
+            raise
+        self.last_fetch_stats = {
+            **self.web_search.last_stats,
+            'fallback_from': 'google_news_rss',
+            'primary_error': primary_error,
+        }
+        return items
+
     def fetch(self, source: dict, batch: str, **kwargs) -> list[dict]:
         stype = source.get('type', 'fixture')
         if stype == 'fixture':
@@ -692,9 +746,7 @@ class ConnectorRouter:
             self.last_fetch_stats = dict(self.replay.last_stats)
             return items
         if stype == 'rss':
-            items = self.rss.fetch(source, batch, **kwargs)
-            self.last_fetch_stats = dict(self.rss.last_stats)
-            return items
+            return self._fetch_rss(source, batch, **kwargs)
         if stype == 'manual':
             items = self.manual.fetch(source, batch, **kwargs)
             self.last_fetch_stats = dict(self.manual.last_stats)

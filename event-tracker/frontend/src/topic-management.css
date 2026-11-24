@@ -51,9 +51,17 @@
 .topic-filter select { width: auto; min-width: min(155px,100%); background: var(--white); color: var(--ink); }
 .topic-tag-picker { border-radius: 8px; border-color: var(--line); min-width: 0; }
 .topic-tag-picker legend { font-size: .9rem; color: var(--ink); }
+.topic-tag-picker legend small { display: inline; color: var(--muted); font-size: .82em; }
 .topic-tag-options, .frame-tags { display: flex; flex-wrap: wrap; gap: 5px; }
-.topic-tag-options .topic-tag { padding: 5px 9px; min-height: 32px; color: var(--ink); background: var(--white); border-color: var(--line); }
+.topic-tag-options .topic-tag { position: relative; padding: 5px 9px; min-height: 32px; color: var(--ink); background: var(--white); border-color: var(--line); }
 .topic-tag-options .topic-tag[aria-pressed="true"] { background: var(--surface-selected); color: var(--accent); border-color: var(--accent); }
+.topic-tag-options .topic-tag:has(.tag-rank) { padding-inline-end: 24px; }
+.tag-rank {
+  position: absolute; inset: auto 3px 3px auto; min-width: 14px; padding: 1px 2px;
+  border-radius: 3px; background: var(--accent); color: var(--white);
+  text-align: center; font: 600 .65rem/1.15 var(--mono);
+}
+.tag-help { margin: 8px 0 0; color: var(--muted); font-size: .78rem; }
 .custom-tag { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
 .frame-tags { margin-top: 5px; }
 .frame-tags span { padding: 2px 5px; border-radius: 4px; font-size: .71rem; background: var(--surface-selected); color: var(--accent); overflow-wrap: anywhere; }
@@ -63,6 +71,13 @@
 .topic-examples ul { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
 .topic-examples button { background: var(--white); color: var(--accent); border-color: var(--line); }
 .dialog.compact { width: 660px; max-width: calc(100vw - 32px); }
+.event-list-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: stretch; border-bottom: 1px solid var(--line); }
+.event-list-item .event-row { border: 0; }
+.event-list-item .event-delete {
+  align-self: center; min-width: 36px; min-height: 36px; padding: 0;
+  margin-inline: 6px 0; color: var(--muted); background: transparent; border-color: transparent;
+}
+.event-list-item .event-delete:is(:hover,:focus-visible) { color: var(--orange); background: var(--warning-bg); border-color: var(--line); }
 .conclusion-comparison > p { margin-block: 0 12px; }
 .conclusion-comparison dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 0; }
 .conclusion-comparison dl > div { padding: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }

@@ -864,5 +864,57 @@ def test_event_rename_lock_dismiss_merge_and_source_patch(tmp_path, monkeypatch)
         assert client.get(f"/api/events/{ev_c['event_id']}").status_code == 404
 
 
+@pytest.mark.parametrize('bing_online', [True, False])
+def test_approved_google_rss_timeout_uses_bing_or_reports_source_failure(tmp_path, monkeypatch, bing_online):
+    from urllib.parse import parse_qs, urlsplit
+    rss_attempts = []
+    bing_queries = []
 
+    def unavailable(_self, url):
+        rss_attempts.append(url)
+        raise AppError('SOURCE_UNAVAILABLE', 'RSS feed unreachable: TimeoutException', 502) from httpx.ConnectTimeout('timed out')
 
+    def bing_feed(url, **kwargs):
+        assert urlsplit(url).hostname == 'www.bing.com'
+        bing_queries.append(parse_qs(urlsplit(url).query))
+        if not bing_online:
+            return 503, url, '', {}
+        return 200, url, '''<rss><channel><item>
+          <title>ExampleSoft Vulnerability A</title>
+          <link>https://example.org/advisory</link>
+          <description>ExampleSoft Server 1.0 vulnerability A disclosed.</description>
+          <pubDate>Tue, 17 Nov 2026 09:00:00 GMT</pubDate>
+        </item></channel></rss>''', {}
+
+    monkeypatch.setattr(conn_mod.RssConnector, '_get_feed_xml', unavailable)
+    monkeypatch.setattr(wc_mod, '_stream_bounded_get', bing_feed)
+    settings = Settings(database_path=str(tmp_path / 'rss-failover.db'), search_provider='free')
+    with TestClient(create_app(settings)) as client:
+        topic = client.post('/api/topics', json={'title': 'ExampleSoft', 'description': 'Track its published updates.'}).json()
+        sources = [
+            ('google_primary', 'https://news.google.com/rss/search?q=ExampleSoft+after%3A2026-11-01&hl=en-US'),
+            ('google_secondary', 'https://news.google.com/rss/search?q=ExampleSoft+patch&hl=en-US'),
+            ('other_rss', 'https://example.org/feed.xml'),
+        ]
+        for source_id, endpoint in sources:
+            response = client.post('/api/sources', json=dict(source_id=source_id, endpoint=endpoint, name=source_id, type='rss'))
+            assert response.status_code == 201
+        topic_url = f"/api/topics/{topic['topic_id']}"
+        assert client.put(topic_url + '/sources', json={'approved_source_ids': [sid for sid, _ in sources]}).status_code == 200
+        started = client.post(topic_url + '/runs', json={'fixture_batch_id': 'live', 'provider': 'mock'})
+        assert started.status_code == 202
+        detail = _wait_run(client, started.json()['run_id'])
+
+    assert rss_attempts == [sources[0][1], sources[2][1]]
+    assert [query['q'][0] for query in bing_queries] == ['ExampleSoft', 'ExampleSoft patch']
+    assert all(query['mkt'] == ['en-US'] for query in bing_queries)
+    assert detail['run']['status'] == ('completed_with_errors' if bing_online else 'failed')
+    steps = {step['input_refs'][0]: step for step in detail['steps'] if step['step_name'] == 'fetch_source'}
+    assert steps['other_rss']['error']['source_id'] == 'other_rss'
+    if bing_online:
+        assert detail['run']['counts']['fetched'] == 2
+        assert steps['google_primary']['decision']['stats']['provider_used'] == 'free_bing_rss'
+        assert steps['google_secondary']['decision']['stats']['fallback_from'] == 'google_news_rss'
+    else:
+        assert detail['run']['counts']['fetched'] == 0
+        assert steps['google_primary']['error']['cause_code'] == 'RSS_FALLBACK_UNAVAILABLE'

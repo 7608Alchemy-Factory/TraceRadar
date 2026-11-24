@@ -13,9 +13,16 @@ export const categories = {
   environment: ["环境", "极端天气预警", "城市减排计划"],
   culture: ["文化", "展览和演出排期", "电影节与新片发行"],
   health: ["健康", "公共卫生通报", "医疗服务政策"],
+  education: ["教育", "学校招生与课程调整", "考试与奖学金政策"],
+  science: ["科学", "科研发现与后续验证", "航天任务进展"],
+  law: ["法律", "立法与司法裁决", "监管执法进展"],
+  community: ["社区民生", "社区公共服务变动", "住房与社区规划"],
+  international: ["国际", "国际合作与峰会", "跨境协定进展"],
 } as const;
 
-function isCategory(value: string): value is keyof typeof categories {
+export const MAX_TOPIC_TAGS = 3;
+
+export function isCategory(value: string): value is keyof typeof categories {
   return Object.hasOwn(categories, value);
 }
 
@@ -44,21 +51,27 @@ export function TopicTagPicker({ value, options, onChange }: {
   const normalized = input.trim();
   const sameTag = (first: string, second: string) => first.toLocaleLowerCase() === second.toLocaleLowerCase();
   const choices = [...options, ...value.filter((tag) => !options.some((candidate) => sameTag(tag, candidate)))];
+  const full = value.length >= MAX_TOPIC_TAGS;
   function addCustom() {
-    if (!normalized || value.length >= 12) return;
+    if (!normalized || full) return;
     const tag = choices.find((candidate) => sameTag(normalized, candidate) || sameTag(normalized, tagLabel(candidate))) ?? normalized;
     if (!value.some((candidate) => sameTag(tag, candidate))) onChange([...value, tag]);
     setInput("");
   }
   return (
     <fieldset className="topic-tag-picker">
-      <legend>{t("主题类型")}</legend>
+      <legend>{t("主题类型")}<small>{t("（最多勾选3项）")}</small></legend>
       <div className="topic-tag-options">
         {choices.map((tag) => {
-          const selected = value.some((candidate) => sameTag(tag, candidate));
+          const rank = value.findIndex((candidate) => sameTag(tag, candidate)) + 1;
+          const selected = rank > 0;
           return <button type="button" className="topic-tag" key={tag} aria-pressed={selected}
-            disabled={!selected && value.length >= 12}
-            onClick={() => onChange(selected ? value.filter((candidate) => !sameTag(tag, candidate)) : [...value, tag])}>{tagLabel(tag)}</button>;
+            aria-label={selected ? t("{0}，优先级 {1}", tagLabel(tag), rank) : undefined}
+            disabled={!selected && full}
+            onClick={() => onChange(selected ? value.filter((candidate) => !sameTag(tag, candidate)) : [...value, tag])}>
+            {tagLabel(tag)}
+            {selected && <span className="tag-rank" aria-hidden="true">{rank}</span>}
+          </button>;
         })}
       </div>
       <div className="custom-tag">
@@ -70,8 +83,11 @@ export function TopicTagPicker({ value, options, onChange }: {
               addCustom();
             }
           }} />
-        <button type="button" disabled={!normalized || value.length >= 12} onClick={addCustom}>{t("添加标签")}</button>
+        <button type="button" disabled={!normalized || full} onClick={addCustom}>{t("添加标签")}</button>
       </div>
+      <p className="tag-help">
+        {t(value.length > MAX_TOPIC_TAGS ? "此主题的旧标签超过 3 项。请取消多余标签后再保存。" : "优先级 1 的标签决定封面。")}
+      </p>
     </fieldset>
   );
 }

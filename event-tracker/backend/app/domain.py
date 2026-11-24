@@ -16,8 +16,8 @@ class Model(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
-TopicTags = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]],
-                      Field(max_length=12)]
+TopicTag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+TopicTags = Annotated[list[TopicTag], Field(max_length=3)]
 TopicExclusions = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]],
                             Field(max_length=20)]
 
@@ -56,6 +56,8 @@ class TopicPatch(Model):
 
 
 class Topic(TopicInput):
+    # Older records may contain more tags than the current input limit.
+    tags: Annotated[list[TopicTag], Field(max_length=12)] = Field(default_factory=list)
     topic_id: str
     status: Literal['draft', 'active'] = 'draft'
     created_at: AwareDatetime
@@ -239,7 +241,7 @@ class ManualEvidenceItem(Model):
 
 class ReviewResolutionInput(Model):
     decision: Literal['dismiss', 'accept']
-    note: str = Field(min_length=1, max_length=2000)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
     event_id: str | None = None
     expected_version: int | None = Field(default=None, ge=1)
     current_status: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -249,8 +251,9 @@ class ReviewResolutionInput(Model):
 
     @model_validator(mode='after')
     def nonblank_note(self):
-        self.note = self.note.strip()
-        if not self.note:
+        if self.note is not None:
+            self.note = self.note.strip()
+        if self.note == '' or (self.decision == 'accept' and self.note is None):
             raise ValueError('A review note is required')
         if self.decision == 'accept' and not all((self.event_id, self.expected_version, self.current_status and self.current_status.strip(), self.fact and self.fact.strip())):
             raise ValueError('Accept requires event_id, expected_version, current_status and fact')

@@ -49,6 +49,9 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
   const recent = known.slice(0, signalSlots.length);
   const currentIndex = Math.max(0, recent.findIndex((item) => item.event_id === selected));
   const current = recent[currentIndex];
+  const [x, y] = signalSlots[currentIndex];
+  const bearing = Math.atan2(y - 50, x - 50) * 180 / Math.PI;
+  const range = Math.hypot(x - 50, y - 50);
   const topic = topics.find((item) => item.topic_id === current?.topic_id);
   return (
     <section className="live-radar" aria-label={t("事件雷达")}>
@@ -77,9 +80,16 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
           <span className="radar-reticle" />
           <span className="radar-range-rings" />
           <pre className="radar-glyph-field">{radarGlyphs}</pre>
-          <span className="radar-sweep" />
-          {current && <span key={current.event_id} className="radar-blip"
-            style={{ "--x": `${signalSlots[currentIndex][0]}%`, "--y": `${signalSlots[currentIndex][1]}%` } as CSSProperties} />}
+          <span className="radar-sweep"><i /><i /></span>
+          <span className="radar-origin" />
+          {current && (
+            <div key={current.event_id} className="radar-target" style={{
+              "--x": `${x}%`, "--y": `${y}%`, "--bearing": `${bearing}deg`, "--range": `${range}%`,
+            } as CSSProperties}>
+              <span className="radar-vector" />
+              <span className="radar-blip"><i /></span>
+            </div>
+          )}
         </div>
       </div>
     </section>

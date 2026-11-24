@@ -93,6 +93,7 @@ class RunManager:
             else None
         )
         in_run_urls: set[str] = set()
+        unavailable_rss_hosts: set[str] = set()
         for source in sources:
             trace = step('fetch_source')
             trace['input_refs'] = [source['source_id']]
@@ -108,6 +109,8 @@ class RunManager:
                     fetch_kwargs['topic_id'] = topic['topic_id']
                 if source.get('type') == 'webpage':
                     fetch_kwargs['committed_ext_ids'] = committed_ext_ids
+                if source.get('type') == 'rss':
+                    fetch_kwargs['unavailable_rss_hosts'] = unavailable_rss_hosts
                 batch = self.connector.fetch(source, run['fixture_batch_id'], **fetch_kwargs) if fetch_kwargs else self.connector.fetch(source, run['fixture_batch_id'])
                 inputs.extend(batch)
                 decision = {'source_id': source['source_id'], 'items': len(batch)}
@@ -117,7 +120,8 @@ class RunManager:
                 end(trace, decision=decision)
                 usable += 1
             except Exception as exc:
-                error = dict(public_error(exc), code='source_error')
+                cause = public_error(exc)
+                error = dict(code='source_error', cause_code=cause['code'], message=cause['message'], source_id=source['source_id'])
                 errors.append(error)
                 counts['errors'] += 1
                 end(trace, 'failed', error=error)

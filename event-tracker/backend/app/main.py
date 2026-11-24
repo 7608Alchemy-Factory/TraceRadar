@@ -21,8 +21,8 @@ from .llm import get_provider
 from .orchestration import RunManager
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
-from .web_connectors import save_search_settings, search_settings_status
 from .translation import TranslationInput, translate
+from .web_connectors import save_search_settings, search_settings_status
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
@@ -59,11 +59,7 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        provider_route = (
-            request.url.path.startswith('/api/settings/model')
-            or request.url.path.startswith('/api/settings/search')
-            or request.url.path == '/api/translation'
-        )
+        provider_route = request.url.path.startswith(('/api/settings/model', '/api/settings/search')) or request.url.path == '/api/translation'
         if origin and provider_route and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
@@ -345,6 +341,11 @@ def create_app(settings=None):
     @app.patch('/api/events/{identity}')
     def patch_event(identity: str, body: EventPatch):
         return repo.patch_event(identity, body.model_dump(exclude_none=True))
+
+    @app.delete('/api/events/{identity}')
+    def delete_event(identity: str):
+        repo.delete_event(identity)
+        return {'event_id': identity}
 
     @app.post('/api/events/{identity}/dismiss')
     def dismiss_event(identity: str, body: EventDismissInput):

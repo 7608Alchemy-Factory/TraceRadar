@@ -885,10 +885,12 @@ class WebSearchConnector:
         cutoff: datetime | None,
         recency_days: int | None,
         as_of: str | None,
+        skip_google_news: bool,
     ) -> tuple[list[dict], str]:
         """Zero-key discovery: Bing News RSS (direct article URLs) supplemented with Google News RSS."""
         raw_items: list[dict] = []
         seen_urls: set[str] = set()
+        bing_available = False
         provider_used = 'free_bing_rss'
         mkt = _BING_MKT_MAP.get(language or '', '')
         bing_url = f'https://www.bing.com/news/search?q={quote_plus(query)}&format=rss' + (f'&mkt={mkt}' if mkt else '')
@@ -901,6 +903,9 @@ class WebSearchConnector:
             )
             if status == 200 and xml_text.strip():
                 root = ET.fromstring(xml_text)
+                if root.tag != 'rss':
+                    raise ET.ParseError('Bing News did not return RSS XML.')
+                bing_available = True
                 for entry in root.findall('.//item'):
                     title = (entry.findtext('title') or '').strip()
                     raw_link = (entry.findtext('link') or '').strip()
@@ -922,11 +927,12 @@ class WebSearchConnector:
                     raw_items.append({'title': title or real_url, 'url': real_url, 'content': desc or title, 'published_at': pub_iso})
                     if len(raw_items) >= count:
                         break
-        except Exception:
-            provider_used = 'free_google_rss'
+        except (AppError, httpx.HTTPError, ET.ParseError):
+            pass
 
         # Supplement with Google News RSS if post-filtered Bing returned few items or an explicit after_date was requested
-        if len(raw_items) < max(3, count // 2) or (after_date and len(raw_items) < count):
+        needs_supplement = len(raw_items) < max(3, count // 2) or (after_date and len(raw_items) < count)
+        if not skip_google_news and needs_supplement:
             gn_url = self.gnews_url_builder(
                 query,
                 recency_days=recency_days,
@@ -958,11 +964,15 @@ class WebSearchConnector:
                             'published_at': ev['published_at'],
                         }
                     )
-                if raw_items and provider_used == 'free_bing_rss' and gn_evs:
+                if not bing_available:
+                    provider_used = 'free_google_rss'
+                elif gn_evs:
                     provider_used = 'free_bing_and_google_rss'
-            except Exception:
-                if not raw_items:
+            except (AppError, httpx.HTTPError):
+                if not bing_available:
                     raise
+        elif not bing_available:
+            raise AppError('SOURCE_UNAVAILABLE', 'Bing News RSS could not be reached.', 502)
         return raw_items, provider_used
 
     def fetch(self, source: dict, batch: str = 'live', **kwargs) -> list[dict]:
@@ -979,6 +989,7 @@ class WebSearchConnector:
         exclude_domains = [d for d in (cfg.get('exclude_domains') or []) if isinstance(d, str) and _DOMAIN_RE.match(d.strip())]
         fetch_full_text = cfg.get('fetch_full_text', True) is not False
         as_of = kwargs.get('as_of')
+        skip_google_news = bool(kwargs.get('skip_google_news'))
         cutoff = self.to_utc_dt(as_of) if as_of else None
         after_dt_cutoff = self.to_utc_dt(f'{after_date}T00:00:00Z') if after_date and re.match(r'^20\d{2}-\d{2}-\d{2}$', after_date) else None
 
@@ -1007,6 +1018,7 @@ class WebSearchConnector:
                     cutoff=cutoff,
                     recency_days=recency_days,
                     as_of=as_of,
+                    skip_google_news=skip_google_news,
                 )
         elif provider == 'tavily':
             try:
@@ -1032,26 +1044,29 @@ class WebSearchConnector:
                     cutoff=cutoff,
                     recency_days=recency_days,
                     as_of=as_of,
+                    skip_google_news=skip_google_news,
                 )
         else:
-            raw_items, provider_used = self._fetch_free_bing_and_google(
-                source['source_id'],
-                query,
-                max_items,
-                language=language,
-                after_date=after_date,
-                after_dt_cutoff=after_dt_cutoff,
-                cutoff=cutoff,
-                recency_days=recency_days,
-                as_of=as_of,
-            )
-            # In auto mode for KO/JA local-first queries, supplement with denoised Tavily only when local news returns < 3 items.
-            if (
-                effective_pref == 'auto'
-                and _is_ko_ja_query(cfg)
-                and has_tavily
-                and len(raw_items) < min(3, max_items)
-            ):
+            ko_ja_auto_tavily = effective_pref == 'auto' and _is_ko_ja_query(cfg) and has_tavily
+            try:
+                raw_items, provider_used = self._fetch_free_bing_and_google(
+                    source['source_id'],
+                    query,
+                    max_items,
+                    language=language,
+                    after_date=after_date,
+                    after_dt_cutoff=after_dt_cutoff,
+                    cutoff=cutoff,
+                    recency_days=recency_days,
+                    as_of=as_of,
+                    skip_google_news=skip_google_news,
+                )
+            except AppError:
+                if not ko_ja_auto_tavily:
+                    raise
+                raw_items, provider_used = [], 'tavily'
+            # In auto mode for KO/JA local-first queries, supplement with denoised Tavily when local news returns < 3 items or failed.
+            if ko_ja_auto_tavily and len(raw_items) < min(3, max_items):
                 try:
                     extra = self._fetch_tavily(
                         query,
@@ -1071,10 +1086,11 @@ class WebSearchConnector:
                             seen_urls.add(cu)
                         raw_items.append(ex)
                         added += 1
-                    if added:
+                    if added and provider_used != 'tavily':
                         provider_used = f'{provider_used}+tavily'
                 except AppError:
-                    pass
+                    if not raw_items:
+                        raise
 
         future_filtered = 0
         before_after_filtered = 0

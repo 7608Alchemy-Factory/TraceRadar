@@ -139,6 +139,11 @@ def create_app(settings=None):
     def patch_topic(identity: str, body: TopicPatch):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
 
+    @app.delete('/api/topics/{identity}')
+    def delete_topic(identity: str):
+        repo.delete_topic(identity)
+        return {'topic_id': identity}
+
     @app.post('/api/topics/{identity}/source-recommendations')
     def recommendations(
         identity: str,

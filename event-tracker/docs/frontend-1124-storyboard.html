@@ -17,8 +17,8 @@ article{background:#202025;border:1px solid var(--line);border-radius:12px;paddi
 <section aria-label="界面原型"></section>
 <script>
 const scenes=[
-["首页首屏","浅灰导航 · 语言 / 太阳 / 月亮","<div class='row'><div class='box focus'>让进展，有迹可循</div><div class='box media'>白底单色雷达版画 + ASCII</div></div><div class='box'>浏览追踪主题</div>","标题分两拍显现，雷达版画从局部显影，纵向滚动时以轻微视差接到胶片。悬停或键盘聚焦标志时，雷达指针扫过，字标依次显现。","light"],
-["主题胶片","主题数 · 左右翻页","<div class='row'><div class='box media'>篮球</div><div class='box media'>餐饮</div><div class='box media'>AI</div></div><div class='row'><div class='box'>新闻状态</div><div class='box focus'>主题标题</div><div class='box'>更新时间</div></div><div class='box'>体验三步演示 · 准备新闻回放</div>","卡片从轨道依次抬起，横滑时主题版画在卡框内轻微错位，露出黑白灰油墨的颗粒和断裂运动轨迹。选择卡片后，封面扩展成主题页横幅。"],
+["首页首屏","浅灰导航 · 语言 / 太阳 / 月亮","<div class='row'><div class='box focus'>让进展，有迹可循</div><div class='box media'>动态 ASCII 雷达 + 近期信号</div></div><div class='box'>浏览追踪主题</div>","标题分两拍显现，界面显现后，动态雷达扫描近期事件。悬停或键盘聚焦标志时，雷达指针扫过，字标依次显现。","light"],
+["主题胶片","主题数 · 左右翻页","<div class='row'><div class='box media'>篮球</div><div class='box media'>餐饮</div><div class='box media'>AI</div></div><div class='row'><div class='box'>新闻状态</div><div class='box focus'>主题标题</div><div class='box'>更新时间</div></div><div class='box'>主题类型筛选 · 示例</div>","卡片从轨道依次抬起，横滑时主题版画在卡框内轻微错位，露出黑白灰油墨的颗粒和断裂运动轨迹。选择卡片后，封面扩展成主题页横幅。"],
 ["主题概览","追踪主题 / 当前主题","<div class='box media'>延续选中主题的封面</div><div class='row'><div class='box focus'>近期事件</div><div class='box'>检查新进展</div></div><div class='box'>提醒和待审核</div>","保留封面作为空间参照，标题和任务区紧随其后。切换视图时，选中指示线先移动，内容再到位。","light"],
 ["全部事件","概览 / 事件 / 证据库","<div class='box'>搜索事件</div><div class='box focus'>事件名称 · 最新变化 · 状态</div><div class='box'>第二条事件</div>","列表短距离错峰入场。选中事件以后，原主题留在后景，事件档案从右侧展开。","light"],
 ["事件详情","事件档案 · 关闭","<div class='box'>事件标题 · 当前状态</div><div class='row rail'><i></i><i></i><i></i><i></i></div><div class='box focus'>日期 · 节点详情 · 查看依据</div><div class='box'>当前事实 · 状态修改记录</div>","档案侧滑后亮起时间轴。点击节点时，选中标记连接到下方说明，细节短距离交叠显现。"],
@@ -32,8 +32,7 @@ const scenes=[
 ["手动提交新闻","提交新闻 · 关闭","<div class='box'>选择手动来源</div><div class='box'>新闻标题、链接、时间</div><div class='box focus'>提交以分析</div>","先给来源选择，再显示输入。提交反馈跟随本次运行，避免重复打开任务窗口。"],
 ["准备新闻回放","选择离线语料","<div class='row'><div class='box focus'>选定语料</div><div class='box'>其他语料</div></div><div class='box'>追踪目标与回放截止</div><div class='box'>创建回放主题</div>","语料选中态原位变化，保留上下文。准备完成后进入对应主题。"],
 ["模型配置","模型服务 · 关闭","<div class='box'>服务地址与凭证</div><div class='box'>读取并选择模型</div><div class='box focus'>保存与测试</div>","逐段呈现输入和结果，在原地反馈连接状态。主体位置在编辑中保持稳定。"],
-["三步演示","体验模拟新闻","<div class='row'><div class='box focus'>发现事件</div><div class='box'>补充与归类</div><div class='box'>修复与冲突</div></div><div class='box'>开始演示</div>","演示保持与真实工作台相同的阅读路线，三步状态随运行推进。"],
-["手机与减少动效","TraceRadar · 语言 · 日/月","<div class='box media'>雷达与主题版画</div><div class='row'><div class='box focus'>横滑主题</div><div class='box'>下一帧</div></div><div class='row rail'><i></i><i></i><i></i></div><div class='box'>手机全宽事件档案</div>","保留触摸滚动和键盘控制。系统启用减少动效时，取消视差、胶片过渡和入场位移。","light"],
+["手机与减少动效","TraceRadar · 语言 · 日/月","<div class='box media'>动态 ASCII 雷达与主题版画</div><div class='row'><div class='box focus'>横滑主题</div><div class='box'>下一帧</div></div><div class='row rail'><i></i><i></i><i></i></div><div class='box'>手机全宽事件档案</div>","保留触摸滚动和键盘控制。系统启用减少动效时，取消视差、胶片过渡和入场位移。","light"],
 ];
 scenes.forEach(([title,bar,content,caption,mode],i)=>{
  document.querySelector("nav").insertAdjacentHTML("beforeend",'<a href="#scene-'+i+'">'+title+'</a>');

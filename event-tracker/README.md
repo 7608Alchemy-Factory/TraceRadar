@@ -50,16 +50,11 @@ Open http://127.0.0.1:5173. API documentation: http://127.0.0.1:8000/docs. Vite 
 
 Open [the screen and motion storyboard](docs/frontend-1124-storyboard.html) in a browser to walk through the screens and transitions. The top-right language and theme settings are saved in the current browser. Article and user-entered text retain their source language.
 
-## Fixed demo
+## Topic management
 
-1. Open the homepage via the **TraceRadar** logo and select **体验三步演示** below the topic reel. ExampleSoft content, URLs, dates and sources are fictional simulated input; both fixture sources are approved automatically.
-2. Keep **规则演示** selected.
-3. Run **发现事件**, **补充与归类**, then **修复与冲突**, waiting for each to complete.
-4. Expect 2 events, 4 transitions, 3 digest notifications, 1 immediate notification and 2 review records. Event A becomes patched; conflicting and unclear reports never overwrite confirmed state.
-5. Open Event A and select a node in **事件进展** to see the dated change and its source news. The purple **待审核** node shows a conflicting report. Expand **状态修改记录** for the before/after audit and open **运行记录** for execution details.
-6. Run the same batches again. Event, transition and notification counts stay unchanged. Refresh or restart to verify persistence.
+Use **New topic** to add one or more topic types, or enter a custom tag. Type filters on the homepage match tagged topics and show starter ideas for the built-in categories. Existing tags can be edited with the tracking goal.
 
-Notifications are in-app decisions only. Digest means a list of routine updates. No email, scheduled summary or phone delivery is implemented.
+The sidebar and each topic page offer **Delete topic**. Deletion requires confirmation and removes the topic's events, runs and reviews while retaining shared evidence and sources. A topic with an active run cannot be deleted. Fixtures remain available to the API and automated tests.
 
 ## Checks
 

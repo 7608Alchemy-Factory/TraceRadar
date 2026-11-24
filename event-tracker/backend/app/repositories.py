@@ -121,6 +121,25 @@ class Repository:
             db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), identity))
         return topic
 
+    def delete_topic(self, identity):
+        """Delete topic-owned state in one transaction; sources and evidence can be shared."""
+        with self.connection(True) as db:
+            if not db.execute('SELECT 1 FROM topics WHERE id=?', (identity,)).fetchone():
+                raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (identity,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before deleting the topic.')
+            db.execute('DELETE FROM review_resolutions WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM notifications WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM transitions WHERE event_id IN (SELECT id FROM events WHERE topic_id=?)', (identity,))
+            db.execute('DELETE FROM event_evidence WHERE event_id IN (SELECT id FROM events WHERE topic_id=?)', (identity,))
+            db.execute('DELETE FROM events WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM steps WHERE run_id IN (SELECT id FROM runs WHERE topic_id=?)', (identity,))
+            db.execute('DELETE FROM run_inputs WHERE run_id IN (SELECT id FROM runs WHERE topic_id=?)', (identity,))
+            db.execute('DELETE FROM runs WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM topic_evidence WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM topic_sources WHERE topic_id=?', (identity,))
+            db.execute('DELETE FROM topics WHERE id=?', (identity,))
+
     def sources(self, topic_id=None):
         with self.connection() as db:
             if topic_id:
@@ -166,7 +185,10 @@ class Repository:
                     return json.loads(row[1]), False
             if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
                 raise AppError('TOPIC_RUN_ACTIVE', 'This topic already has an active run.')
-            topic = json.loads(db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()[0])
+            topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+            if not topic_row:
+                raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            topic = json.loads(topic_row[0])
             sources = [json.loads(r[0]) for r in db.execute('''SELECT s.data FROM sources s JOIN topic_sources ts
                 ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
             if not sources:
@@ -189,6 +211,8 @@ class Repository:
         topic_id, original_id = original['topic_id'], original['run_id']
         request = {'resume_of': original_id}
         with self.connection(True) as db:
+            if not db.execute('SELECT 1 FROM runs WHERE id=?', (original_id,)).fetchone():
+                raise AppError('NOT_FOUND', 'Run not found.', 404)
             if key:
                 prior = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?',
                                    (topic_id, key)).fetchone()

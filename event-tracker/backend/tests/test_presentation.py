@@ -49,3 +49,34 @@ def test_reference_translation_validates_provider_response(tmp_path, monkeypatch
         response = client.post('/api/translation', json=payload)
         assert response.status_code == 502
         assert response.json()['error']['code'] == 'TRANSLATION_FORMAT'
+
+def test_topic_tags_and_deletion_isolate_shared_records(tmp_path):
+    settings = Settings(database_path=str(tmp_path / 'test.db'), api_key='', base_url='', model='')
+    with TestClient(create_app(settings)) as client:
+        first = topic(client)
+        second = topic(client)
+        for identity in (first, second):
+            run(client, identity, '1')
+        saved = client.patch(f'/api/topics/{first}', json={'tags': ['tech', '  Local news  ', 'TECH']})
+        assert saved.json()['tags'] == ['tech', 'Local news']
+        assert client.get('/api/topics').json()[0]['tags'] == ['tech', 'Local news']
+        removed_event = client.get(f'/api/topics/{first}/dashboard').json()['events'][0]
+        original = client.get(f'/api/topics/{second}/dashboard').json()
+        assert client.delete(f'/api/topics/{first}').status_code == 200
+        assert client.get(f'/api/topics/{first}').status_code == 404
+        assert client.get(f"/api/events/{removed_event['event_id']}").status_code == 404
+        assert client.get(f'/api/topics/{second}/dashboard').json() == original
+        assert client.get(f'/api/topics/{second}/evidence').json()
+
+
+def test_delete_refuses_queued_run(tmp_path):
+    settings = Settings(database_path=str(tmp_path / 'test.db'), api_key='', base_url='', model='')
+    app = create_app(settings)
+    with TestClient(app) as client:
+        identity = topic(client)
+        record, _ = app.state.repo.create_run(
+            identity, {'fixture_batch_id': '1', 'provider': 'mock'}, None, None)
+        blocked = client.delete(f'/api/topics/{identity}')
+        assert blocked.status_code == 409
+        assert blocked.json()['error']['code'] == 'TOPIC_RUN_ACTIVE'
+        assert client.get(f"/api/runs/{record['run_id']}").json()['run']['status'] == 'pending'

@@ -1,3 +1,5 @@
+import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
+import { TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
 import { WorkspaceClock } from "./clock";
 import { TopicReport } from "./topic-report";
 import { TranslationContext, useWorkspaceTranslation } from "./reference-translation";
@@ -53,6 +55,7 @@ import "./workspace-v11.css";
 import "./radar.css";
 import "./signal.css";
 import "./operations.css";
+import "./topic-management.css";
 
 const tabs = [
   ["overview", "概览", "grid"],
@@ -74,7 +77,7 @@ type Dialog =
   | "manual"
   | "settings"
   | "replay"
-  | "help"
+  | "delete"
   | null;
 const SEARCH_LANGUAGE_OPTIONS = [
   { code: "zh-CN", label: "简中" },
@@ -86,27 +89,18 @@ const SEARCH_LANGUAGE_OPTIONS = [
 const SEARCH_LANGUAGE_MAP = new Map<string, string>(
   SEARCH_LANGUAGE_OPTIONS.map((o) => [o.code, o.label]),
 );
-const demoSteps = [
-  {
-    id: "1",
-    name: "发现事件",
-    description: "披露漏洞 A；无关体育新闻被排除。",
-  },
-  {
-    id: "2",
-    name: "补充与归类",
-    description: "更新 A 的受影响版本；转载去重；独立漏洞 B 单独建档。",
-  },
-  {
-    id: "3",
-    name: "修复与冲突",
-    description: "补丁使 A 变为已修复并提醒；矛盾报道留待审核。",
-  },
-];
+const fixtureBatches = ["1", "2", "3", "empty"];
+
+// Old walkthrough topics are retired from the workspace without rewriting stored records.
+async function loadWorkspaceTopics() {
+  const items = await api<Topic[]>("/topics");
+  return items.filter((topic) => !/^ExampleSoft\s*·\s*(三步演[示習]|Three-step demo)$/i.test(topic.title.trim()));
+}
 
 document.documentElement.dataset.theme = initialTheme();
 
 function App() {
+  const sidebar = useSidebarWidth();
   const [language, setLanguage] = useState(locale);
   const [theme, setTheme] = useState(initialTheme);
   const [translateContent, setTranslateContent] = useState(() => localStorage.getItem("traceradar-content-translation") === "on");
@@ -159,6 +153,8 @@ function App() {
   } | null>(null);
   const [newTitle, setNewTitle] = useState(""),
     [newDescription, setNewDescription] = useState("");
+  const [newTags, setNewTags] = useState<string[]>([]);
+  const [deleteTarget, setDeleteTarget] = useState<Topic>();
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const knownTopics = useRef(topics);
@@ -302,7 +298,7 @@ function App() {
   useEffect(() => {
     let disposed = false;
     void Promise.all([
-      api<Topic[]>("/topics"),
+      loadWorkspaceTopics(),
       api<{ status: string }>("/health"),
       api<ModelStatus>("/settings/model"),
       api<Corpus[]>("/replay/corpora"),
@@ -508,7 +504,7 @@ function App() {
       json("PUT", { approved_source_ids: approved }),
     );
     await refresh(true);
-    setTopics(await api<Topic[]>("/topics"));
+    setTopics(await loadWorkspaceTopics());
     setToast(t("已保存这个主题的追踪词表与信息来源。"));
   }
   async function action(task: () => Promise<void>) {
@@ -636,27 +632,38 @@ function App() {
     setError("");
     setDialog(d);
   }
-  async function createDemo() {
-    await action(async () => {
-      const topic = await api<Topic>(
-        "/topics",
-        json("POST", {
-          title: "ExampleSoft · 三步演示",
-          description:
-            "用三批模拟新闻追踪 ExampleSoft 的漏洞披露、受影响版本和修复进展，并核对冲突报道。",
-        }),
-      );
-      await api(
-        `/topics/${topic.topic_id}/sources`,
-        json("PUT", { approved_source_ids: ["vendor", "research"] }),
-      );
-      setTopics(await api<Topic[]>("/topics"));
-      selectTopic(topic.topic_id);
-      setProvider("mock");
+  function openNewTopic(tag?: string, example?: string) {
+    if (tag) setNewTags((tags) => tags.includes(tag) ? tags : [tag, ...tags].slice(0, 12));
+    if (example) setNewTitle(example);
+    showDialog("new");
+  }
+  function requestDelete(topic: Topic) {
+    setDeleteTarget(topic);
+    showDialog("delete");
+  }
+  function confirmDelete() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.topic_id;
+    void action(async () => {
+      try {
+        await api(`/topics/${id}`, { method: "DELETE" });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("TOPIC_RUN_ACTIVE:")) {
+          throw new Error(t("检查仍在运行，结束后才能删除主题。"));
+        }
+        if (!(error instanceof Error && error.message.startsWith("NOT_FOUND:"))) throw error;
+      }
+      setTopics((items) => items.filter((topic) => topic.topic_id !== id));
+      if (selectedRef.current === id) {
+        history.replaceState(null, "", topicUrl(""));
+        selectTopic("", true);
+      }
       setDialog(null);
-      setToast(t("演示已准备好。从「第一步：发现事件」开始。"));
+      setDeleteTarget(undefined);
+      setToast(t("主题已删除。"));
     });
   }
+
   const { lookup: tr, failed: translationFailed } = useWorkspaceTranslation(language, [
     ...topics.flatMap((item) => [item.title, item.description]),
     ...(dashboard?.events ?? []).flatMap((item) => [item.title, item.state.current_status, item.state.key_facts.at(-1)?.fact ?? ""]),
@@ -687,15 +694,6 @@ function App() {
     run?.evidence?.filter((item) =>
       ["failed", "failed_retryable", "not_attempted"].includes(item.status),
     ) ?? [];
-  const done = (id: string) =>
-    dashboard?.recent_runs.some(
-      (r) =>
-        r.provider === "mock" &&
-        r.fixture_batch_id === id &&
-        r.status === "completed",
-    );
-  const nextDemo = demoSteps.find((s) => !done(s.id)) ?? demoSteps[2];
-
   function renderEventList(limit?: number) {
     const visibleEvents = limit
       ? [...events].sort((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at)).slice(0, limit)
@@ -731,9 +729,7 @@ function App() {
             detail={
               search
                 ? t("试试事件名称、状态或事实中的其他关键词。")
-                : fixture
-                  ? t("运行第一批演示新闻，查看漏洞 A 如何被建档。")
-                  : t("批准来源并运行检查。系统会按独立事项组织事件。")
+                : t("批准来源并运行检查。系统会按独立事项组织事件。")
             }
           />
         )}
@@ -764,7 +760,7 @@ function App() {
             value="mock"
             disabled={!fixtureOnly(dashboard?.approved_sources ?? [])}
           >
-            {t("规则演示 · ExampleSoft")}
+            {t("模拟来源")}
           </option>
           <option value="qwen">{t("真实模型分析")}</option>
         </select>
@@ -789,12 +785,9 @@ function App() {
             onChange={(e) => setBatch(e.target.value)}
             disabled={busy || running}
           >
-            {demoSteps.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
+            {fixtureBatches.map((id) => (
+              <option key={id} value={id}>{id === "empty" ? t("空批次") : t("批次 {0}", id)}</option>
             ))}
-            <option value="empty">{t("空批次")}</option>
           </select>
         </label>
       )}
@@ -929,23 +922,27 @@ function App() {
             className="icon-button"
             disabled={busy}
             aria-label={t("新建追踪主题")}
-            onClick={() => showDialog("new")}
+            onClick={() => openNewTopic()}
           >
             <Icon name="plus" size={15} />
           </button>
         </div>
         <div className="topic-list">
-          {[...topics].reverse().map((t) => (
-            <button
-              disabled={busy}
-              className={`topic-link ${selected === t.topic_id ? "selected" : ""}`}
-              key={t.topic_id}
-              aria-current={selected === t.topic_id ? "page" : undefined}
-              onClick={() => selectTopic(t.topic_id)}
-            >
-              <span className="topic-dot" />
-              <span>{tr(topicTitle(t.title))}</span>
-            </button>
+          {[...topics].reverse().map((topic) => (
+            <div className="topic-list-entry" key={topic.topic_id}>
+              <button
+                disabled={busy}
+                className={`topic-link ${selected === topic.topic_id ? "selected" : ""}`}
+                aria-current={selected === topic.topic_id ? "page" : undefined}
+                onClick={() => selectTopic(topic.topic_id)}
+              >
+                <span className="topic-dot" />
+                <span>{tr(topicTitle(topic.title))}</span>
+              </button>
+              <button type="button" className="sidebar-topic-delete" disabled={busy || (running && selected === topic.topic_id)}
+                aria-label={t("删除主题 {0}", tr(topicTitle(topic.title)))} title={t("删除主题")}
+                onClick={() => requestDelete(topic)}><Icon name="trash" size={15} /></button>
+            </div>
           ))}
           {!topics.length && <p className="sidebar-hint">{t("创建第一个追踪主题")}</p>}
         </div>
@@ -954,10 +951,6 @@ function App() {
           <span>{t("准备新闻回放")}</span>
         </button>
         <div className="sidebar-bottom">
-          <button aria-label={t("看懂这个演示")} onClick={() => showDialog("help")}>
-            <Icon name="help" />
-            {t("看懂这个演示")}
-          </button>
           <button aria-label={t("模型配置")} onClick={() => showDialog("settings")}>
             <Icon name="settings" />
             {t("模型配置")}
@@ -973,6 +966,7 @@ function App() {
           </div>
         </div>
       </aside>
+      <SidebarHandle {...sidebar} />
       <div className="main-shell">
         <header className="topbar">
           <div className="breadcrumb">
@@ -996,7 +990,7 @@ function App() {
               className="icon-button mobile-new"
               aria-label={t("新建主题")}
               disabled={busy}
-              onClick={() => showDialog("new")}
+              onClick={() => openNewTopic()}
             >
               <Icon name="plus" />
             </button>
@@ -1010,15 +1004,18 @@ function App() {
                 {currentTopic ? tr(topicTitle(currentTopic.title)) : t("追踪主题")}
               </h1>
               {currentTopic && <p>{tr(topicDescription(currentTopic.description))}</p>}
+              {!!currentTopic?.tags?.length && <div className="frame-tags">{currentTopic.tags.map((tag) => <span key={tag}>{tagLabel(tag)}</span>)}</div>}
             </div>
             {dashboard && (
-              <button
-                className="heading-edit"
-                disabled={busy || running}
-                onClick={() => showDialog("goal")}
-              >
-                {t("编辑追踪目标")} <Icon name="arrow" size={14} />
-              </button>
+              <div className="topic-heading-actions">
+                <button className="heading-edit" disabled={busy || running} onClick={() => showDialog("goal")}>
+                  {t("编辑追踪目标")} <Icon name="arrow" size={14} />
+                </button>
+                <button className="heading-delete" type="button" disabled={busy || running}
+                  onClick={() => requestDelete(dashboard.topic)}>
+                  <Icon name="trash" size={15} /> {t("删除主题")}
+                </button>
+              </div>
             )}
           </div>
           {feedback}
@@ -1188,59 +1185,6 @@ function App() {
                           )}
                         </OverviewSection>
                       </div>
-                      {fixture && (
-                        <section className="section-block">
-                          <div className="section-title">
-                            <h2>{t("跟着演示走一遍")}</h2>
-                            <button
-                              className="text-button"
-                              onClick={() => showDialog("help")}
-                            >
-                              {t("模拟演示说明")}
-                            </button>
-                          </div>
-                          <ol className="demo-steps">
-                            {demoSteps.map((s, i) => (
-                              <li
-                                key={s.id}
-                                className={
-                                  done(s.id)
-                                    ? "done"
-                                    : nextDemo.id === s.id
-                                      ? "next"
-                                      : ""
-                                }
-                              >
-                                <span className="step-number">
-                                  {done(s.id) ? (
-                                    <Icon name="check" size={15} />
-                                  ) : (
-                                    String(i + 1).padStart(2, "0")
-                                  )}
-                                </span>
-                                <div>
-                                  <h3>{t(s.name)}</h3>
-                                  <p>{t(s.description)}</p>
-                                </div>
-                                <button
-                                  disabled={busy || running}
-                                  onClick={() =>
-                                    void action(() =>
-                                      startRun({
-                                        batch: s.id,
-                                        provider: "mock",
-                                      }),
-                                    )
-                                  }
-                                >
-                                  {done(s.id) ? t("再次运行") : t("运行这一步")}{" "}
-                                  <Icon name="arrow" size={14} />
-                                </button>
-                              </li>
-                            ))}
-                          </ol>
-                        </section>
-                      )}
                     </div>
                     {runControls}
                   </div>
@@ -1826,7 +1770,7 @@ function App() {
   );
 
   return (
-    <TranslationContext.Provider value={tr}><div className="workspace">
+    <TranslationContext.Provider value={tr}><div className="workspace" style={{ "--sidebar-width": `${sidebar.width}px` } as React.CSSProperties}>
       {!selected ? (
         <ProjectHome
           topics={topics}
@@ -1836,9 +1780,7 @@ function App() {
           preferences={<>{preferences}{translationToggle}</>}
           onHome={() => navigateTopic("")}
           onTopic={navigateTopic}
-          onNew={() => showDialog("new")}
-          onDemo={createDemo}
-          onReplay={() => showDialog("replay")}
+          onNew={openNewTopic}
           onSettings={() => showDialog("settings")}
         />
       ) : (
@@ -1854,11 +1796,11 @@ function App() {
               manual: t("提交一条新闻"),
               settings: t("配置真实模型"),
               replay: t("准备新闻回放"),
-              help: t("看懂 ExampleSoft 演示"),
+              delete: t("删除主题"),
             }[dialog]
           }
           onClose={() => setDialog(null)}
-          wide={dialog === "help"}
+          compact={dialog === "delete"}
         >
           {error && (
             <div role="alert" className="error">
@@ -1876,14 +1818,16 @@ function App() {
                     json("POST", {
                       title: newTitle,
                       description: newDescription,
+                      tags: newTags,
                     }),
                   );
-                  setTopics(await api<Topic[]>("/topics"));
+                  setTopics(await loadWorkspaceTopics());
                   selectTopic(t.topic_id);
                   setDialog(null);
                   setTab("sources");
                   setNewTitle("");
                   setNewDescription("");
+                  setNewTags([]);
                 });
               }}
             >
@@ -1908,6 +1852,7 @@ function App() {
                   placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
                 />
               </label>
+              <TopicTagPicker value={newTags} options={tagOptions(topics)} onChange={setNewTags} />
               <button className="primary" disabled={busy}>
                 {t("创建主题")} <Icon name="arrow" size={16} />
               </button>
@@ -1916,11 +1861,12 @@ function App() {
           {dialog === "goal" && dashboard && (
             <GoalEditor
               topic={dashboard.topic}
+              availableTags={tagOptions(topics)}
               disabled={busy || running}
               action={action}
               onSaved={async () => {
                 await refresh();
-                setTopics(await api<Topic[]>("/topics"));
+                setTopics(await loadWorkspaceTopics());
                 setDialog(null);
                 setToast(t("追踪目标已更新。"));
               }}
@@ -1966,7 +1912,7 @@ function App() {
               disabled={busy}
               action={action}
               onPrepared={async (topic, c) => {
-                setTopics(await api<Topic[]>("/topics"));
+                setTopics(await loadWorkspaceTopics());
                 selectTopic(topic.topic_id);
                 setProvider("qwen");
                 setAsOf(localInput(c.cutoffs[0]));
@@ -1975,55 +1921,14 @@ function App() {
               }}
             />
           )}
-          {dialog === "help" && (
-            <div className="help-content">
-              <span className="tag amber">{t("全部为模拟数据")}</span>
-              <h3>{t("ExampleSoft 是虚构公司，来自同学原有的代码。")}</h3>
-              <p>
-                {t("仓库原本就有 ExampleSoft 的三批新闻、规则判断器和演示页面。我增加了“D验收”测试主题，用来检查新增功能。“D验收”本身不是产品功能。")}
-              </p>
-              <div className="help-flow">
-                {demoSteps.map((s, i) => (
-                  <div key={s.id}>
-                    <b>0{i + 1}</b>
-                    <h4>{t(s.name)}</h4>
-                    <p>{t(s.description)}</p>
-                  </div>
-                ))}
+          {dialog === "delete" && deleteTarget && (
+            <div className="topic-removal">
+              <h3>{tr(topicTitle(deleteTarget.title))}</h3>
+              <p>{t("将永久删除此主题及其事件、运行记录和审核记录。其他主题共用的新闻与来源会保留。")}</p>
+              <div className="topic-removal-actions">
+                <button type="button" autoFocus disabled={busy} onClick={() => setDialog(null)}>{t("取消")}</button>
+                <button type="button" className="danger-button" disabled={busy} onClick={confirmDelete}>{t("确认删除")}</button>
               </div>
-              <h3>{t("这些栏目各自回答什么问题？")}</h3>
-              <dl className="help-definitions">
-                <div>
-                  <dt>{t("事件")}</dt>
-                  <dd>{t("同一件事现在发展到哪里？例如漏洞 A，从披露到修复。")}</dd>
-                </div>
-                <div>
-                  <dt>{t("证据")}</dt>
-                  <dd>{t("这个判断来自哪篇新闻？排除与重复的信息也能查看。")}</dd>
-                </div>
-                <div>
-                  <dt>{t("时间线与历史")}</dt>
-                  <dd>{t("什么时候发生变化？系统之前和现在分别怎样判断？")}</dd>
-                </div>
-                <div>
-                  <dt>{t("待审核")}</dt>
-                  <dd>{t("哪里有矛盾？人可以保留原状态，或核对后采纳并修正。")}</dd>
-                </div>
-                <div>
-                  <dt>{t("运行记录")}</dt>
-                  <dd>{t("这次读取了什么、跳过了什么、在哪一步失败？")}</dd>
-                </div>
-              </dl>
-              <p className="hint">
-                {t("规则演示验证工作流程；真实模型才能分析其他主题。演示运行成功，不代表模型效果已经通过评测。")}
-              </p>
-              <button
-                className="primary"
-                disabled={busy}
-                onClick={() => void createDemo()}
-              >
-                {t("新建一个干净的三步演示")} <Icon name="arrow" size={15} />
-              </button>
             </div>
           )}
         </Modal>

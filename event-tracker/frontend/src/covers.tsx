@@ -7,6 +7,9 @@ const positions: Record<Cover, string> = {
   radar: "0% 0%", sports: "100% 0%", food: "0% 50%",
   technology: "100% 50%", transport: "0% 100%", archive: "100% 100%",
 };
+const categoryCovers = new Map<string, Cover>([
+  ["tech", "technology"], ["travel", "transport"], ["food", "food"], ["sports", "sports"],
+]);
 
 function subject(title: string): Cover {
   if (/examplesoft|security|資安|安全|漏洞|\bcve\b/i.test(title)) return "radar";
@@ -18,7 +21,8 @@ function subject(title: string): Cover {
 }
 
 export function CoverImage({ topic, className = "" }: { topic?: Topic; className?: string }) {
-  const cover = topic ? subject(topic.title) : "radar";
+  const category = topic?.tags?.map((tag) => categoryCovers.get(tag)).find((value) => value !== undefined);
+  const cover = category ?? (topic ? subject(topic.title) : "radar");
   return (
     <div className={`cover-art ${className}`} data-cover={cover} data-topic-cover={topic?.topic_id}
       style={{ "--cover-position": positions[cover] } as CSSProperties} aria-hidden="true">

@@ -1,5 +1,6 @@
 // API responses are defined by backend/app/domain.py. Keep these projections aligned.
 export type Topic = {
+  tags?: string[];
   topic_id: string;
   title: string;
   description: string;

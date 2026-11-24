@@ -1,3 +1,4 @@
+import { TopicTagPicker } from "./topic-tags";
 import { t } from "./i18n";
 import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
@@ -16,17 +17,20 @@ export type Act = (task: () => Promise<void>) => Promise<void>;
 
 export function GoalEditor({
   topic,
+  availableTags,
   disabled,
   action,
   onSaved,
 }: {
   topic: Topic;
+  availableTags: string[];
   disabled: boolean;
   action: Act;
   onSaved: () => Promise<void>;
 }) {
   const [title, setTitle] = useState(topic.title),
     [description, setDescription] = useState(topic.description);
+  const [tags, setTags] = useState(topic.tags ?? []);
   return (
     <form
       className="form-stack"
@@ -35,7 +39,7 @@ export function GoalEditor({
         void action(async () => {
           await api(
             `/topics/${topic.topic_id}`,
-            json("PATCH", { title, description }),
+            json("PATCH", { title, description, tags }),
           );
           await onSaved();
         });
@@ -60,6 +64,7 @@ export function GoalEditor({
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
+      <TopicTagPicker value={tags} options={availableTags} onChange={setTags} />
       <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
       </p>

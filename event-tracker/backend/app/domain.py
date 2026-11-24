@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
-from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, model_validator
+from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StringConstraints, model_validator, field_validator
 
 
 def uid() -> str:
@@ -16,16 +16,39 @@ class Model(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+TopicTags = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]],
+                      Field(max_length=12)]
+
+
+def unique_topic_tags(tags):
+    unique = {}
+    for tag in tags:
+        unique.setdefault(tag.casefold(), tag)
+    return list(unique.values())
+
+
 class TopicInput(Model):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] = 'standard'
+    tags: TopicTags = Field(default_factory=list)
+
+    @field_validator('tags')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags)
 
 
 class TopicPatch(Model):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] | None = None
+    tags: TopicTags | None = None
+
+    @field_validator('tags')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags) if tags is not None else None
 
 
 class Topic(TopicInput):

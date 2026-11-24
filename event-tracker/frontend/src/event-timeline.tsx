@@ -4,6 +4,7 @@ import { headline, longDate, status, text } from "./display";
 import type { EventDetail, TimelineItem, Transition } from "./types";
 import { priorityLabel, type Priority } from "./topic-report";
 import { useTranslation } from "./reference-translation";
+import { Modal } from "./ui";
 
 type Tone = "first" | "update" | "resolved" | "review";
 type Milestone = {
@@ -31,9 +32,9 @@ function sortDate(a: string, b: string) {
 function changeBadge(transition: Transition): Pick<Milestone, "tone" | "label" | "previous" | "next"> {
   const before = transition.before_state?.current_status;
   const after = transition.after_state.current_status;
-  if (before === after) return { tone: "update", label: t("进展更新") };
   const next = status(after);
   const previous = before ? status(before) : undefined;
+  if (before === after) return { tone: "update", label: t("进展更新"), previous, next };
   if (["patched", "completed"].includes(after)) return { tone: "resolved", label: next, previous, next };
   if (!before) return { tone: "first", label: after === "disclosed" ? next : t("首次记录"), next };
   return { tone: "first", label: t("状态变化"), previous, next };
@@ -108,6 +109,7 @@ export function EventTimeline({
   const tr = useTranslation();
   const nodes = milestones(value);
   const [chosenId, setChosenId] = useState("");
+  const [comparison, setComparison] = useState<Milestone>();
   const rail = useRef<HTMLOListElement>(null);
   const selected = nodes.find((node) => node.id === chosenId) ??
     nodes.filter((node) => node.tone !== "review").at(-1) ?? nodes.at(-1);
@@ -176,14 +178,9 @@ export function EventTimeline({
               <p>{tr(selected.description)}</p>
               {selected.reason && <p className="milestone-note">{tr(selected.reason)} <small>· {selected.origin}</small></p>}
               {selected.tone === "review" && <p className="milestone-note">{t("这条报道等待核实，事件当前结论仍以已记录的进展为准。")}</p>}
-              {selected.next && (
-                <details className="milestone-note">
-                  <summary>{t("查看前后结论")}</summary>
-                  <p>{selected.previous ? t("状态由「{0}」更新为「{1}」。", tr(selected.previous), tr(selected.next)) : t("记录时的状态为「{0}」。", tr(selected.next))}</p>
-                </details>
-              )}
-              {!!selected.evidenceIds.length && (
-                <div className="milestone-evidence" aria-label={t("新闻依据")}>
+              {(selected.next || !!selected.evidenceIds.length) && (
+                <div className="milestone-evidence">
+                  {selected.next && <button type="button" onClick={() => setComparison(selected)}>{t("查看前后结论")}</button>}
                   {[...new Set(selected.evidenceIds)].map((id) => {
                     const item = evidence.get(id);
                     const label = item && headline(item.title);
@@ -199,6 +196,15 @@ export function EventTimeline({
           </div>
         </>
       ) : <p className="event-track-help">{t("这条事件暂时没有可显示的进展记录。")}</p>}
+      {comparison?.next && <Modal title={t("查看前后结论")} compact onClose={() => setComparison(undefined)}>
+        <div className="conclusion-comparison">
+          <p className="meta">{comparison.dateLabel} · <time dateTime={comparison.at}>{longDate(comparison.at)}</time></p>
+          <dl>
+            <div><dt>{t("更新前")}</dt><dd>{comparison.previous ? tr(comparison.previous) : t("事件尚未建档")}</dd></div>
+            <div><dt>{t("更新后")}</dt><dd>{tr(comparison.next)}</dd></div>
+          </dl>
+        </div>
+      </Modal>}
     </section>
   );
 }

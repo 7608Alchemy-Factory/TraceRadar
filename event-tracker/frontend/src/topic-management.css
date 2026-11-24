@@ -1,0 +1,53 @@
+.sidebar-resize { display: none; }
+@media (min-width: 701px) {
+  .workspace > .sidebar { width: var(--sidebar-width, 236px); }
+  .workspace > .main-shell { margin-left: var(--sidebar-width, 236px); }
+  .sidebar-resize {
+    display: grid; place-items: center; position: fixed; inset-block: 0;
+    left: calc(var(--sidebar-width, 236px) - 6px); width: 12px; z-index: 12;
+    cursor: col-resize; touch-action: none; outline-offset: -2px;
+  }
+  .sidebar-resize span { width: 2px; height: 100%; background: color-mix(in srgb, var(--muted) 50%, transparent); }
+  .sidebar-resize:is(:hover,:focus-visible,:active) span { background: #b791f1; }
+}
+.topic-list-entry { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.sidebar .topic-list-entry .topic-link { flex: 1 1 auto; min-width: 0; }
+.sidebar .sidebar-topic-delete {
+  flex: 0 0 auto; min-width: 32px; min-height: 32px; padding: 0;
+  color: #ccc5da; background: transparent; border: 1px solid transparent;
+}
+.sidebar .sidebar-topic-delete:hover { color: #ffb4a4; background: #3e3035; border-color: #74555c; }
+.topic-heading-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: end; }
+.heading-delete { padding: 6px 8px; color: var(--accent); border-color: var(--line); background: var(--white); white-space: nowrap; }
+.heading-delete:hover { border-color: #ae6153; color: var(--orange); background: var(--warning-bg); }
+.topic-removal p { color: var(--muted); line-height: 1.6; }
+.topic-removal-actions { display: flex; justify-content: end; gap: 8px; }
+.dialog .danger-button { color: #fff; background: #9c3626; border-color: #9c3626; }
+.dialog .danger-button:hover { background: #7a2013; border-color: #7a2013; color: #fff; }
+.topic-filter { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 13px; color: var(--muted); font-size: .86rem; }
+.topic-filter select { width: auto; min-width: min(155px,100%); background: var(--white); color: var(--ink); }
+.topic-tag-picker { border-radius: 8px; border-color: var(--line); min-width: 0; }
+.topic-tag-picker legend { font-size: .9rem; color: var(--ink); }
+.topic-tag-options, .frame-tags { display: flex; flex-wrap: wrap; gap: 5px; }
+.topic-tag-options .topic-tag { padding: 5px 9px; min-height: 32px; color: var(--ink); background: var(--white); border-color: var(--line); }
+.topic-tag-options .topic-tag[aria-pressed="true"] { background: var(--surface-selected); color: var(--accent); border-color: var(--accent); }
+.custom-tag { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin-top: 9px; }
+.frame-tags { margin-top: 5px; }
+.frame-tags span { padding: 2px 5px; border-radius: 4px; font-size: .71rem; background: var(--surface-selected); color: var(--accent); overflow-wrap: anywhere; }
+.frame-copy .frame-tags { max-height: 2.8rem; overflow: hidden; }
+.topic-examples { margin-block: 20px 8px; }
+.topic-examples h3 { margin-block: 0 7px; font-size: .94rem; color: var(--muted); }
+.topic-examples ul { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
+.topic-examples button { background: var(--white); color: var(--accent); border-color: var(--line); }
+.dialog.compact { width: 660px; max-width: calc(100vw - 32px); }
+.conclusion-comparison > p { margin-block: 0 12px; }
+.conclusion-comparison dl { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; margin: 0; }
+.conclusion-comparison dl > div { padding: 14px; background: var(--paper); border: 1px solid var(--line); border-radius: 8px; }
+.conclusion-comparison dl > div:last-child { background: var(--surface-selected); }
+.conclusion-comparison dt { color: var(--muted); font-size: .86rem; font-weight: 650; }
+.conclusion-comparison dd { margin: 6px 0 0; color: var(--ink); line-height: 1.6; white-space: pre-line; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .sidebar .topic-list-entry { flex: 0 0 auto; padding-right: 3px; }
+  .conclusion-comparison dl { grid-template-columns: minmax(0,1fr); }
+  .topic-heading-actions { justify-content: start; }
+}

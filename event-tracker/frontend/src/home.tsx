@@ -8,6 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type Rea
 import { Icon } from "./ui";
 import { status, longDate, topicTitle, topicDescription } from "./display";
 import type { Topic } from "./types";
+import { tagExamples, tagLabel, tagOptions } from "./topic-tags";
 
 export function topicUrl(id: string) {
   const url = new URL(location.href);
@@ -50,20 +51,27 @@ type HomeProps = {
   preferences: ReactNode;
   onHome: () => void;
   onTopic: (id: string) => void;
-  onNew: () => void;
-  onDemo: () => void;
-  onReplay: () => void;
+  onNew: (tag?: string, example?: string) => void;
   onSettings: () => void;
 };
 
 export function ProjectHome({
-  topics, loading, busy, feedback, preferences, onHome, onTopic, onNew, onDemo, onReplay, onSettings,
+  topics, loading, busy, feedback, preferences, onHome, onTopic, onNew, onSettings,
 }: HomeProps) {
   const tr = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
   const reel = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState({ start: true, end: true });
-  const items = [...topics].reverse();
+  const [category, setCategory] = useState("");
+  const tags = tagOptions(topics);
+  const activeCategory = tags.includes(category) ? category : "";
+  const items = [...topics].reverse().filter((topic) =>
+    !activeCategory || topic.tags?.some((tag) => tag.toLocaleLowerCase() === activeCategory.toLocaleLowerCase()));
+  const examples = tagExamples(activeCategory);
+
+  useLayoutEffect(() => {
+    if (reel.current) reel.current.scrollLeft = 0;
+  }, [activeCategory]);
 
   useEffect(() => {
     const element = reel.current;
@@ -91,18 +99,15 @@ export function ProjectHome({
       resize.disconnect();
       element.removeEventListener("scroll", update);
     };
-  }, [topics.length]);
+  }, [items.length, activeCategory]);
 
   useLayoutEffect(() => {
     const motion = gsap.matchMedia(stage);
     motion.add("(prefers-reduced-motion: no-preference)", () => {
       const intro = gsap.timeline({ defaults: { duration: .62, ease: "power3.out", clearProps: "opacity,transform,clipPath" } });
       intro.from(".home-intro > *", { y: 22, opacity: 0, stagger: .07 })
-        .from(".home-radar", { clipPath: "inset(11% 9% 12% 9%)", opacity: .4 }, .04);
-      gsap.timeline({
-        scrollTrigger: { trigger: ".home-hero", start: "top top", end: "+=310", scrub: .35 },
-      }).to(".home-radar .cover-print", { yPercent: 3, scale: 1.06, ease: "none" });
-      gsap.from(".projects-heading, .reel, .reel-empty, .home-tools", {
+        .from(".live-radar", { clipPath: "inset(9% 7% 9% 7%)", opacity: .4 }, .04);
+      gsap.from(".projects-heading, .reel, .reel-empty", {
         y: 26, opacity: 0, duration: .62, stagger: .09, ease: "power3.out",
         clearProps: "opacity,transform",
         scrollTrigger: { trigger: ".projects-section", start: "top 91%", once: true },
@@ -118,7 +123,7 @@ export function ProjectHome({
       });
     });
     return () => motion.revert();
-  }, [loading, topics.length]);
+  }, [loading, items.length, activeCategory]);
 
   function roll(direction: number) {
     const frame = reel.current?.querySelector("li");
@@ -138,7 +143,7 @@ export function ProjectHome({
           <button className="home-utility" onClick={onSettings}>
             <Icon name="settings" size={17} /><span>{t("模型配置")}</span>
           </button>
-          <button className="home-create" onClick={onNew} disabled={busy}>
+          <button className="home-create" onClick={() => onNew(activeCategory || undefined)} disabled={busy}>
             <Icon name="plus" size={17} />{t("新建主题")}
           </button>
         </nav>
@@ -158,10 +163,10 @@ export function ProjectHome({
         <section className="projects-section" aria-labelledby="projects-title">
           <div className="projects-heading">
             <div>
-              <h2 id="projects-title">{t("追踪主题")} <span>{topics.length}</span></h2>
+              <h2 id="projects-title">{t("追踪主题")} <span>{items.length}</span></h2>
               {!!topics.length && <p>{t("选择一个主题，查看正在跟进的事件。")}</p>}
             </div>
-            {!!topics.length && (
+            {!!items.length && (
               <div className="reel-controls">
                 <button type="button" aria-label={t("向左浏览主题")} aria-controls="topic-reel"
                   disabled={edges.start} onClick={() => roll(-1)}><Icon name="left" /></button>
@@ -170,9 +175,16 @@ export function ProjectHome({
               </div>
             )}
           </div>
+          <label className="topic-filter">
+            <span>{t("主题类型")}</span>
+            <select value={activeCategory} onChange={(event) => setCategory(event.target.value)}>
+              <option value="">{t("全部类型")}</option>
+              {tags.map((tag) => <option key={tag} value={tag}>{tagLabel(tag)}</option>)}
+            </select>
+          </label>
           {loading ? (
             <p className="reel-empty" role="status">{t("正在读取追踪主题…")}</p>
-          ) : topics.length ? (
+          ) : items.length ? (
             <div className="reel" id="topic-reel" ref={reel}>
               <ul className="reel-track">
                 {items.map((topic) => {
@@ -185,6 +197,7 @@ export function ProjectHome({
                           <span className={`frame-status ${topic.status}`}><i aria-hidden="true" />{status(topic.status)}</span>
                           <h3>{tr(topicTitle(topic.title))}</h3>
                           <p>{tr(topicDescription(topic.description))}</p>
+                          {!!topic.tags?.length && <div className="frame-tags">{topic.tags.map((tag) => <span key={tag}>{tagLabel(tag)}</span>)}</div>}
                           <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
                         </div>
                       </a>
@@ -195,16 +208,17 @@ export function ProjectHome({
             </div>
           ) : (
             <div className="reel-empty">
-              <h3>{t("还没有追踪主题")}</h3>
-              <p>{t("可以新建一个感兴趣的主题，或用模拟新闻先体验一次。")}</p>
+              <h3>{t(activeCategory ? "此类型还没有主题" : "还没有追踪主题")}</h3>
+              <p>{t("新建一个主题开始追踪。")}</p>
             </div>
           )}
+          {!!examples.length && <div className="topic-examples">
+            <h3>{t("主题示例")}</h3>
+            <ul>{examples.map((example) => <li key={example}>
+              <button type="button" disabled={busy} onClick={() => onNew(activeCategory, example)}>{example}</button>
+            </li>)}</ul>
+          </div>}
         </section>
-
-        <div className="home-tools">
-          <button onClick={onDemo} disabled={busy || loading}><Icon name="play" size={17} />{t("体验三步演示")}</button>
-          <button onClick={onReplay} disabled={busy || loading}><Icon name="evidence" size={17} />{t("准备新闻回放")}</button>
-        </div>
       </main>
     </div>
   );

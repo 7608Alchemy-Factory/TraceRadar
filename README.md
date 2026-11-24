@@ -6,4 +6,5 @@ It includes a FastAPI backend, React research workspace, SQLite persistence, Moc
 
 - [成员 D 工作交付总结](event-tracker/docs/member-d-delivery.zh-CN.md)
 - [工作台使用与模型配置](event-tracker/docs/workspace-v2.zh-CN.md)
+- [v1.1 界面原型与转场分镜](event-tracker/docs/workspace-v1.1-prototype.html)
 - Windows: build the frontend and install backend requirements, then double-click `Start-TraceRadar.cmd`.

@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
-from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, model_validator
+from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StringConstraints, model_validator, field_validator
 
 
 def uid() -> str:
@@ -16,19 +16,48 @@ class Model(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+TopicTag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+TopicTags = Annotated[list[TopicTag], Field(max_length=3)]
+TopicExclusions = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]],
+                            Field(max_length=20)]
+
+
+def unique_topic_tags(tags):
+    unique = {}
+    for tag in tags:
+        unique.setdefault(tag.casefold(), tag)
+    return list(unique.values())
+
+
 class TopicInput(Model):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] = 'standard'
+    tags: TopicTags = Field(default_factory=list)
+    exclusions: TopicExclusions = Field(default_factory=list)
+
+    @field_validator('tags', 'exclusions')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags)
 
 
 class TopicPatch(Model):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] | None = None
+    tags: TopicTags | None = None
+    exclusions: TopicExclusions | None = None
+
+    @field_validator('tags', 'exclusions')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags) if tags is not None else None
 
 
 class Topic(TopicInput):
+    # Older records may contain more tags than the current input limit.
+    tags: Annotated[list[TopicTag], Field(max_length=12)] = Field(default_factory=list)
     topic_id: str
     status: Literal['draft', 'active'] = 'draft'
     created_at: AwareDatetime
@@ -38,13 +67,19 @@ class Topic(TopicInput):
 class Source(Model):
     source_id: str = Field(pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
     name: str = Field(min_length=1, max_length=200)
-    type: Literal['fixture', 'replay', 'rss', 'manual'] = 'fixture'
+    type: Literal['fixture', 'replay', 'rss', 'manual', 'web_search', 'webpage'] = 'fixture'
     endpoint: str = Field(min_length=1, max_length=1000)
     config: dict = Field(default_factory=dict)
 
 
 class SourceRegisterInput(Source):
     pass
+
+
+class SourcePatchInput(Model):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    endpoint: str | None = Field(default=None, min_length=1, max_length=1000)
+    config: dict | None = None
 
 
 class SourceApproval(Model):
@@ -92,10 +127,28 @@ class Event(Model):
     event_id: str
     topic_id: str
     title: str
+    title_locked: bool = False
     state: EventState
     version: int
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class EventPatch(Model):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    title_locked: bool | None = None
+
+
+class EventDismissInput(Model):
+    disposition: Literal['irrelevant', 'unwanted'] = 'irrelevant'
+    reason: str | None = Field(default=None, max_length=160)
+    add_exclusion: bool = True
+
+
+class EventMergeInput(Model):
+    target_event_id: str = Field(min_length=1, max_length=100)
+    new_title: str | None = Field(default=None, min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=240)
 
 
 class Association(Model):
@@ -133,6 +186,8 @@ class EventDecision(Model):
     requires_review: bool = False
     reason_codes: list[str]
     update_kind: UpdateKind | None = None
+    impact_reason: str | None = Field(default=None, max_length=280)
+    proposed_title: str | None = Field(default=None, max_length=200)
     expected_version: int | None = None
 
 
@@ -186,7 +241,7 @@ class ManualEvidenceItem(Model):
 
 class ReviewResolutionInput(Model):
     decision: Literal['dismiss', 'accept']
-    note: str = Field(min_length=1, max_length=2000)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
     event_id: str | None = None
     expected_version: int | None = Field(default=None, ge=1)
     current_status: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -196,8 +251,9 @@ class ReviewResolutionInput(Model):
 
     @model_validator(mode='after')
     def nonblank_note(self):
-        self.note = self.note.strip()
-        if not self.note:
+        if self.note is not None:
+            self.note = self.note.strip()
+        if self.note == '' or (self.decision == 'accept' and self.note is None):
             raise ValueError('A review note is required')
         if self.decision == 'accept' and not all((self.event_id, self.expected_version, self.current_status and self.current_status.strip(), self.fact and self.fact.strip())):
             raise ValueError('Accept requires event_id, expected_version, current_status and fact')

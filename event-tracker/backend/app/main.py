@@ -1,27 +1,43 @@
 import logging
 from threading import RLock
 from dataclasses import replace
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import Body, FastAPI, Header, Request
+from pydantic import Field
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
+from .domain import (
+    Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, SourcePatchInput,
+    EventPatch, EventDismissInput, EventMergeInput, RunInput, ReviewResolutionInput,
+    ModelSettingsInput, ModelDiscoveryInput, uid, now,
+)
 from .repositories import Repository
-from .connectors import SOURCES, recommend_sources, validate_source_definition
+from .connectors import SOURCES, ConnectorRouter, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
+from .translation import TranslationInput, translate
+from .web_connectors import save_search_settings, search_settings_status
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
 
 
 class SourceRecommendationInput(Model):
     llm_summary: bool | None = None
+    search_languages: list[Literal['zh-CN', 'zh-HK', 'en-US', 'ko', 'ja']] | None = Field(default=None, max_length=5)
+
+
+class SearchSettingsInput(Model):
+    provider: Literal['auto', 'bocha', 'tavily', 'free'] | None = None
+    bocha_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    tavily_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    jina_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    web_fetch_jina_fallback: bool | None = None
 
 
 def create_app(settings=None):
@@ -43,7 +59,8 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        if origin and request.url.path.startswith('/api/settings/model') and request.method in ('POST','PUT'):
+        provider_route = request.url.path.startswith(('/api/settings/model', '/api/settings/search')) or request.url.path == '/api/translation'
+        if origin and provider_route and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
             except ValueError:
@@ -104,9 +121,61 @@ def create_app(settings=None):
                 raise AppError('PROVIDER_SCHEMA','The model returned an incorrect evidence reference.',502)
             return {'status':'ok','model':config.model,'attempts':provider.attempt}
 
+    @app.get('/api/settings/search')
+    def read_search_settings():
+        with config_lock:
+            return search_settings_status(config)
+
+    @app.put('/api/settings/search')
+    def update_search_settings(body: SearchSettingsInput):
+        with config_lock:
+            if repo.active_runs():
+                raise AppError('RUN_ACTIVE', 'Wait for all runs to finish before changing search settings.')
+            return save_search_settings(config, body)
+
+    @app.post('/api/settings/search/check')
+    def check_search():
+        with config_lock:
+            snap = replace(config)
+        status = search_settings_status(snap)
+        router = ConnectorRouter(snap.fixture_path, snap.corpus_root, settings=snap)
+        items = router.fetch(
+            {
+                'source_id': 'search_check',
+                'name': 'Search Check',
+                'type': 'web_search',
+                'endpoint': 'search://check',
+                'config': {
+                    'query': '人工智能 最新进展' if status['active_provider'] == 'bocha' else 'OpenAI',
+                    'search_provider': status['active_provider'],
+                    'max_items': 2,
+                    'fetch_full_text': False,
+                    'fallback_to_free': False,
+                },
+            },
+            'live',
+        )
+        return {
+            'status': 'ok',
+            'active_provider': status['active_provider'],
+            'active_label': status['active_label'],
+            'provider_used': router.last_fetch_stats.get('provider_used'),
+            'items': len(items),
+        }
+
     @app.get('/api/replay/corpora')
     def corpora():
         return replay_catalog(config)
+
+    @app.post('/api/translation')
+    def reference_translation(body: TranslationInput):
+        with config_lock:
+            settings = replace(config)
+        return translate(settings, body)
+
+    @app.get('/api/radar')
+    def radar():
+        return repo.radar()
 
     @app.post('/api/topics', status_code=201, response_model=Topic)
     def create_topic(body: TopicInput):
@@ -125,6 +194,11 @@ def create_app(settings=None):
     def patch_topic(identity: str, body: TopicPatch):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
 
+    @app.delete('/api/topics/{identity}')
+    def delete_topic(identity: str):
+        repo.delete_topic(identity)
+        return {'topic_id': identity}
+
     @app.post('/api/topics/{identity}/source-recommendations')
     def recommendations(
         identity: str,
@@ -133,6 +207,7 @@ def create_app(settings=None):
     ):
         item = repo.get('topics', identity)
         want_llm = body.llm_summary if (body is not None and body.llm_summary is not None) else llm_summary
+        search_languages = body.search_languages if body is not None else None
         approved_ids = {s['source_id'] for s in repo.sources(identity)}
         with config_lock:
             settings_snapshot = replace(config)
@@ -146,6 +221,7 @@ def create_app(settings=None):
             approved_source_ids=approved_ids,
             llm_summary=want_llm,
             settings=settings_snapshot,
+            search_languages=search_languages,
         )
         persisted = []
         for src in result['sources']:
@@ -162,6 +238,27 @@ def create_app(settings=None):
     @app.post('/api/sources', status_code=201, response_model=Source)
     def register_source(body: SourceRegisterInput):
         validated = validate_source_definition(body.model_dump(mode='json'), config.corpus_root)
+        return repo.register_source(validated)
+
+    @app.patch('/api/sources/{source_id}', response_model=Source)
+    def patch_source(source_id: str, body: SourcePatchInput):
+        if repo.active_runs():
+            raise AppError('RUN_ACTIVE', 'Wait for active runs to finish before editing sources.')
+        existing = repo.get('sources', source_id)
+        merged = dict(existing)
+        if body.name is not None:
+            merged['name'] = body.name.strip()
+        if body.config is not None:
+            cfg = dict(existing.get('config') or {})
+            cfg.update(body.config)
+            merged['config'] = cfg
+        if body.endpoint is not None:
+            merged['endpoint'] = body.endpoint.strip()
+        elif merged.get('type') == 'web_search' and isinstance((merged.get('config') or {}).get('query'), str):
+            q = merged['config']['query'].strip()
+            if q:
+                merged['endpoint'] = f"search://{quote_plus(q)}"[:900]
+        validated = validate_source_definition(merged, config.corpus_root)
         return repo.register_source(validated)
 
     @app.put('/api/topics/{identity}/sources')
@@ -240,6 +337,33 @@ def create_app(settings=None):
     @app.get('/api/events/{identity}')
     def event(identity: str):
         return repo.event_detail(identity)
+
+    @app.patch('/api/events/{identity}')
+    def patch_event(identity: str, body: EventPatch):
+        return repo.patch_event(identity, body.model_dump(exclude_none=True))
+
+    @app.delete('/api/events/{identity}')
+    def delete_event(identity: str):
+        repo.delete_event(identity)
+        return {'event_id': identity}
+
+    @app.post('/api/events/{identity}/dismiss')
+    def dismiss_event(identity: str, body: EventDismissInput):
+        return repo.dismiss_event(
+            identity,
+            disposition=body.disposition,
+            reason=body.reason,
+            add_exclusion=body.add_exclusion,
+        )
+
+    @app.post('/api/events/{identity}/merge')
+    def merge_event(identity: str, body: EventMergeInput):
+        return repo.merge_event(
+            identity,
+            body.target_event_id,
+            new_title=body.new_title,
+            reason=body.reason,
+        )
 
     @app.get('/api/topics/{identity}/evidence')
     def evidence_decisions(identity: str):

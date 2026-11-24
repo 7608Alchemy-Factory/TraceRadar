@@ -142,15 +142,39 @@ class StateManager:
         if event_id is None:
             title_key = ' '.join(a.association.title.casefold().split())
             event_id = str(uuid5(NAMESPACE_URL, f"traceradar:{key_prefix}:{title_key}"))
-        event = dict(event_id=event_id, topic_id=topic['topic_id'],
-                     title=existing['title'] if existing else a.association.title, state=state,
-                     version=existing['version'] + 1 if existing else 1,
-                     created_at=existing['created_at'] if existing else stamp, updated_at=stamp)
+        title_locked = bool(existing.get('title_locked')) if existing else False
+        before_title = existing['title'] if existing else None
+        raw_proposed_title = a.proposed_title.strip() if (a.proposed_title and a.proposed_title.strip()) else None
+        evolved_title = (
+            raw_proposed_title
+            if existing
+            and not title_locked
+            and raw_proposed_title
+            and raw_proposed_title != existing['title']
+            and proposal.update_kind in ('major_milestone', 'fact_added')
+            else None
+        )
+        final_title = evolved_title or (existing['title'] if existing else a.association.title)
+        event = dict(
+            event_id=event_id,
+            topic_id=topic['topic_id'],
+            title=final_title,
+            state=state,
+            version=existing['version'] + 1 if existing else 1,
+            created_at=existing['created_at'] if existing else stamp,
+            updated_at=stamp,
+            **({'title_locked': True} if title_locked else {}),
+        )
         key = hashlib.sha256(f"{key_prefix}:{event_id}:policy-v2".encode()).hexdigest()
         legacy_key = hashlib.sha256(f"{key_prefix}:policy-v1".encode()).hexdigest()
         transition = dict(transition_id=uid(), event_id=event['event_id'], run_id=run_id,
                           before_state=existing['state'] if existing else None, after_state=state,
                           evidence_ids=[evidence['evidence_id']], idempotency_key=key, committed_at=stamp)
+        if evolved_title and before_title:
+            transition['before_title'] = before_title
+            transition['after_title'] = evolved_title
+        if a.impact_reason and a.impact_reason.strip():
+            transition['impact_reason'] = a.impact_reason.strip()
         priority, action, reasons = decide_notification(proposal.update_kind, topic['notification_preferences'])
         notification = dict(notification_id=uid(), topic_id=topic['topic_id'], event_id=event['event_id'],
                             transition_id=transition['transition_id'], priority=priority, action=action,

@@ -46,16 +46,23 @@ npm run dev
 
 Open http://127.0.0.1:5173. API documentation: http://127.0.0.1:8000/docs. Vite proxies `/api` to port 8000. If ports conflict, change the API port and proxy target together in `frontend/vite.config.ts`; change the Vite server port there as needed.
 
-## Fixed demo
+## Frontend storyboard
 
-1. Select **看懂这个演示** in the sidebar, then **新建一个干净的三步演示**. ExampleSoft content, URLs, dates and sources are fictional simulated input; both fixture sources are approved automatically.
-2. Keep **规则演示** selected.
-3. Run **发现事件**, **补充与归类**, then **修复与冲突**, waiting for each to complete.
-4. Expect 2 events, 4 transitions, 3 digest notifications, 1 immediate notification and 2 review records. Event A becomes patched; conflicting and unclear reports never overwrite confirmed state.
-5. Inspect Event A for the four state fields, raw evidence, duplicate/conflicting relations and before/after history. Expand Trace steps to see actual decisions, references, attempt and timestamps.
-6. Run the same batches again. Event, transition and notification counts stay unchanged. Refresh or restart to verify persistence.
+Open [the screen and motion storyboard](docs/frontend-1124-storyboard.html) in a browser to walk through the screens and transitions. The top-right language and theme settings are saved in the current browser. Article and user-entered text retain their source language.
 
-Notifications are in-app decisions only. Digest means a list of routine updates. No email, scheduled summary or phone delivery is implemented.
+## Topic management
+
+Use **New topic** to add one or more topic types, or enter a custom tag. Type filters on the homepage match tagged topics and show starter ideas for the built-in categories. Existing tags can be edited with the tracking goal.
+
+Use **Delete topic** on a topic page. Deletion requires confirmation and removes the topic's events, runs and reviews while retaining shared evidence and sources. A topic with an active run cannot be deleted. Fixtures remain available to the API and automated tests.
+
+## Live sources
+
+Open a topic's **Sources** tab to set up a web search, a monitored webpage, or an RSS subscription. Select the registered source and save the selection before running a check. A webpage monitor saves an initial snapshot and records later changes.
+
+**Search engine** shows the active search configuration and can test the saved engine from the backend. Auto mode uses Bocha or Tavily when configured, with key-free Bing and Google News available for public search. Set `SEARCH_PROVIDER` to `auto`, `bocha`, `tavily`, or `free` and provide the matching optional keys on the backend. See [the environment example](.env.example).
+
+If Google News keyword RSS is unavailable, a new check tries the configured search engine or key-free Bing for the same keywords. **Run history** records the fallback or names the failed sources. Deploy the frontend build and FastAPI backend from the same revision. Restart the backend after upgrading so it loads the new search endpoints and connectors.
 
 ## Checks
 
@@ -123,3 +130,9 @@ See `docs/decisions.md`, `data_contracts.md`, `api_contracts.md`, `progress.md` 
 ## Current limits
 
 Local single user and manual execution. C's connectors support registered RSS feeds and offline replay, rather than general web search or arbitrary website crawling. No scheduling, authentication, cloud deployment or external notifications. Mock rules cover ExampleSoft only. Reviews support dismissal or explicit human acceptance/correction with a required audit note and complete state history. In **检查历史**, select a failed run and use **续跑未完成证据** to retry failed and unattempted items from its saved input snapshot. SQLite schema version 3 adds run input snapshots. Changed content at an existing source external ID requires a new revision ID. Evidence reference checks establish traceability, not semantic proof of truth. Generic model reasoning still requires live-provider evaluation. Model settings can be saved through the local workspace; keys are never returned and remain excluded from Git.
+
+## Event radar, reports and translations
+
+The homepage radar shows recent recorded events. Its dot positions represent display order and do not encode locations. The topic report uses the same stored update classifications as event milestones. Items awaiting verification are counted separately.
+
+The interface language can request model translations for workspace text. Article translations are requested from the evidence dialog and labeled as a reference. These requests use the configured model provider and leave the source text intact.

@@ -1,3 +1,5 @@
+import { MAX_TOPIC_TAGS, TopicTagPicker } from "./topic-tags";
+import { t } from "./i18n";
 import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
 import type {
@@ -7,25 +9,40 @@ import type {
   ReviewResolution,
   Event,
   ModelStatus,
+  SearchStatus,
   Corpus,
 } from "./types";
 import { date, text, title as eventTitle, headline } from "./display";
+import { searchProviderLabel } from "./source-health";
 import { Icon, Empty } from "./ui";
 export type Act = (task: () => Promise<void>) => Promise<void>;
 
 export function GoalEditor({
   topic,
+  availableTags,
   disabled,
   action,
   onSaved,
 }: {
   topic: Topic;
+  availableTags: string[];
   disabled: boolean;
   action: Act;
   onSaved: () => Promise<void>;
 }) {
   const [title, setTitle] = useState(topic.title),
     [description, setDescription] = useState(topic.description);
+  const [tags, setTags] = useState(topic.tags ?? []);
+  const [exclusions, setExclusions] = useState<string[]>(topic.exclusions ?? []);
+  const [newExclusion, setNewExclusion] = useState("");
+  const addExclusion = () => {
+    const clean = newExclusion.trim();
+    if (!clean || exclusions.length >= 20) return;
+    if (!exclusions.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+      setExclusions([...exclusions, clean]);
+    }
+    setNewExclusion("");
+  };
   return (
     <form
       className="form-stack"
@@ -34,14 +51,14 @@ export function GoalEditor({
         void action(async () => {
           await api(
             `/topics/${topic.topic_id}`,
-            json("PATCH", { title, description }),
+            json("PATCH", { title, description, tags, exclusions }),
           );
           await onSaved();
         });
       }}
     >
       <label>
-        主题名称
+        {t("主题名称")}
         <input
           required
           maxLength={200}
@@ -50,20 +67,64 @@ export function GoalEditor({
         />
       </label>
       <label>
-        追踪目标
+        {t("追踪目标")}
         <textarea
           required
-          aria-label="追踪目标"
+          aria-label={t("追踪目标")}
           maxLength={4000}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
+      <TopicTagPicker value={tags} options={availableTags} onChange={setTags} />
+      <fieldset className="topic-tag-picker">
+        <legend>{t("排除规则（不追踪 / 不相关）")}</legend>
+        {exclusions.length > 0 ? (
+          <div className="exclusion-pills">
+            {exclusions.map((rule) => (
+              <span className="exclusion-pill" key={rule}>
+                <span>{rule}</span>
+                <button
+                  type="button"
+                  aria-label={t("移除排除规则")}
+                  onClick={() => setExclusions(exclusions.filter((x) => x !== rule))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="hint">{t("暂无排除规则。移除误报事件或手动添加后，系统会在后续拆词与相关性判断中自动避开。")}</p>
+        )}
+        <div className="custom-tag">
+          <input
+            aria-label={t("新增排除规则")}
+            placeholder={t("例如：排除无畏契约分部、不追踪旧赛季回顾")}
+            value={newExclusion}
+            maxLength={160}
+            onChange={(e) => setNewExclusion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                addExclusion();
+              }
+            }}
+          />
+          <button
+            type="button"
+            disabled={!newExclusion.trim() || exclusions.length >= 20}
+            onClick={addExclusion}
+          >
+            {t("添加排除")}
+          </button>
+        </div>
+      </fieldset>
       <p className="hint">
-        新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。
+        {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
       </p>
-      <button className="primary" disabled={disabled}>
-        保存追踪目标 <Icon name="arrow" size={16} />
+      <button className="primary" disabled={disabled || tags.length > MAX_TOPIC_TAGS}>
+        {t("保存追踪目标")} <Icon name="arrow" size={16} />
       </button>
     </form>
   );
@@ -80,9 +141,25 @@ export function RegisterSource({
   onSaved: () => Promise<void>;
   knownIds: string[];
 }) {
-  const [kind, setKind] = useState("manual"),
-    [id, setId] = useState("my_news"),
-    [endpoint, setEndpoint] = useState("");
+  const [kind, setKind] = useState("web_search"),
+    [id, setId] = useState("ws_custom"),
+    [endpoint, setEndpoint] = useState(""),
+    [searchQuery, setSearchQuery] = useState(""),
+    [fetchFullText, setFetchFullText] = useState(true);
+  const handleKindChange = (next: string) => {
+    setKind(next);
+    const defaults: Record<string, string> = {
+      web_search: "ws_custom",
+      webpage: "page_monitor",
+      rss: "my_rss",
+      manual: "my_news",
+      lbj: "lbj_replay",
+      nba: "nba_replay",
+    };
+    if (Object.values(defaults).includes(id)) {
+      setId(defaults[next] ?? "my_source");
+    }
+  };
   return (
     <form
       className="form-stack"
@@ -90,36 +167,65 @@ export function RegisterSource({
         e.preventDefault();
         void action(async () => {
           if (knownIds.includes(id))
-            throw Error("来源 ID 已存在，请换一个名称。");
+            throw Error(t("来源 ID 已存在，请换一个名称。"));
           const type =
-            kind === "rss" ? "rss" : kind === "manual" ? "manual" : "replay";
+            kind === "web_search"
+              ? "web_search"
+              : kind === "webpage"
+                ? "webpage"
+                : kind === "rss"
+                  ? "rss"
+                  : kind === "manual"
+                    ? "manual"
+                    : "replay";
           const path =
             kind === "lbj"
               ? "lbj_2026_extended/all.json"
               : "nba_2026_multi_event/all.json";
+          const cleanQuery = searchQuery.trim();
           await api(
             "/sources",
             json("POST", {
               source_id: id,
               name:
-                kind === "manual"
-                  ? "手动录入"
-                  : kind === "rss"
-                    ? "RSS 订阅"
-                    : `${kind.toUpperCase()} 回放`,
+                kind === "web_search"
+                  ? `${t("全网搜索")} · ${cleanQuery.slice(0, 36)}`
+                  : kind === "webpage"
+                    ? `${t("网页监控")} · ${(() => { try { return new URL(endpoint).hostname; } catch { return endpoint.replace(/^https?:\/\//i, "").slice(0, 40); } })()}`
+                    : kind === "manual"
+                      ? t("手动录入")
+                      : kind === "rss"
+                        ? t("RSS 订阅")
+                        : t("{0} 回放", kind.toUpperCase()),
               type,
               endpoint:
-                type === "manual"
-                  ? "manual://notes"
-                  : type === "rss"
-                    ? endpoint
-                    : `replay://${path}`,
+                type === "web_search"
+                  ? `search://${encodeURIComponent(cleanQuery).slice(0, 800)}`
+                  : type === "webpage" || type === "rss"
+                    ? endpoint.trim()
+                    : type === "manual"
+                      ? "manual://notes"
+                      : `replay://${path}`,
               config:
-                type === "replay"
-                  ? { corpus_path: path }
-                  : type === "rss"
-                    ? { max_items: 10 }
-                    : {},
+                type === "web_search"
+                  ? {
+                      query: cleanQuery,
+                      max_items: 8,
+                      fetch_full_text: fetchFullText,
+                      role: "branch",
+                      branch_label: cleanQuery.slice(0, 40),
+                    }
+                  : type === "webpage"
+                    ? { role: "channel" }
+                    : type === "replay"
+                      ? { corpus_path: path }
+                      : type === "rss"
+                        ? {
+                            max_items: 10,
+                            fetch_full_text: fetchFullText,
+                            role: "channel",
+                          }
+                        : {},
             }),
           );
           await onSaved();
@@ -127,39 +233,88 @@ export function RegisterSource({
       }}
     >
       <label>
-        来源类型
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="manual">手动录入新闻</option>
-          <option value="rss">RSS 订阅</option>
-          <option value="lbj">LBJ 离线语料 · 30 条</option>
-          <option value="nba">NBA 离线语料 · 18 条</option>
+        {t("来源类型")}
+        <select value={kind} onChange={(e) => handleKindChange(e.target.value)}>
+          <option value="web_search">{t("全网搜索")}</option>
+          <option value="webpage">{t("网页监控")}</option>
+          <option value="rss">{t("RSS 订阅")}</option>
+          <option value="manual">{t("手动录入新闻")}</option>
+          <option value="lbj">{t("LBJ 离线语料 · 30 条")}</option>
+          <option value="nba">{t("NBA 离线语料 · 18 条")}</option>
         </select>
       </label>
       <label>
-        来源标识
+        {t("来源标识")}
         <input
           required
           pattern="[a-z0-9][a-z0-9_-]{1,63}"
           value={id}
           onChange={(e) => setId(e.target.value)}
         />
-        <small>使用小写字母、数字和下划线，如 my_news。</small>
+        <small>{t("使用小写字母、数字和下划线，如 my_news。")}</small>
       </label>
-      {kind === "rss" && (
+      {kind === "web_search" && (
+        <>
+          <label>
+            {t("搜索关键词")}
+            <input
+              required
+              maxLength={200}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={t("例如 香港岛铁路规划")}
+            />
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={fetchFullText}
+              onChange={(e) => setFetchFullText(e.target.checked)}
+            />
+            {t("优先读取新文章全文，失败时使用摘要")}
+          </label>
+        </>
+      )}
+      {kind === "webpage" && (
         <label>
-          订阅地址
+          {t("目标网页地址")}
           <input
             type="url"
             required
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder="https://…/feed.xml"
+            placeholder="https://example.org/news"
           />
+          <small>
+            {t("每次检查对比上次网页快照。有变化时才记录更新。")}
+          </small>
         </label>
       )}
-      <p className="hint">添加后，在来源列表勾选并保存，才会用于这个主题。</p>
+      {kind === "rss" && (
+        <>
+          <label>
+            {t("订阅地址")}
+            <input
+              type="url"
+              required
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder="https://…/feed.xml"
+            />
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={fetchFullText}
+              onChange={(e) => setFetchFullText(e.target.checked)}
+            />
+            {t("优先读取新文章全文，失败时使用摘要")}
+          </label>
+        </>
+      )}
+      <p className="hint">{t("添加后，在来源列表勾选并保存，才会用于这个主题。")}</p>
       <button className="primary" disabled={disabled}>
-        添加来源 <Icon name="plus" size={16} />
+        {t("添加来源")} <Icon name="plus" size={16} />
       </button>
     </form>
   );
@@ -183,8 +338,8 @@ export function ManualEvidenceForm({
   if (!approved.length)
     return (
       <Empty
-        title="先批准一个手动来源"
-        detail="在「信息源」中添加手动录入来源，勾选并保存后，即可提交新闻。"
+        title={t("先批准一个手动来源")}
+        detail={t("在「信息源」中添加手动录入来源，勾选并保存后，即可提交新闻。")}
       />
     );
   return (
@@ -204,7 +359,7 @@ export function ManualEvidenceForm({
       }}
     >
       <label>
-        录入来源
+        {t("录入来源")}
         <select
           value={
             approved.some((s) => s.source_id === sourceId)
@@ -221,7 +376,7 @@ export function ManualEvidenceForm({
         </select>
       </label>
       <label>
-        新闻标题
+        {t("新闻标题")}
         <input
           required
           maxLength={500}
@@ -230,7 +385,7 @@ export function ManualEvidenceForm({
         />
       </label>
       <label>
-        原文内容
+        {t("原文内容")}
         <textarea
           required
           rows={7}
@@ -240,16 +395,16 @@ export function ManualEvidenceForm({
       </label>
       <div className="form-grid">
         <label>
-          原文链接
+          {t("原文链接")}
           <input
             type="url"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="可选"
+            placeholder={t("可选")}
           />
         </label>
         <label>
-          发布时间 · 本地时间
+          {t("发布时间 · 本地时间")}
           <input
             required
             type="datetime-local"
@@ -259,10 +414,10 @@ export function ManualEvidenceForm({
         </label>
       </div>
       <p className="hint">
-        使用当前选择的分析方式检查全部已批准来源。原文与发布时间会保留，供后续追溯。
+        {t("使用当前选择的分析方式检查全部已批准来源。原文与发布时间会保留，供后续追溯。")}
       </p>
       <button className="primary" disabled={disabled}>
-        提交并分析 <Icon name="arrow" size={16} />
+        {t("提交并分析")} <Icon name="arrow" size={16} />
       </button>
     </form>
   );
@@ -304,14 +459,14 @@ function ReviewItem({
     <article className="review-item">
       <div className="row-between">
         <span className="tag amber">
-          {review.assessment.novelty === "conflict" ? "信息冲突" : "归属待定"}
+          {review.assessment.novelty === "conflict" ? t("信息冲突") : t("归属待定")}
         </span>
         <span className="meta">{date(review.evidence.published_at)}</span>
       </div>
       <h3>{headline(review.evidence.title)}</h3>
       <p className="review-content">{text(review.evidence.content)}</p>
       <details className="quiet-details">
-        <summary>查看原始判断与证据</summary>
+        <summary>{t("查看原始判断与证据")}</summary>
         {(review.event_decisions ?? [review.assessment]).map((decision, i) => (
           <div key={i}>
             <p>{decision.association.reason}</p>
@@ -327,7 +482,7 @@ function ReviewItem({
           className={mode === "dismiss" ? "chosen" : ""}
           onClick={() => setMode("dismiss")}
         >
-          保留原状态
+          {t("保留原状态")}
         </button>
         <button
           type="button"
@@ -335,7 +490,7 @@ function ReviewItem({
           disabled={!events.length}
           onClick={() => setMode("accept")}
         >
-          采纳并修正
+          {t("采纳并修正")}
         </button>
       </div>
       <form
@@ -344,13 +499,13 @@ function ReviewItem({
           e.preventDefault();
           void action(async () => {
             if (mode === "accept" && !confirmed)
-              throw Error("请先确认已核对这条证据。");
+              throw Error(t("请先确认已核对这条证据。"));
             await api(
               `/topics/${topicId}/reviews/${review.evidence.evidence_id}/resolve`,
               json(
                 "POST",
                 mode === "dismiss"
-                  ? { decision: "dismiss", note }
+                  ? { decision: "dismiss" }
                   : {
                       decision: "accept",
                       note,
@@ -372,7 +527,7 @@ function ReviewItem({
         {mode === "accept" && selected && (
           <>
             <label>
-              关联事件
+              {t("关联事件")}
               <select
                 value={eventId}
                 onChange={(e) => {
@@ -395,7 +550,7 @@ function ReviewItem({
             </label>
             {stale && (
               <div className="error">
-                事件在你审核时已有新版本。
+                {t("事件在你审核时已有新版本。")}
                 <button
                   type="button"
                   onClick={() => {
@@ -406,21 +561,21 @@ function ReviewItem({
                     setConfirmed(false);
                   }}
                 >
-                  重新载入当前状态
+                  {t("重新载入当前状态")}
                 </button>
               </div>
             )}
             <label>
-              采纳后的事实
+              {t("采纳后的事实")}
               <textarea
                 required
                 value={fact}
                 onChange={(e) => setFact(e.target.value)}
-                placeholder="写明核实后的事实；系统会引用当前这条证据。"
+                placeholder={t("写明核实后的事实；系统会引用当前这条证据。")}
               />
             </label>
             <label>
-              事件当前状态
+              {t("事件当前状态")}
               <input
                 required
                 value={currentStatus}
@@ -428,7 +583,7 @@ function ReviewItem({
               />
             </label>
             <fieldset>
-              <legend>需要替换的旧事实（可选）</legend>
+              <legend>{t("需要替换的旧事实（可选）")}</legend>
               {selected.state.key_facts.map((f, i) => (
                 <label className="check-row" key={i}>
                   <input
@@ -446,7 +601,7 @@ function ReviewItem({
                 </label>
               ))}
               <p className="hint">
-                旧事实将从当前事实中移出，但完整保留在状态历史中。
+                {t("旧事实将从当前事实中移出，但完整保留在状态历史中。")}
               </p>
             </fieldset>
             <label className="check-row">
@@ -455,7 +610,7 @@ function ReviewItem({
                 checked={major}
                 onChange={(e) => setMajor(e.target.checked)}
               />
-              <span>属于重大进展，按主题偏好提醒（需改变当前状态）</span>
+              <span>{t("属于重大进展，按主题偏好提醒（需改变当前状态）")}</span>
             </label>
             <label className="check-row">
               <input
@@ -464,29 +619,25 @@ function ReviewItem({
                 checked={confirmed}
                 onChange={(e) => setConfirmed(e.target.checked)}
               />
-              <span>我已核对证据，确认上述修改。</span>
+              <span>{t("我已核对证据，确认上述修改。")}</span>
             </label>
           </>
         )}
-        <label>
-          处理依据
+        {mode === "accept" && <label>
+          {t("处理依据")}
           <textarea
             required
             maxLength={2000}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder={
-              mode === "dismiss"
-                ? "为什么保留现有判断？"
-                : "为什么采纳这条证据？"
-            }
+            placeholder={t("为什么采纳这条证据？")}
           />
-        </label>
+        </label>}
         <button
           className={mode === "accept" ? "primary" : ""}
-          disabled={disabled || !note.trim() || (mode === "accept" && stale)}
+          disabled={disabled || (mode === "accept" && (!note.trim() || !selected || stale))}
         >
-          {mode === "accept" ? "采纳并更新事件" : "保留原状态并关闭"}{" "}
+          {mode === "accept" ? t("采纳并更新事件") : t("保留原状态并关闭")}{" "}
           <Icon name="check" size={16} />
         </button>
       </form>
@@ -528,25 +679,25 @@ export function ReviewPanel({
           ))
         ) : (
           <Empty
-            title="当前没有待审信息"
-            detail="相互矛盾的报道、无法确定归属的信息，会保留在这里，等待你判断。"
+            title={t("当前没有待审信息")}
+            detail={t("相互矛盾的报道、无法确定归属的信息，会保留在这里，等待你判断。")}
           />
         )}
       </div>
       <aside className="context-panel">
         <span className="kicker">REVIEW HISTORY</span>
-        <h3>人工处理记录</h3>
+        <h3>{t("人工处理记录")}</h3>
         <p className="hint">
-          每次处理都会留下依据。采纳后的状态变化会出现在事件历史和运行记录中。
+          {t("审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。")}
         </p>
-        {!resolutions.length && <p className="meta">尚无处理记录</p>}
+        {!resolutions.length && <p className="meta">{t("尚无处理记录")}</p>}
         {resolutions.map((r) => (
           <div className="audit-row" key={r.resolution_id}>
             <span className={`tag ${r.decision === "accept" ? "green" : ""}`}>
-              {r.decision === "accept" ? "已采纳" : "保留原状态"}
+              {r.decision === "accept" ? t("已采纳") : t("保留原状态")}
             </span>
-            <p>{r.note}</p>
-            <small>{date(r.resolved_at)} · 本地用户</small>
+            {r.note && <p>{r.note}</p>}
+            <small>{date(r.resolved_at)} {t("· 本地用户")}</small>
           </div>
         ))}
       </aside>
@@ -578,25 +729,25 @@ export function ModelSettingsPanel({
         <span className={`status-dot ${value?.configured ? "online" : ""}`} />
         <div>
           <strong>
-            {value?.configured ? "配置已保存" : "尚未配置真实模型"}
+            {value?.configured ? t("配置已保存") : t("尚未配置真实模型")}
           </strong>
-          <p>规则演示不需要模型。分析 LBJ、NBA 或其他主题时，需要真实模型。</p>
+          <p>{t("规则演示不需要模型。分析 LBJ、NBA 或其他主题时，需要真实模型。")}</p>
         </div>
       </div>
       <ol className="config-instructions">
-        <li>确定团队使用的模型服务，在其控制台创建 API Key。</li>
+        <li>{t("确定团队使用的模型服务，在其控制台创建 API Key。")}</li>
         <li>
-          复制该服务提供的兼容 API 基础地址，结尾不要加 /chat/completions。
+          {t("复制该服务提供的兼容 API 基础地址，结尾不要加 /chat/completions。")}
         </li>
         <li>
-          填写可调用的模型
-          ID，保存后点击测试连接。尚未确定服务时，可以先完成模拟演示和回放准备。
+          {t("填写可调用的模型 ID，保存后点击测试连接。尚未确定服务时，可以先完成模拟演示和回放准备。")}
         </li>
       </ol>
       <form
         className="form-stack"
         onSubmit={(e) => {
           e.preventDefault();
+          setMessage("");
           void action(async () => {
             const result = await api<ModelStatus>(
               "/settings/model",
@@ -604,28 +755,28 @@ export function ModelSettingsPanel({
             );
             setKey("");
             onSaved(result);
-            setMessage("配置已保存。可以测试连接，或开始分析。");
+            setMessage(t("配置已保存。可以测试连接，或开始分析。"));
           });
         }}
       >
         <label>
-          API 基础地址
+          {t("API 基础地址")}
           <input
             required
             type="url"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
-            placeholder="团队提供的 HTTPS 兼容接口地址"
+            placeholder={t("团队提供的 HTTPS 兼容接口地址")}
           />
         </label>
         <label>
-          模型名称
+          {t("模型名称")}
           <input
             required
             list="available-model-ids"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            placeholder="填写服务端实际支持的模型名"
+            placeholder={t("填写服务端实际支持的模型名")}
           />
           <datalist id="available-model-ids">
             {available.map((m) => (
@@ -649,12 +800,12 @@ export function ModelSettingsPanel({
                 );
                 setAvailable(result.models);
                 setMessage(
-                  `已读取 ${result.models.length} 个模型。请选择实际 ID，再保存配置。`,
+                  t("已读取 {0} 个模型。请选择实际 ID，再保存配置。", result.models.length),
                 );
               })
             }
           >
-            读取可用模型
+            {t("读取可用模型")}
           </button>
           <div className="button-row">
             {available.map((m) => (
@@ -674,39 +825,173 @@ export function ModelSettingsPanel({
             onChange={(e) => setKey(e.target.value)}
             placeholder={
               value?.key_configured
-                ? "已保存；留空保持原 Key"
-                : "仅保存至本机后端配置"
+                ? t("已保存；留空保持原 Key")
+                : t("仅保存至本机后端配置")
             }
           />
         </label>
         <p className="hint">
-          配置写入本机被 Git 忽略的 .env。Key
-          不会回显到页面，也不会进入事件与运行记录。
+          {t("配置写入本机被 Git 忽略的 .env。Key 不会回显到页面，也不会进入事件与运行记录。")}
         </p>
         <div className="button-row">
           <button className="primary" disabled={disabled}>
-            保存配置
+            {t("保存配置")}
           </button>
           <button
             type="button"
             disabled={disabled || !value?.configured}
             onClick={() =>
               void action(async () => {
-                setMessage("正在连接模型…");
+                setMessage(t("正在连接模型…"));
                 try {
                   const result = await api<{ status: string; model: string }>(
                     "/settings/model/check",
                     json("POST", {}),
                   );
-                  setMessage(`连接成功 · ${result.model}`);
+                  setMessage(t("连接成功 · {0}", result.model));
                 } catch (e) {
-                  setMessage("连接失败，请检查上方错误信息。");
+                  setMessage(t("连接失败，请检查上方错误信息。"));
                   throw e;
                 }
               })
             }
           >
-            测试连接 · 一次模型请求
+            {t("测试连接 · 一次模型请求")}
+          </button>
+        </div>
+        {message && (
+          <p role="status" className="inline-status">
+            {message}
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+
+export function SearchSettingsPanel({
+  value,
+  disabled,
+  action,
+  onSaved,
+}: {
+  value: SearchStatus | null;
+  disabled: boolean;
+  action: Act;
+  onSaved: (next: SearchStatus) => Promise<void> | void;
+}) {
+  const [provider, setProvider] = useState<SearchStatus["provider"]>(
+    value?.provider ?? "auto",
+  );
+  const [bochaKey, setBochaKey] = useState("");
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [jinaFallback, setJinaFallback] = useState(
+    value?.web_fetch_jina_fallback ?? true,
+  );
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (value) {
+      setProvider(value.provider);
+      setJinaFallback(value.web_fetch_jina_fallback);
+    }
+  }, [value]);
+
+  return (
+    <div className="form-stack">
+      <div className="settings-summary">
+        <strong>{t("当前搜索引擎")} · {value ? searchProviderLabel(value.active_provider) : t("状态未知")}</strong>
+        <p className="hint">{t("API 密钥由服务器保存。已配置的密钥留空即可保留。")}</p>
+      </div>
+      <form
+        className="form-stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setMessage("");
+          void action(async () => {
+            const payload: Record<string, unknown> = {
+              provider,
+              web_fetch_jina_fallback: jinaFallback,
+            };
+            if (bochaKey.trim()) payload.bocha_api_key = bochaKey.trim();
+            if (tavilyKey.trim()) payload.tavily_api_key = tavilyKey.trim();
+            const saved = await api<SearchStatus>(
+              "/settings/search",
+              json("PUT", payload),
+            );
+            setBochaKey("");
+            setTavilyKey("");
+            setMessage(t("搜索配置已保存。"));
+            await onSaved(saved);
+          });
+        }}
+      >
+        <label>
+          {t("搜索路由模式")}
+          <select
+            value={provider}
+            onChange={(e) =>
+              setProvider(e.target.value as SearchStatus["provider"])
+            }
+          >
+            <option value="auto">{t("自动按语种选择搜索引擎")}</option>
+            <option value="bocha">{t("博查 API")}</option>
+            <option value="tavily">Tavily</option>
+            <option value="free">{t("免密钥模式")} · Bing / Google News</option>
+          </select>
+        </label>
+        <label>
+          {t("博查 API 密钥")}
+          <input
+            type="password"
+            value={bochaKey}
+            onChange={(e) => setBochaKey(e.target.value)}
+            placeholder={value?.bocha_configured ? t("已配置，留空保留") : "sk-…"}
+          />
+        </label>
+        <label>
+          {t("Tavily API 密钥")}
+          <input
+            type="password"
+            value={tavilyKey}
+            onChange={(e) => setTavilyKey(e.target.value)}
+            placeholder={value?.tavily_configured ? t("已配置，留空保留") : "tvly-…"}
+          />
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={jinaFallback}
+            onChange={(e) => setJinaFallback(e.target.checked)}
+          />
+          {t("无法直接读取公开网页时，尝试使用 Jina Reader")}
+        </label>
+        <div className="action-row">
+          <button className="primary" disabled={disabled}>
+            {t("保存搜索配置")}
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() =>
+              void action(async () => {
+                setMessage(t("正在测试搜索连接…"));
+                try {
+                  const res = await api<{
+                    provider_used: string;
+                    items: number;
+                  }>("/settings/search/check", json("POST", {}));
+                  setMessage(
+                    t("连接成功，{0} 返回 {1} 条结果。", searchProviderLabel(res.provider_used), res.items),
+                  );
+                } catch (err) {
+                  setMessage(t("连接失败，请检查上方错误信息。"));
+                  throw err;
+                }
+              })
+            }
+          >
+            {t("测试已保存的引擎")}
           </button>
         </div>
         {message && (
@@ -761,7 +1046,7 @@ export function ReplaySetup({
             "/sources",
             json("POST", {
               source_id: sourceId,
-              name: `${selected.name} · 主检索源`,
+              name: t("{0} · 主检索源", selected.name),
               type: "replay",
               endpoint: `replay://${selected.corpus_path}`,
               config: anchorConfig,
@@ -797,27 +1082,27 @@ export function ReplaySetup({
             <span>
               <strong>{c.name}</strong>
               <small>
-                {c.records} 条新闻 · {c.cutoffs.length} 个时间切片
+                {c.records} {t("条新闻 ·")} {c.cutoffs.length} {t("个时间切片")}
               </small>
             </span>
           </label>
         ))}
       </div>
       <label>
-        追踪目标
+        {t("追踪目标")}
         <textarea
           required
-          aria-label="回放追踪目标"
+          aria-label={t("回放追踪目标")}
           rows={4}
           value={goal}
           onChange={(e) => setGoal(e.target.value)}
         />
       </label>
       <p className="hint">
-        使用队友提供的离线语料，创建独立主题并批准回放来源。此操作不调用模型。新闻真实性与预期标签仍需核验。
+        {t("使用队友提供的离线语料，创建独立主题并批准回放来源。此操作不调用模型。新闻真实性与预期标签仍需核验。")}
       </p>
       <button className="primary" disabled={disabled || !selected}>
-        准备回放工作区 <Icon name="arrow" size={16} />
+        {t("准备回放工作区")} <Icon name="arrow" size={16} />
       </button>
     </form>
   );

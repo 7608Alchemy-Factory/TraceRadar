@@ -1,5 +1,7 @@
 // API responses are defined by backend/app/domain.py. Keep these projections aligned.
 export type Topic = {
+  tags?: string[];
+  exclusions?: string[];
   topic_id: string;
   title: string;
   description: string;
@@ -11,7 +13,7 @@ export type Topic = {
 export type Source = {
   source_id: string;
   name: string;
-  type: "fixture" | "replay" | "rss" | "manual";
+  type: "fixture" | "replay" | "rss" | "manual" | "web_search" | "webpage";
   endpoint: string;
   config: Record<string, unknown>;
   reason?: string;
@@ -19,6 +21,7 @@ export type Source = {
   role?: "anchor" | "branch" | "channel";
   health_status?: string;
   retirement_recommended?: boolean;
+  ai_verdict?: "approve" | "optional" | "skip" | null;
   registered?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };
@@ -37,10 +40,19 @@ export type Event = {
   event_id: string;
   topic_id: string;
   title: string;
+  title_locked?: boolean;
   state: EventState;
   version: number;
   created_at: string;
   updated_at: string;
+};
+export type EventSuggestion = {
+  action: "dismiss" | "merge";
+  event_id: string;
+  event_title: string;
+  target_event_id?: string | null;
+  target_event_title?: string | null;
+  reason: string;
 };
 export type Evidence = {
   evidence_id: string;
@@ -87,7 +99,7 @@ export type ReviewResolution = {
   resolution_id: string;
   evidence_id: string;
   decision: "dismiss" | "accept";
-  note: string;
+  note: string | null;
   actor: string;
   resolved_at: string;
   original_assessment: Assessment | EvidenceAssessment;
@@ -113,7 +125,7 @@ export type Run = {
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string }; resume_of?: string };
+  snapshot: { options?: { as_of?: string }; resume_of?: string; sources?: Source[] };
 };
 export type Step = {
   step_id: string;
@@ -155,12 +167,18 @@ export type Transition = {
   after_state: EventState;
   evidence_ids: string[];
   committed_at: string;
+  impact_reason?: string;
+  before_title?: string;
+  after_title?: string;
+  merged_from_event_id?: string;
+  merged_from_title?: string;
 };
 export type EventDetail = {
   event: Event;
   evidence: Evidence[];
   history: Transition[];
   reviews: Review[];
+  updates?: Array<Notification & { provider: Run["provider"] }>;
 };
 export type Dashboard = {
   topic: Topic;
@@ -183,6 +201,15 @@ export type ModelStatus = {
   model: string;
   key_configured: boolean;
   missing: string[];
+};
+export type SearchStatus = {
+  provider: "auto" | "bocha" | "tavily" | "free";
+  active_provider: "bocha" | "tavily" | "free";
+  active_label: string;
+  bocha_configured: boolean;
+  tavily_configured: boolean;
+  jina_configured: boolean;
+  web_fetch_jina_fallback: boolean;
 };
 export type Corpus = {
   corpus_id: string;

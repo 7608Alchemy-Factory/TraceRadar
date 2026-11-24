@@ -349,7 +349,7 @@ def test_search_settings_api_privacy_and_origin_guard(tmp_path, monkeypatch):
         assert 'sk-secret' not in env_p.read_text()
         saved = dotenv_values(env_p)
         for name in keys:
-            assert saved[name.upper()].startswith('dpapi:')
+            assert saved[name.upper()].startswith('aes256gcm:dpapi:')
             monkeypatch.setenv(name.upper(), saved[name.upper()])
         reloaded = Settings()
         assert {name: getattr(reloaded, name) for name in keys} == keys

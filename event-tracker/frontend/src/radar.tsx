@@ -73,7 +73,7 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
           <div className="radar-readout">
             {current && topic ? (
               <>
-                <small>{t("最近更新：")}</small>
+                <h3 className="radar-feed-label">{t("最近更新")}</h3>
                 <div className="radar-readout-meta">
                   <strong>{tr(topicTitle(topic.title))}</strong>
                   <time dateTime={current.updated_at}>{date(current.updated_at)}</time>

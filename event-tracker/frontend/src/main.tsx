@@ -108,6 +108,26 @@ async function loadWorkspaceTopics() {
 
 document.documentElement.dataset.theme = initialTheme();
 
+const evidenceFilterLabels = {
+  processed: "已处理",
+  excluded: "已排除",
+  review: "待审核",
+  duplicate: "重复报道",
+  pending: "未处理",
+  failed: "失败",
+} as const;
+
+type EvidenceFilter = keyof typeof evidenceFilterLabels;
+
+function evidenceGroup(row: EvidenceDecision): EvidenceFilter {
+  if (row.status === "review") return "review";
+  if (row.status === "failed" || row.status === "failed_retryable") return "failed";
+  if (row.status !== "completed") return "pending";
+  if (row.assessment?.is_relevant === false || row.prefilter_excluded) return "excluded";
+  if (!row.assessment && row.evidence.canonical_evidence_id !== row.evidence.evidence_id) return "duplicate";
+  return "processed";
+}
+
 function App() {
   const sidebar = useSidebarWidth();
   const [language, setLanguage] = useState(locale);
@@ -152,6 +172,7 @@ function App() {
   const [agentMode, setAgentMode] = useState(false);
   const [replayCorpus, setReplayCorpus] = useState("lbj");
   const [showHistorySources, setShowHistorySources] = useState(false);
+  const [evidenceFilters, setEvidenceFilters] = useState<EvidenceFilter[]>([]);
   const [llmSummaryOn, setLlmSummaryOn] = useState(false);
   const [llmSummaryNote, setLlmSummaryNote] = useState<string | null>(null);
   const [llmMode, setLlmMode] = useState<string | null>(null);
@@ -291,6 +312,7 @@ function App() {
     setEvidenceId("");
     setQuery("");
     setShowHistorySources(false);
+    setEvidenceFilters([]);
     setTab("overview");
     setError("");
     requestAnimationFrame(() => {
@@ -857,12 +879,18 @@ function App() {
       .toLowerCase()
       .includes(search),
   );
-  const evidenceRows = (showHistorySources ? evidence : currentEvidence).filter(
-    (e) =>
-      `${e.evidence.title} ${headline(e.evidence.title)} ${e.evidence.source_id} ${e.evidence.content}`
-        .toLowerCase()
-        .includes(search),
+  const matchingEvidence = (showHistorySources ? evidence : currentEvidence)
+    .map((row) => ({ row, group: evidenceGroup(row) }))
+    .filter(({ row: { evidence: item } }) =>
+      `${item.title} ${tr(headline(item.title))} ${item.source_id} ${item.content}`.toLowerCase().includes(search),
+    );
+  const evidenceRows = matchingEvidence.filter(({ group }) =>
+    !evidenceFilters.length || evidenceFilters.includes(group),
   );
+  const evidenceCounts = matchingEvidence.reduce((counts, { group }) => {
+    counts[group] = (counts[group] ?? 0) + 1;
+    return counts;
+  }, {} as Partial<Record<EvidenceFilter, number>>);
   const latest = dashboard?.recent_runs[0];
   const unfinished =
     run?.evidence?.filter((item) =>
@@ -1430,45 +1458,39 @@ function App() {
                       <h2>{t("证据库")}</h2>
                       <span className="meta">{t("包括被排除、重复与待审的信息")}</span>
                     </div>
-                    <label className="check-row">
-                      <input
-                        type="checkbox"
-                        checked={showHistorySources}
-                        onChange={(e) =>
-                          setShowHistorySources(e.target.checked)
-                        }
-                      />
-                      {t("显示全部来源的历史记录")}
-                    </label>
+                    <div className="evidence-toolbar">
+                      <label className="check-row">
+                        <input type="checkbox" checked={showHistorySources}
+                          onChange={(e) => setShowHistorySources(e.target.checked)} />
+                        {t("显示全部来源的历史记录")}
+                      </label>
+                      <fieldset className="evidence-filters" aria-label={t("处理状态")}>
+                        {Object.entries(evidenceFilterLabels).map(([key, label]) => {
+                          const group = key as EvidenceFilter;
+                          return <label key={group} className="evidence-filter">
+                            <input type="checkbox" checked={evidenceFilters.includes(group)}
+                              onChange={(event) => setEvidenceFilters((previous) => event.target.checked
+                                ? [...previous, group] : previous.filter((item) => item !== group))} />
+                            {t(label)} <span aria-hidden="true">{evidenceCounts[group] ?? 0}</span>
+                          </label>;
+                        })}
+                      </fieldset>
+                    </div>
                     {!evidenceRows.length ? (
                       <Empty
                         title={
-                          search ? t("没有符合筛选条件的证据") : t("还没有读入的新闻")
+                          search || evidenceFilters.length ? t("没有符合筛选条件的证据") : t("还没有读入的新闻")
                         }
                         detail={
-                          search
-                            ? t("试试其他关键词，或查阅全部来源的历史记录。")
+                          search || evidenceFilters.length
+                            ? t("试试调整状态或关键词，也可以查看全部来源的历史记录。")
                             : t("运行一次检查，或手动提交一条新闻。")
                         }
                       />
                     ) : (
                       <div className="evidence-table">
-                        {evidenceRows.map((v, i) => {
-                          const duplicate =
-                            v.evidence.canonical_evidence_id !==
-                              v.evidence.evidence_id &&
-                            !v.assessment &&
-                            v.status === "completed";
-                          const label =
-                            v.status === "review"
-                              ? t("待审核")
-                              : ["failed", "failed_retryable", "pending"].includes(v.status)
-                                ? status(v.status)
-                                : duplicate
-                                  ? t("重复报道")
-                                  : v.assessment?.is_relevant === false
-                                    ? t("已排除")
-                                    : t("已处理");
+                        {evidenceRows.map(({ row: v, group }, i) => {
+                          const label = group === "failed" ? status(v.status) : t(evidenceFilterLabels[group]);
                           return (
                             <button
                               className="evidence-row"

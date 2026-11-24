@@ -3,7 +3,7 @@ from urllib.parse import urlsplit
 import httpx
 from .core import AppError
 from .llm import is_local_model_url, request_provider, valid_model_url
-from .secret_storage import save_env
+from .secret_storage import SecretStorageError, save_env
 
 
 def model_status(settings):
@@ -50,6 +50,9 @@ def save_model_settings(settings, body):
     updates = {'QWEN_BASE_URL': address, 'QWEN_MODEL': model}
     if body.api_key:
         updates['QWEN_API_KEY'] = key
-    save_env(settings.env_path, updates)
+    try:
+        save_env(settings.env_path, updates)
+    except SecretStorageError as exc:
+        raise AppError('SECRET_STORAGE_UNAVAILABLE', str(exc), 422) from exc
     settings.base_url, settings.model, settings.api_key = address, model, key
     return model_status(settings)

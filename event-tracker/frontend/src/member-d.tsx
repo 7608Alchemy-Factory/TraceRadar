@@ -708,7 +708,7 @@ export function ModelSettingsPanel({
           <strong>
             {value?.configured ? t("配置已保存") : t("尚未配置真实模型")}
           </strong>
-          <p>{t("规则演示不需要模型。分析 LBJ、NBA 或其他主题时，需要真实模型。")}</p>
+          <p>{t("规则演示不需要模型。分析各类主题时，需要真实模型。")}</p>
         </div>
       </div>
       <ol className="config-instructions">

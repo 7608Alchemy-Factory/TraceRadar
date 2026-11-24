@@ -325,8 +325,16 @@ class Repository:
     def evidence_decisions(self, topic_id):
         with self.connection() as db:
             return [dict(evidence=json.loads(r[0]),status=r[1],assessment=json.loads(r[2]) if r[2] else None,
-                         error=json.loads(r[3]) if r[3] else None) for r in db.execute('''SELECT e.data,t.status,t.assessment,t.error
-                FROM evidence e JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''',(topic_id,))]
+                         error=json.loads(r[3]) if r[3] else None, prefilter_excluded=bool(r[4])) for r in db.execute('''
+                WITH excluded_inputs AS (
+                    SELECT DISTINCT json_extract(i.outcome, '$.evidence_id') AS evidence_id
+                    FROM run_inputs i JOIN runs r ON r.id=i.run_id
+                    WHERE r.topic_id=? AND json_extract(i.outcome, '$.status')='irrelevant'
+                )
+                SELECT e.data,t.status,t.assessment,t.error,
+                       t.assessment IS NULL AND e.id IN (SELECT evidence_id FROM excluded_inputs)
+                FROM evidence e JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''',
+                (topic_id, topic_id))]
 
     def review_item(self, topic_id, evidence_id):
         with self.connection() as db:

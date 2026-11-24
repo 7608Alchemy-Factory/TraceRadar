@@ -22,7 +22,7 @@ from .core import AppError
 from .domain import now
 from .evidence_processing import canonicalize_url, clean_text, parse_published_at
 from .llm import is_local_model_url, valid_model_url
-from .secret_storage import save_env
+from .secret_storage import SecretStorageError, save_env
 
 _MAX_PAGE_BYTES = 2 * 1024 * 1024  # 2 MB cap per fetched HTML/Markdown document
 _MAX_SNAPSHOT_CHARS = 64_000
@@ -1422,7 +1422,10 @@ def save_search_settings(settings, body) -> dict:
         pending_attrs['web_fetch_jina_fallback'] = bool(fb)
         updates['WEB_FETCH_JINA_FALLBACK'] = 'true' if fb else 'false'
 
-    save_env(settings.env_path, updates)
+    try:
+        save_env(settings.env_path, updates)
+    except SecretStorageError as exc:
+        raise AppError('SECRET_STORAGE_UNAVAILABLE', str(exc), 422) from exc
     for attr, val in pending_attrs.items():
         setattr(settings, attr, val)
     return search_settings_status(settings)

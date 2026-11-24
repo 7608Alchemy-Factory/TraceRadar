@@ -91,7 +91,7 @@ try {
             if (!$python) { throw 'Python was not found. Follow the backend setup in README.md.' }
             $pythonPath = $python.Source
         }
-        & $pythonPath -c 'import fastapi, httpx, uvicorn, dotenv'
+        & $pythonPath -c 'import fastapi, httpx, uvicorn, dotenv, cryptography'
         if ($LASTEXITCODE -ne 0) { throw "Backend dependencies are missing for $pythonPath. Follow README.md." }
         if (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'frontend\dist\index.html'))) {
             throw 'The frontend build is missing. Run npm ci and npm run build in frontend first.'

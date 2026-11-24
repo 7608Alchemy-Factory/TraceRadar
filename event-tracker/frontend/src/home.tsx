@@ -4,7 +4,7 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { CoverImage } from "./covers";
 import { t } from "./i18n";
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Icon } from "./ui";
 import { status, longDate, topicTitle, topicDescription } from "./display";
 import type { Topic } from "./types";
@@ -61,6 +61,8 @@ export function ProjectHome({
   const tr = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
   const reel = useRef<HTMLDivElement>(null);
+  const hover = useRef<{ x: number; y: number; id: string; timer?: number } | undefined>(undefined);
+  const [spotlight, setSpotlight] = useState("");
   const [edges, setEdges] = useState({ start: true, end: true });
   const [category, setCategory] = useState("");
   const tags = tagOptions(topics);
@@ -70,36 +72,44 @@ export function ProjectHome({
   const examples = tagExamples(activeCategory);
 
   useLayoutEffect(() => {
+    window.clearTimeout(hover.current?.timer);
+    hover.current = undefined;
+    setSpotlight("");
     if (reel.current) reel.current.scrollLeft = 0;
   }, [activeCategory]);
 
   useEffect(() => {
     const element = reel.current;
     if (!element) return;
+    const frames = [...element.querySelectorAll("li")];
+    let scheduled = 0;
     function update() {
+      scheduled = 0;
       if (!element) return;
       const midpoint = element.scrollLeft + element.clientWidth / 2;
-      element.querySelectorAll("li").forEach((frame) => {
+      frames.forEach((frame) => {
         const position = (frame.offsetLeft + frame.offsetWidth / 2 - midpoint) / Math.max(1, element.clientWidth / 2);
         const relative = Math.max(-1.1, Math.min(1.1, position));
-        frame.style.setProperty("--reel-angle", `${relative * -21}deg`);
-        frame.style.setProperty("--reel-shift", `${relative * 42}px`);
+        frame.style.setProperty("--reel-angle", `${relative * -27}deg`);
+        frame.style.setProperty("--reel-shift", `${relative * 27}px`);
       });
-      setEdges({
-        start: element.scrollLeft <= 2,
-        end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2,
-      });
+      const start = element.scrollLeft <= 2;
+      const end = element.scrollLeft + element.clientWidth >= element.scrollWidth - 2;
+      setEdges((previous) => previous.start === start && previous.end === end ? previous : { start, end });
     }
-    const resize = new ResizeObserver(update);
+    const schedule = () => { if (!scheduled) scheduled = requestAnimationFrame(update); };
+    const resize = new ResizeObserver(schedule);
     resize.observe(element);
     if (element.firstElementChild) resize.observe(element.firstElementChild);
-    element.addEventListener("scroll", update, { passive: true });
+    element.addEventListener("scroll", schedule, { passive: true });
     update();
     return () => {
       resize.disconnect();
-      element.removeEventListener("scroll", update);
+      element.removeEventListener("scroll", schedule);
+      cancelAnimationFrame(scheduled);
+      window.clearTimeout(hover.current?.timer);
     };
-  }, [items.length, activeCategory]);
+  }, [topics, loading, activeCategory]);
 
   useLayoutEffect(() => {
     const motion = gsap.matchMedia(stage);
@@ -115,8 +125,8 @@ export function ProjectHome({
       const scroller = reel.current;
       if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
       gsap.utils.toArray<HTMLElement>(".frame-cover .cover-print").forEach((print) => {
-        gsap.fromTo(print, { xPercent: -2, scale: 1.04 }, {
-          xPercent: 2, scale: 1.04, ease: "none",
+        gsap.fromTo(print, { xPercent: -4 }, {
+          xPercent: 4, ease: "none",
           scrollTrigger: { trigger: print.closest("li"), scroller, horizontal: true,
             start: "left right", end: "right left", scrub: true },
         });
@@ -128,10 +138,33 @@ export function ProjectHome({
   function roll(direction: number) {
     const frame = reel.current?.querySelector("li");
     if (!frame) return;
+    const next = frame.nextElementSibling as HTMLLIElement | null;
+    const stride = next ? next.offsetLeft - frame.offsetLeft : frame.offsetWidth;
     reel.current?.scrollBy({
-      left: direction * (frame.offsetWidth + 16),
+      left: direction * stride,
       behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
     });
+  }
+
+  function centerFrame(frame: HTMLLIElement) {
+    const scroller = reel.current;
+    scroller?.scrollTo({
+      left: frame.offsetLeft + (frame.offsetWidth - scroller.clientWidth) / 2,
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+  }
+
+  function previewFrame(event: PointerEvent<HTMLLIElement>, id: string) {
+    if (event.pointerType !== "mouse") return;
+    const { clientX: x, clientY: y, currentTarget: frame } = event;
+    const previous = hover.current;
+    if (previous && (previous.id === id || Math.hypot(previous.x - x, previous.y - y) < 5)) return;
+    window.clearTimeout(previous?.timer);
+    setSpotlight(id);
+    const timer = window.setTimeout(() => {
+      if (frame.matches(":hover") && !matchMedia("(prefers-reduced-motion: reduce)").matches) centerFrame(frame);
+    }, 160);
+    hover.current = { x, y, id, timer };
   }
 
   return (
@@ -185,12 +218,22 @@ export function ProjectHome({
           {loading ? (
             <p className="reel-empty" role="status">{t("正在读取追踪主题…")}</p>
           ) : items.length ? (
-            <div className="reel" id="topic-reel" ref={reel}>
+            <div className="reel" id="topic-reel" ref={reel} onPointerLeave={() => {
+              window.clearTimeout(hover.current?.timer);
+              hover.current = undefined;
+              setSpotlight("");
+            }}>
               <ul className="reel-track">
-                {items.map((topic) => {
+                {items.map((topic, index) => {
                   return (
-                    <li key={topic.topic_id}>
+                    <li key={topic.topic_id} className={spotlight === topic.topic_id ? "is-spotlit" : undefined}
+                      onPointerMove={(event) => previewFrame(event, topic.topic_id)}>
+                      {index < items.length - 1 && <span className="reel-splice" aria-hidden="true" />}
                       <a className="project-frame" href={topicUrl(topic.topic_id)}
+                        onFocus={(event) => {
+                          const frame = event.currentTarget.closest("li");
+                          if (frame && event.currentTarget.matches(":focus-visible")) centerFrame(frame);
+                        }}
                         onClick={(event) => follow(event, () => onTopic(topic.topic_id))}>
                         <CoverImage topic={topic} className="frame-cover" />
                         <div className="frame-copy">

@@ -92,7 +92,7 @@ def test_model_settings_stay_local_and_never_return_key(client, monkeypatch):
     assert result.json()['key_configured'] and result.json()['configured']
     assert 'private-test-key' not in settings.env_path.read_text()
     saved_key = dotenv_values(settings.env_path)['QWEN_API_KEY']
-    assert saved_key.startswith('dpapi:')
+    assert saved_key.startswith('aes256gcm:dpapi:')
     monkeypatch.setenv('QWEN_API_KEY', saved_key)
     assert Settings().api_key == 'private-test-key'
     assert settings.api_key=='private-test-key'

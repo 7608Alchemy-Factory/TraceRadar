@@ -4,6 +4,7 @@ A working basic framework: create a Topic, approve sources, run simulated eviden
 
 Member D walkthrough and current branch audit (中文): [逐步开发与验收](docs/member-d-guide.zh-CN.md).
 Current v0.2 UI, model configuration and correction workflow: [工作台操作指南](docs/workspace-v2.zh-CN.md).
+Copy-ready tracking goals and exclusion rules across all 15 categories: [主题与课堂演示示例](docs/topic-examples.zh-CN.md).
 Member D delivery and live replay repair results: [成员 D 交付总结](docs/member-d-delivery.zh-CN.md).
 This branch also supports C's replay/RSS/manual connectors, domain-independent model proposals,
 goal editing, manual evidence entry and audited review closure. Mock remains ExampleSoft-only.
@@ -119,7 +120,11 @@ Each run writes `report.json` with processing outcomes and counts, plus `review.
 
 Open **模型配置**, enter your compatible HTTPS API base URL or local Ollama loopback URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. The provider identifier `qwen` is retained for compatibility. Missing configuration is rejected before queuing.
 
-On Windows, TraceRadar saves model and search keys as DPAPI-encrypted values in the Git-ignored `.env`. Startup converts existing plaintext keys in that file. The encrypted values belong to the Windows account that saved them, so enter your own keys when moving to another account or computer. You can also supply `QWEN_API_KEY`, `BOCHA_API_KEY`, `TAVILY_API_KEY` and `JINA_API_KEY` through the backend process environment. Use that option for keys on other operating systems.
+TraceRadar encrypts model and search keys with AES-256-GCM before saving them to the Git-ignored `.env`. On Windows, DPAPI protects the encryption keys under the current Windows account. Startup encrypts existing plaintext keys, and the backend can also read keys saved by earlier Windows builds. Re-enter your keys when switching accounts or computers.
+
+On other systems, supply `QWEN_API_KEY`, `BOCHA_API_KEY`, `TAVILY_API_KEY` and `JINA_API_KEY` through the backend environment. To enable saving from the browser and migrate legacy plaintext files on those systems, inject `TRACERADAR_SECRETS_KEY` as a stable base64-encoded 32-byte random key through your service's environment or secret manager. Keep this encryption key separate from `.env`.
+
+Select model analysis and enable **Use Agent mode for this run** to let the model request evaluation guidance, linked evidence or compressed event history. These tools read from the current topic, and the history returns at most three distinct status changes through the article's publication time. Inspect the assessment step in run history to see which tools were called.
 
 Adapter follows [Alibaba Cloud Chat Completions](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions) and [structured output documentation](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output). JSON mode is followed by Pydantic validation and State Manager reference/ownership checks. Network/temporary failures have at most 2 attempts; authentication fails immediately. Invalid JSON/schema has at most one repair attempt. No Mock fallback occurs.
 

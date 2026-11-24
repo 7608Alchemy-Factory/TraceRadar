@@ -194,6 +194,7 @@ export type EvidenceDecision = {
   status: string;
   assessment: Assessment | EvidenceAssessment | null;
   error: unknown;
+  prefilter_excluded?: boolean;
 };
 export type ModelStatus = {
   configured: boolean;

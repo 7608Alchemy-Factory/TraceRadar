@@ -191,6 +191,11 @@ export const messages: Record<
   重复报道: ["Duplicate", "重複報道"],
   已排除: ["Excluded", "已排除"],
   已处理: ["Processed", "已處理"],
+  "处理状态": ["Processing status", "處理狀態"],
+  "试试调整状态或关键词，也可以查看全部来源的历史记录。": [
+    "Try changing the status filters or search, or show history from all sources.",
+    "試試調整狀態或關鍵詞，也可以查看全部來源的歷史記錄。",
+  ],
   "审核已记录，事件与历史已刷新。": [
     "Review saved. Events and history are up to date.",
     "稽核已記錄，事件與歷史已重新整理。",
@@ -431,9 +436,9 @@ export const messages: Record<
   "· 本地用户": ["· Local user", "· 本地使用者"],
   配置已保存: ["Configured", "配置已儲存"],
   尚未配置真实模型: ["No model configured", "尚未配置真實模型"],
-  "规则演示不需要模型。分析 LBJ、NBA 或其他主题时，需要真实模型。": [
-    "The rules demo needs no model. LBJ, NBA, and other topics require a configured model.",
-    "規則演示不需要模型。分析 LBJ、NBA 或其他主題時，需要真實模型。",
+  "规则演示不需要模型。分析各类主题时，需要真实模型。": [
+    "The rules demo needs no model. To analyze topics across categories, configure a model.",
+    "規則演示不需要模型。分析各類主題時，需要真實模型。",
   ],
   "确定团队使用的模型服务，在其控制台创建 API Key。": [
     "Choose a model provider and create an API key in its console.",
@@ -896,7 +901,6 @@ Object.assign(messages, {
   "检查仍在运行，结束后才能删除事件。": ["Wait for the active check to finish before deleting this event.", "請等檢查完成後再刪除事件。"],
   "将永久删除此事件、进展时间线与提醒。新闻原文和运行记录会保留。": ["This permanently deletes the event, its timeline and alerts. Source articles and run records are kept.", "這會永久刪除此事件、進展時間軸與提醒。新聞原文和執行紀錄會保留。"],
   "审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。": ["Review decisions are recorded. Accepted changes appear in event history and run records.", "審核決定會留在紀錄中。採納後的狀態變化會出現在事件歷史和執行紀錄中。"],
-  "最近更新：": ["Last updated", "最近更新："],
   "关闭审核": ["Close review", "關閉審核"],
   "采纳依据": ["Reason for accepting", "採納依據"],
 });

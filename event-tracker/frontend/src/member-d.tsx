@@ -7,6 +7,7 @@ import type {
   ReviewResolution,
   Event,
   ModelStatus,
+  SearchStatus,
   Corpus,
 } from "./types";
 import { date, text, title as eventTitle, headline } from "./display";
@@ -80,9 +81,25 @@ export function RegisterSource({
   onSaved: () => Promise<void>;
   knownIds: string[];
 }) {
-  const [kind, setKind] = useState("manual"),
-    [id, setId] = useState("my_news"),
-    [endpoint, setEndpoint] = useState("");
+  const [kind, setKind] = useState("web_search"),
+    [id, setId] = useState("ws_custom"),
+    [endpoint, setEndpoint] = useState(""),
+    [searchQuery, setSearchQuery] = useState(""),
+    [fetchFullText, setFetchFullText] = useState(true);
+  const handleKindChange = (next: string) => {
+    setKind(next);
+    const defaults: Record<string, string> = {
+      web_search: "ws_custom",
+      webpage: "page_monitor",
+      rss: "my_rss",
+      manual: "my_news",
+      lbj: "lbj_replay",
+      nba: "nba_replay",
+    };
+    if (Object.values(defaults).includes(id)) {
+      setId(defaults[next] ?? "my_source");
+    }
+  };
   return (
     <form
       className="form-stack"
@@ -92,34 +109,63 @@ export function RegisterSource({
           if (knownIds.includes(id))
             throw Error("来源 ID 已存在，请换一个名称。");
           const type =
-            kind === "rss" ? "rss" : kind === "manual" ? "manual" : "replay";
+            kind === "web_search"
+              ? "web_search"
+              : kind === "webpage"
+                ? "webpage"
+                : kind === "rss"
+                  ? "rss"
+                  : kind === "manual"
+                    ? "manual"
+                    : "replay";
           const path =
             kind === "lbj"
               ? "lbj_2026_extended/all.json"
               : "nba_2026_multi_event/all.json";
+          const cleanQuery = searchQuery.trim();
           await api(
             "/sources",
             json("POST", {
               source_id: id,
               name:
-                kind === "manual"
-                  ? "手动录入"
-                  : kind === "rss"
-                    ? "RSS 订阅"
-                    : `${kind.toUpperCase()} 回放`,
+                kind === "web_search"
+                  ? `全网搜索：${cleanQuery.slice(0, 36)}`
+                  : kind === "webpage"
+                    ? `网页监控：${endpoint.replace(/^https?:\/\//i, "").slice(0, 40)}`
+                    : kind === "manual"
+                      ? "手动录入"
+                      : kind === "rss"
+                        ? "RSS 订阅"
+                        : `${kind.toUpperCase()} 回放`,
               type,
               endpoint:
-                type === "manual"
-                  ? "manual://notes"
-                  : type === "rss"
-                    ? endpoint
-                    : `replay://${path}`,
+                type === "web_search"
+                  ? `search://${encodeURIComponent(cleanQuery).slice(0, 800)}`
+                  : type === "webpage" || type === "rss"
+                    ? endpoint.trim()
+                    : type === "manual"
+                      ? "manual://notes"
+                      : `replay://${path}`,
               config:
-                type === "replay"
-                  ? { corpus_path: path }
-                  : type === "rss"
-                    ? { max_items: 10 }
-                    : {},
+                type === "web_search"
+                  ? {
+                      query: cleanQuery,
+                      max_items: 8,
+                      fetch_full_text: fetchFullText,
+                      role: "branch",
+                      branch_label: cleanQuery.slice(0, 40),
+                    }
+                  : type === "webpage"
+                    ? { allow_jina_fallback: true, role: "channel" }
+                    : type === "replay"
+                      ? { corpus_path: path }
+                      : type === "rss"
+                        ? {
+                            max_items: 10,
+                            fetch_full_text: fetchFullText,
+                            role: "channel",
+                          }
+                        : {},
             }),
           );
           await onSaved();
@@ -128,9 +174,11 @@ export function RegisterSource({
     >
       <label>
         来源类型
-        <select value={kind} onChange={(e) => setKind(e.target.value)}>
+        <select value={kind} onChange={(e) => handleKindChange(e.target.value)}>
+          <option value="web_search">全网关键词搜索（web_search + 正文）</option>
+          <option value="webpage">指定网页变更监控（官网/安全公告 Diff）</option>
+          <option value="rss">RSS 订阅（支持抓全文）</option>
           <option value="manual">手动录入新闻</option>
-          <option value="rss">RSS 订阅</option>
           <option value="lbj">LBJ 离线语料 · 30 条</option>
           <option value="nba">NBA 离线语料 · 18 条</option>
         </select>
@@ -143,19 +191,66 @@ export function RegisterSource({
           value={id}
           onChange={(e) => setId(e.target.value)}
         />
-        <small>使用小写字母、数字和下划线，如 my_news。</small>
+        <small>使用小写字母、数字和下划线，如 ws_custom、mcd_hk_page。</small>
       </label>
-      {kind === "rss" && (
+      {kind === "web_search" && (
+        <>
+          <label>
+            搜索关键词
+            <input
+              required
+              maxLength={200}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="例如：香港麦当劳 2026 优惠 联名 或 OpenAI Anthropic P vs NP"
+            />
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={fetchFullText}
+              onChange={(e) => setFetchFullText(e.target.checked)}
+            />
+            仅对新文章并发抓取正文（web_fetch，失败自动回退摘要）
+          </label>
+        </>
+      )}
+      {kind === "webpage" && (
         <label>
-          订阅地址
+          目标网页 URL
           <input
             type="url"
             required
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
-            placeholder="https://…/feed.xml"
+            placeholder="https://www.mcdonalds.com.hk/en/ 或安全公告页面 URL"
           />
+          <small>
+            每次检查抓取正文并与上次快照比对，仅把变更段落作为新修订证据入库（无变更 0 Token）。
+          </small>
         </label>
+      )}
+      {kind === "rss" && (
+        <>
+          <label>
+            订阅地址
+            <input
+              type="url"
+              required
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+              placeholder="https://…/feed.xml"
+            />
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={fetchFullText}
+              onChange={(e) => setFetchFullText(e.target.checked)}
+            />
+            抓取文章全文（web_fetch，适合只有短摘要的 RSS）
+          </label>
+        </>
       )}
       <p className="hint">添加后，在来源列表勾选并保存，才会用于这个主题。</p>
       <button className="primary" disabled={disabled}>
@@ -597,6 +692,7 @@ export function ModelSettingsPanel({
         className="form-stack"
         onSubmit={(e) => {
           e.preventDefault();
+          setMessage("");
           void action(async () => {
             const result = await api<ModelStatus>(
               "/settings/model",
@@ -707,6 +803,151 @@ export function ModelSettingsPanel({
             }
           >
             测试连接 · 一次模型请求
+          </button>
+        </div>
+        {message && (
+          <p role="status" className="inline-status">
+            {message}
+          </p>
+        )}
+      </form>
+    </div>
+  );
+}
+
+export function SearchSettingsPanel({
+  value,
+  disabled,
+  action,
+  onSaved,
+}: {
+  value: SearchStatus | null;
+  disabled: boolean;
+  action: Act;
+  onSaved: (next: SearchStatus) => Promise<void> | void;
+}) {
+  const [provider, setProvider] = useState<SearchStatus["provider"]>(
+    value?.provider ?? "auto",
+  );
+  const [bochaKey, setBochaKey] = useState("");
+  const [tavilyKey, setTavilyKey] = useState("");
+  const [jinaFallback, setJinaFallback] = useState(
+    value?.web_fetch_jina_fallback ?? true,
+  );
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    if (value) {
+      setProvider(value.provider);
+      setJinaFallback(value.web_fetch_jina_fallback);
+    }
+  }, [value]);
+
+  return (
+    <div className="form-stack">
+      <div className="settings-summary">
+        <strong>当前生效引擎：{value?.active_label ?? "免 Key 模式"}</strong>
+        <p className="hint">
+          博查 Key：{value?.bocha_configured ? "已配置" : "未配置"} · Tavily
+          Key：{value?.tavily_configured ? "已配置" : "未配置"} · 密钥仅存于本地
+          .env，不会回传浏览器。
+        </p>
+      </div>
+      <form
+        className="form-stack"
+        onSubmit={(e) => {
+          e.preventDefault();
+          setMessage("");
+          void action(async () => {
+            const payload: Record<string, unknown> = {
+              provider,
+              web_fetch_jina_fallback: jinaFallback,
+            };
+            if (bochaKey.trim()) payload.bocha_api_key = bochaKey.trim();
+            if (tavilyKey.trim()) payload.tavily_api_key = tavilyKey.trim();
+            const saved = await api<SearchStatus>(
+              "/settings/search",
+              json("PUT", payload),
+            );
+            await onSaved(saved);
+            setBochaKey("");
+            setTavilyKey("");
+            setMessage(`已保存，当前生效：${saved.active_label}`);
+          });
+        }}
+      >
+        <label>
+          搜索路由模式
+          <select
+            value={provider}
+            onChange={(e) =>
+              setProvider(e.target.value as SearchStatus["provider"])
+            }
+          >
+            <option value="auto">自动（优先博查 → Tavily → 免 Key 降级）</option>
+            <option value="bocha">博查全网搜索（Bocha API）</option>
+            <option value="tavily">Tavily 全网搜索</option>
+            <option value="free">仅免 Key 模式（Bing/Google News + web_fetch）</option>
+          </select>
+        </label>
+        <label>
+          博查 API Key（BOCHA_API_KEY）
+          <input
+            type="password"
+            value={bochaKey}
+            onChange={(e) => setBochaKey(e.target.value)}
+            placeholder={
+              value?.bocha_configured ? "已配置，留空保持不变" : "sk-…"
+            }
+          />
+        </label>
+        <label>
+          Tavily API Key（可选，TAVILY_API_KEY）
+          <input
+            type="password"
+            value={tavilyKey}
+            onChange={(e) => setTavilyKey(e.target.value)}
+            placeholder={
+              value?.tavily_configured ? "已配置，留空保持不变" : "tvly-…"
+            }
+          />
+        </label>
+        <label className="check-row">
+          <input
+            type="checkbox"
+            checked={jinaFallback}
+            onChange={(e) => setJinaFallback(e.target.checked)}
+          />
+          网页抓取遇到 JS 空壳/403 时自动降级到免费 Jina Reader（r.jina.ai，严格拦截内网地址）
+        </label>
+        <div className="action-row">
+          <button className="primary" disabled={disabled}>
+            保存搜索配置
+          </button>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() =>
+              void action(async () => {
+                setMessage("正在测试搜索连接…");
+                try {
+                  const res = await api<{
+                    status: string;
+                    active_label: string;
+                    provider_used: string;
+                    items: number;
+                  }>("/settings/search/check", json("POST", {}));
+                  setMessage(
+                    `连接成功 · ${res.active_label}（${res.provider_used} 返回 ${res.items} 条）`,
+                  );
+                } catch (err) {
+                  setMessage("连接失败，请检查上方错误信息。");
+                  throw err;
+                }
+              })
+            }
+          >
+            测试搜索连接
           </button>
         </div>
         {message && (

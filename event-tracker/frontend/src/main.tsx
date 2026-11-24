@@ -10,6 +10,7 @@ import type {
   EventDetail,
   EvidenceDecision,
   ModelStatus,
+  SearchStatus,
   Corpus,
 } from "./types";
 import {
@@ -18,6 +19,7 @@ import {
   ManualEvidenceForm,
   ReviewPanel,
   ModelSettingsPanel,
+  SearchSettingsPanel,
   ReplaySetup,
 } from "./member-d";
 import { Icon, Modal, Empty } from "./ui";
@@ -59,6 +61,7 @@ type Dialog =
   | "source"
   | "manual"
   | "settings"
+  | "search"
   | "replay"
   | "help"
   | null;
@@ -103,6 +106,7 @@ function App() {
   const [event, setEvent] = useState<EventDetail | null>(null),
     [evidenceId, setEvidenceId] = useState(""),
     [model, setModel] = useState<ModelStatus | null>(null),
+    [searchSettings, setSearchSettings] = useState<SearchStatus | null>(null),
     [corpora, setCorpora] = useState<Corpus[]>([]);
   const [dialog, setDialog] = useState<Dialog>(null),
     [busy, setBusy] = useState(false),
@@ -241,12 +245,14 @@ function App() {
       api<Topic[]>("/topics"),
       api<{ status: string }>("/health"),
       api<ModelStatus>("/settings/model"),
+      api<SearchStatus>("/settings/search").catch(() => null),
       api<Corpus[]>("/replay/corpora"),
     ])
-      .then(([items, h, m, c]) => {
+      .then(([items, h, m, ss, c]) => {
         setTopics(items);
         setHealth(h.status === "ok");
         setModel(m);
+        setSearchSettings(ss);
         setCorpora(c);
         const previous = localStorage.getItem("traceradar-topic");
         const requested = new URLSearchParams(location.search).get("topic");
@@ -1369,16 +1375,29 @@ function App() {
                   />
                 )}
                 {tab === "sources" && (() => {
-                  const visibleSources = sources.filter(
-                    (s) =>
-                      !s.source_id.startsWith("gnews_") ||
-                      s.source_id === `gnews_${selected.slice(0, 8).toLowerCase()}` ||
-                      approved.includes(s.source_id),
-                  );
+                  const visibleSources = sources.filter((s) => {
+                    const slug = selected.slice(0, 8).toLowerCase();
+                    if (
+                      s.source_id.startsWith("gnews_") &&
+                      s.source_id !== `gnews_${slug}` &&
+                      !approved.includes(s.source_id)
+                    ) {
+                      return false;
+                    }
+                    if (
+                      s.source_id.startsWith("websearch_") &&
+                      s.source_id !== `websearch_${slug}` &&
+                      !approved.includes(s.source_id)
+                    ) {
+                      return false;
+                    }
+                    return true;
+                  });
                   const isWatchlist = (s: Source) =>
                     s.role === "anchor" ||
                     s.role === "branch" ||
                     s.source_id.startsWith("kw_") ||
+                    s.source_id.startsWith("websearch_") ||
                     s.source_id.startsWith("anchor_");
                   const watchlistSources = visibleSources.filter(isWatchlist);
                   const channelSources = visibleSources.filter(
@@ -1404,7 +1423,9 @@ function App() {
                       <span className="source-icon">
                         <Icon
                           name={
-                            s.type === "rss"
+                            s.type === "rss" ||
+                            s.type === "web_search" ||
+                            s.type === "webpage"
                               ? "sources"
                               : s.type === "manual"
                                 ? "plus"
@@ -1442,6 +1463,8 @@ function App() {
                                     fixture: "模拟来源",
                                     replay: "离线回放",
                                     rss: "RSS",
+                                    web_search: "全网搜索",
+                                    webpage: "网页监控",
                                     manual: "手动录入",
                                   }[s.type]}
                         </span>
@@ -1496,12 +1519,26 @@ function App() {
                       <section className="section-block">
                         <div className="section-title">
                           <h2>追踪词表与信息来源</h2>
-                          <button
-                            disabled={busy || running}
-                            onClick={() => showDialog("source")}
-                          >
-                            <Icon name="plus" size={15} /> 添加来源
-                          </button>
+                          <div className="watchlist-save-actions">
+                            <button
+                              type="button"
+                              disabled={busy || running}
+                              onClick={() => showDialog("search")}
+                            >
+                              搜索引擎：
+                              {searchSettings?.active_provider === "bocha"
+                                ? "博查 API"
+                                : searchSettings?.active_provider === "tavily"
+                                  ? "Tavily"
+                                  : "免 Key 模式"}
+                            </button>
+                            <button
+                              disabled={busy || running}
+                              onClick={() => showDialog("source")}
+                            >
+                              <Icon name="plus" size={15} /> 添加来源
+                            </button>
+                          </div>
                         </div>
                         <div
                           className={`watchlist-save-bar ${hasUnsavedSources ? "dirty" : ""}`}
@@ -1853,6 +1890,7 @@ function App() {
               source: "添加信息来源",
               manual: "提交一条新闻",
               settings: "配置真实模型",
+              search: "配置联网搜索引擎",
               replay: "准备新闻回放",
               help: "看懂 ExampleSoft 演示",
             }[dialog]
@@ -1958,6 +1996,19 @@ function App() {
               disabled={busy || running}
               action={action}
               onSaved={setModel}
+            />
+          )}
+          {dialog === "search" && (
+            <SearchSettingsPanel
+              value={searchSettings}
+              disabled={busy || running}
+              action={action}
+              onSaved={async (next) => {
+                setSearchSettings(next);
+                if (selected && !llmSummaryOn) {
+                  await refreshSources(false);
+                }
+              }}
             />
           )}
           {dialog === "replay" && (

@@ -11,7 +11,7 @@ export type Topic = {
 export type Source = {
   source_id: string;
   name: string;
-  type: "fixture" | "replay" | "rss" | "manual";
+  type: "fixture" | "replay" | "rss" | "manual" | "web_search" | "webpage";
   endpoint: string;
   config: Record<string, unknown>;
   reason?: string;
@@ -183,6 +183,15 @@ export type ModelStatus = {
   model: string;
   key_configured: boolean;
   missing: string[];
+};
+export type SearchStatus = {
+  provider: "auto" | "bocha" | "tavily" | "free";
+  active_provider: "bocha" | "tavily" | "free";
+  active_label: string;
+  bocha_configured: boolean;
+  tavily_configured: boolean;
+  jina_configured: boolean;
+  web_fetch_jina_fallback: boolean;
 };
 export type Corpus = {
   corpus_id: string;

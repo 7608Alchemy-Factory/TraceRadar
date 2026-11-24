@@ -65,7 +65,7 @@ export function ProjectHome({
   const [category, setCategory] = useState("");
   const tags = tagOptions(topics);
   const activeCategory = tags.includes(category) ? category : "";
-  const items = [...topics].reverse().filter((topic) =>
+  const items = topics.filter((topic) =>
     !activeCategory || topic.tags?.some((tag) => tag.toLocaleLowerCase() === activeCategory.toLocaleLowerCase()));
   const examples = tagExamples(activeCategory);
 

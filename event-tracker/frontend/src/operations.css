@@ -48,6 +48,7 @@
     color-mix(in srgb, var(--white) 70%, var(--paper));
 }
 .radar-feed { min-width: 0; }
+.radar-feed-label { margin: 0 0 7px; color: var(--muted); font-size: .75rem; font-weight: 600; }
 .radar-feed ol { list-style: none; padding: 0; margin: 0 0 14px; display: grid; gap: 5px; }
 .radar-feed button { min-width: 0; }
 .radar-feed li button {
@@ -59,25 +60,48 @@
 .radar-feed li button span:first-child { font: .68rem/1.6 var(--mono); color: var(--purple); }
 .radar-feed li button span:last-child { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; font-size: .78rem; }
 .radar-readout { display: grid; justify-items: start; gap: 6px; overflow-wrap: anywhere; }
+.radar-readout strong { color: var(--ink); font-weight: 650; margin-inline-end: .3em; }
 .radar-disc {
   position: relative; isolation: isolate; overflow: hidden; container-type: inline-size;
   justify-self: center; width: min(100%, 320px); aspect-ratio: 1;
   color: var(--radar-ink); border: 1px solid currentColor; border-radius: 50%;
-  background: color-mix(in srgb, var(--purple) 9%, var(--white));
-  box-shadow: inset 0 0 0 5px color-mix(in srgb, var(--purple) 10%, transparent);
+  background: color-mix(in srgb, var(--purple) 6%, var(--white));
+  box-shadow: inset 0 0 0 4px color-mix(in srgb, var(--purple) 7%, transparent);
+}
+.radar-reticle {
+  position: absolute; inset: 3%; border-radius: 50%; opacity: .46;
+  background: repeating-conic-gradient(from -.45deg, currentColor 0 .9deg, transparent .9deg 10deg);
+  mask: radial-gradient(closest-side, transparent calc(100% - 5px), #000 calc(100% - 5px));
+}
+.radar-range-rings {
+  position: absolute; inset: 0; border-radius: 50%; opacity: .31;
+  background: repeating-conic-gradient(from 15deg, currentColor 0 22deg, transparent 22deg 29deg,
+    currentColor 29deg 34deg, transparent 34deg 45deg);
+  mask: radial-gradient(closest-side, transparent 23.6%, #000 23.6% 24.2%, transparent 24.2% 45.6%,
+    #000 45.6% 46.2%, transparent 46.2% 67.6%, #000 67.6% 68.2%, transparent 68.2% 82.6%,
+    #000 82.6% 83.2%, transparent 83.2%);
 }
 .radar-disc .radar-glyph-field {
   position: absolute; inset: 0; display: grid; place-content: center; margin: 0; padding: 0; border: 0;
-  white-space: pre; color: currentColor; background: transparent; font: 2.9cqw/1.18 var(--mono); opacity: .62;
+  white-space: pre; color: currentColor; background: transparent; font: 2.51cqw/1.21 var(--mono); opacity: .76;
 }
-.radar-sweep { position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, transparent 66%, color-mix(in srgb, currentColor 42%, transparent) 99%, currentColor 99.7%); animation: radar-scan-live 6s linear infinite; pointer-events: none; }
+.radar-sweep {
+  position: absolute; inset: 0; border-radius: 50%; pointer-events: none; animation: radar-scan-live 6s linear infinite;
+  background: conic-gradient(transparent 75%, color-mix(in srgb, currentColor 23%, transparent) 99.25%,
+    currentColor 99.65%, color-mix(in srgb, currentColor 50%, transparent));
+  mask: radial-gradient(closest-side, #000 92%, transparent 97%);
+}
 @keyframes radar-scan-live { to { transform: rotate(1turn); } }
-.radar-disc .radar-point {
+.radar-blip {
   position: absolute; left: var(--x); top: var(--y); translate: -50% -50%;
-  width: 25px; height: 25px; min-height: 0; padding: 0; border: 1px solid transparent;
-  border-radius: 3px; background: var(--white); color: currentColor; font: 700 .66rem/1 var(--mono);
+  display: grid; place-items: center; width: 8cqw; aspect-ratio: 1;
+  background: linear-gradient(currentColor 0 0) center / 1.4cqw 1.4cqw no-repeat;
 }
-.radar-disc .radar-point:is(:hover,[aria-pressed="true"]) { background: var(--surface-selected); border-color: currentColor; }
+.radar-blip::after {
+  content: ""; width: 75%; aspect-ratio: 1; border: 1px dashed currentColor;
+  animation: radar-acquire .5s var(--motion-out) both;
+}
+@keyframes radar-acquire { from { transform: scale(1.8); opacity: .2; } }
 .radar-readout button { color: var(--accent); border: 0; padding: 0; background: transparent; text-align: start; display: inline; overflow-wrap: anywhere; }
 
 .reel {
@@ -179,6 +203,6 @@
   .home-header nav .clock-options { inset-inline: auto 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .radar-sweep { animation: none; }
+  .radar-sweep, .radar-blip::after { animation: none; }
   .reel-track > li, .reel-track .project-frame:is(:hover,:focus-visible) { transform: none; }
 }

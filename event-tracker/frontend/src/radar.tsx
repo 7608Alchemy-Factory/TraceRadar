@@ -7,15 +7,22 @@ import type { Topic } from "./types";
 
 type Signal = { event_id: string; topic_id: string; title: string; updated_at: string };
 
-const radarGlyphs = Array.from({ length: 27 }, (_, row) => Array.from({ length: 55 }, (_, column) => {
-  const x = (column - 27) / 27;
-  const y = (row - 13) / 13;
+const radarGlyphs = Array.from({ length: 33 }, (_, row) => Array.from({ length: 65 }, (_, column) => {
+  const x = (column - 32) / 32;
+  const y = (row - 16) / 16;
   const radius = Math.hypot(x, y);
-  if (radius > 1.02) return " ";
-  if (row === 13 || column === 27) return "+";
-  if ([.26, .5, .73, .97].some((ring) => Math.abs(radius - ring) < .025)) return (row + column) % 5 === 0 ? "x" : ":";
-  return column % 3 === 0 && row % 2 === 0 ? "." : " ";
+  const angle = Math.atan2(y, x);
+  if (radius > .96) return " ";
+  if (row === 16 && column === 32) return "+";
+  if ((row === 16 || column === 32) && radius > .08) return radius > .78 ? "|" : "·";
+  if (radius > .88 && Math.abs(Math.sin(angle * 12)) < .18) return "+";
+  if ([.24, .46, .68, .83].some((ring) => Math.abs(radius - ring) < .019)) {
+    return Math.cos(angle * 4 + radius * 2) > -.53 ? "·" : " ";
+  }
+  return column % 5 === 2 && row % 3 === 1 ? "." : " ";
 }).join("")).join("\n");
+
+const signalSlots = [[66, 38], [32, 63], [56, 23], [69, 71]];
 
 export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id: string) => void }) {
   const [signals, setSignals] = useState<Signal[]>();
@@ -39,15 +46,17 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
     };
   }, []);
   const known = (signals ?? []).filter((item) => topics.some((topic) => topic.topic_id === item.topic_id));
-  const current = known.find((item) => item.event_id === selected) ?? known[0];
+  const recent = known.slice(0, signalSlots.length);
+  const currentIndex = Math.max(0, recent.findIndex((item) => item.event_id === selected));
+  const current = recent[currentIndex];
   const topic = topics.find((item) => item.topic_id === current?.topic_id);
   return (
     <section className="live-radar" aria-label={t("事件雷达")}>
       <div className="radar-header"><h2>{t("事件雷达")}</h2><span>{known.length} {t("条近期信号")}</span></div>
       <div className="radar-field">
         <div className="radar-feed">
-          {known.length > 0 && <ol>
-            {known.slice(0, 4).map((signal, index) => (
+          {recent.length > 0 && <><h3 className="radar-feed-label">{t("近期事件")}</h3><ol>
+            {recent.map((signal, index) => (
               <li key={signal.event_id}>
                 <button type="button" aria-pressed={current?.event_id === signal.event_id}
                   onClick={() => setSelected(signal.event_id)}>
@@ -56,28 +65,21 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
                 </button>
               </li>
             ))}
-          </ol>}
+          </ol></>}
           <div className="radar-readout">
             {current && topic ? (
-              <><small>{tr(topicTitle(topic.title))} · {date(current.updated_at)}</small>
+              <><small><strong>{t("最近更新")}</strong>{" "}{tr(topicTitle(topic.title))} · {date(current.updated_at)}</small>
                 <button type="button" onClick={() => onTopic(topic.topic_id)}>{t("查看主题")}</button></>
             ) : <small>{t(signals ? "暂无事件信号" : "正在读取事件信号…")}</small>}
           </div>
         </div>
-        <div className="radar-disc">
-          <pre className="radar-glyph-field" aria-hidden="true">{radarGlyphs}</pre>
-          <span className="radar-sweep" aria-hidden="true" />
-          {known.map((signal, index) => {
-            const angle = .35 + index * 2.4;
-            const radius = 18 + index * 3;
-            return (
-              <button key={signal.event_id} type="button" className="radar-point"
-                aria-label={tr(title(signal.title))} title={tr(title(signal.title))}
-                aria-pressed={current?.event_id === signal.event_id}
-                style={{ "--x": `${50 + Math.cos(angle) * radius}%`, "--y": `${50 + Math.sin(angle) * radius}%` } as CSSProperties}
-                onClick={() => setSelected(signal.event_id)}><span aria-hidden="true">{String(index + 1).padStart(2, "0")}</span></button>
-            );
-          })}
+        <div className="radar-disc" aria-hidden="true">
+          <span className="radar-reticle" />
+          <span className="radar-range-rings" />
+          <pre className="radar-glyph-field">{radarGlyphs}</pre>
+          <span className="radar-sweep" />
+          {current && <span key={current.event_id} className="radar-blip"
+            style={{ "--x": `${signalSlots[currentIndex][0]}%`, "--y": `${signalSlots[currentIndex][1]}%` } as CSSProperties} />}
         </div>
       </div>
     </section>

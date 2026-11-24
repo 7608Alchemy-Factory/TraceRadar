@@ -1,4 +1,6 @@
 import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
+import { SidebarTopics } from "./sidebar-topics";
+import { useTopicOrder } from "./topic-order";
 import { TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
 import { WorkspaceClock } from "./clock";
 import { TopicReport } from "./topic-report";
@@ -115,6 +117,9 @@ function App() {
   const [topics, setTopics] = useState<Topic[]>([]),
     [selected, setSelected] = useState(""),
     [tab, setTab] = useState<Tab>("overview");
+  const { orderedTopics, pinned, togglePin, moveTopic, forgetTopic } = useTopicOrder(topics);
+  const orderedTopicsRef = useRef(orderedTopics);
+  orderedTopicsRef.current = orderedTopics;
   const [dashboard, setDashboard] = useState<Dashboard | null>(null),
     [sources, setSources] = useState<Source[]>([]),
     [approved, setApproved] = useState<string[]>([]);
@@ -654,9 +659,11 @@ function App() {
         if (!(error instanceof Error && error.message.startsWith("NOT_FOUND:"))) throw error;
       }
       setTopics((items) => items.filter((topic) => topic.topic_id !== id));
+      forgetTopic(id);
       if (selectedRef.current === id) {
-        history.replaceState(null, "", topicUrl(""));
-        selectTopic("", true);
+        const next = orderedTopicsRef.current.find((topic) => topic.topic_id !== id)?.topic_id ?? "";
+        history.replaceState(null, "", topicUrl(next));
+        selectTopic(next, true);
       }
       setDialog(null);
       setDeleteTarget(undefined);
@@ -927,25 +934,8 @@ function App() {
             <Icon name="plus" size={15} />
           </button>
         </div>
-        <div className="topic-list">
-          {[...topics].reverse().map((topic) => (
-            <div className="topic-list-entry" key={topic.topic_id}>
-              <button
-                disabled={busy}
-                className={`topic-link ${selected === topic.topic_id ? "selected" : ""}`}
-                aria-current={selected === topic.topic_id ? "page" : undefined}
-                onClick={() => selectTopic(topic.topic_id)}
-              >
-                <span className="topic-dot" />
-                <span>{tr(topicTitle(topic.title))}</span>
-              </button>
-              <button type="button" className="sidebar-topic-delete" disabled={busy || (running && selected === topic.topic_id)}
-                aria-label={t("删除主题 {0}", tr(topicTitle(topic.title)))} title={t("删除主题")}
-                onClick={() => requestDelete(topic)}><Icon name="trash" size={15} /></button>
-            </div>
-          ))}
-          {!topics.length && <p className="sidebar-hint">{t("创建第一个追踪主题")}</p>}
-        </div>
+        <SidebarTopics topics={orderedTopics} selected={selected} pinned={pinned} busy={busy}
+          onSelect={selectTopic} onPin={togglePin} onMove={moveTopic} />
         <button className="sidebar-replay" onClick={() => showDialog("replay")}>
           <Icon name="play" size={14} />
           <span>{t("准备新闻回放")}</span>
@@ -1008,12 +998,12 @@ function App() {
             </div>
             {dashboard && (
               <div className="topic-heading-actions">
-                <button className="heading-edit" disabled={busy || running} onClick={() => showDialog("goal")}>
-                  {t("编辑追踪目标")} <Icon name="arrow" size={14} />
+                <button className="heading-edit" type="button" disabled={busy || running} onClick={() => showDialog("goal")}>
+                  <span>{t("编辑追踪目标")}</span><Icon name="arrow" size={15} />
                 </button>
-                <button className="heading-delete" type="button" disabled={busy || running}
+                <button className="heading-edit" type="button" disabled={busy || running}
                   onClick={() => requestDelete(dashboard.topic)}>
-                  <Icon name="trash" size={15} /> {t("删除主题")}
+                  <span>{t("删除主题")}</span><Icon name="trash" size={15} />
                 </button>
               </div>
             )}
@@ -1773,7 +1763,7 @@ function App() {
     <TranslationContext.Provider value={tr}><div className="workspace" style={{ "--sidebar-width": `${sidebar.width}px` } as React.CSSProperties}>
       {!selected ? (
         <ProjectHome
-          topics={topics}
+          topics={orderedTopics}
           loading={loading}
           busy={busy}
           feedback={feedback}

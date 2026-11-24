@@ -2,7 +2,7 @@ import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
 import { SidebarTopics } from "./sidebar-topics";
 import { useTopicOrder } from "./topic-order";
 import { searchProviderLabel, SourceHealth } from "./source-health";
-import { TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
+import { MAX_TOPIC_TAGS, TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
 import { WorkspaceClock } from "./clock";
 import { TopicReport } from "./topic-report";
 import { TranslationContext, useWorkspaceTranslation } from "./reference-translation";
@@ -19,6 +19,7 @@ import type {
   Dashboard,
   Notification,
   RunDetail,
+  Event as TrackedEvent,
   EventDetail,
   EvidenceDecision,
   ModelStatus,
@@ -84,6 +85,7 @@ type Dialog =
   | "search"
   | "replay"
   | "delete"
+  | "delete-event"
   | null;
 const SEARCH_LANGUAGE_OPTIONS = [
   { code: "zh-CN", label: "简中" },
@@ -165,6 +167,7 @@ function App() {
     [newDescription, setNewDescription] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
   const [deleteTarget, setDeleteTarget] = useState<Topic>();
+  const [deleteEventTarget, setDeleteEventTarget] = useState<TrackedEvent>();
   const selectedRef = useRef(selected);
   selectedRef.current = selected;
   const knownTopics = useRef(topics);
@@ -645,7 +648,7 @@ function App() {
     setDialog(d);
   }
   function openNewTopic(tag?: string, example?: string) {
-    if (tag) setNewTags((tags) => tags.includes(tag) ? tags : [tag, ...tags].slice(0, 12));
+    if (tag) setNewTags((tags) => tags.includes(tag) || tags.length >= MAX_TOPIC_TAGS ? tags : [...tags, tag]);
     if (example) setNewTitle(example);
     showDialog("new");
   }
@@ -675,6 +678,29 @@ function App() {
       setDialog(null);
       setDeleteTarget(undefined);
       setToast(t("主题已删除。"));
+    });
+  }
+
+  function confirmDeleteEvent() {
+    if (!deleteEventTarget) return;
+    const { event_id: id, topic_id: topicId } = deleteEventTarget;
+    void action(async () => {
+      try {
+        await api(`/events/${id}`, { method: "DELETE" });
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith("TOPIC_RUN_ACTIVE:")) {
+          throw new Error(t("检查仍在运行，结束后才能删除事件。"));
+        }
+        if (!(error instanceof Error && error.message.startsWith("NOT_FOUND:"))) throw error;
+      }
+      setDeleteEventTarget(undefined);
+      setDialog(null);
+      if (selectedRef.current !== topicId) return;
+      setDashboard((value) => value && { ...value, events: value.events.filter((item) => item.event_id !== id) });
+      setNotices((value) => value.filter((item) => item.event_id !== id));
+      setEvent((value) => value?.event.event_id === id ? null : value);
+      setToast(t("事件已删除。"));
+      await refresh(false, { includeRecommendations: false });
     });
   }
 
@@ -716,26 +742,29 @@ function App() {
       <div className="event-table">
         {events.length ? (
           visibleEvents.map((e) => (
-            <button
-              className="event-row"
-              key={e.event_id}
-              disabled={busy}
-              onClick={() => void openEvent(e.event_id)}
-            >
-              <span className="event-row-main">
-                <strong>{tr(eventTitle(e.title))}</strong>
-                <span>{tr(text(e.state.key_facts.at(-1)?.fact ?? ""))}</span>
-              </span>
-              <span
-                className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
-              >
-                {tr(status(e.state.current_status))}
-              </span>
-              <span className="event-row-meta">
-                {e.state.timeline.length} {t("条进展")}
-              </span>
-              <Icon name="arrow" size={17} />
-            </button>
+            <div className="event-list-item" key={e.event_id}>
+              <button type="button" className="event-row" disabled={busy}
+                onClick={() => void openEvent(e.event_id)}>
+                <span className="event-row-main">
+                  <strong>{tr(eventTitle(e.title))}</strong>
+                  <span>{tr(text(e.state.key_facts.at(-1)?.fact ?? ""))}</span>
+                </span>
+                <span className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}>
+                  {tr(status(e.state.current_status))}
+                </span>
+                <span className="event-row-meta">
+                  {e.state.timeline.length} {t("条进展")}
+                </span>
+                <Icon name="arrow" size={17} />
+              </button>
+              {limit === undefined && (
+                <button type="button" className="event-delete" disabled={busy || running}
+                  aria-label={t("删除事件 {0}", tr(eventTitle(e.title)))} title={t("删除事件")}
+                  onClick={() => { setDeleteEventTarget(e); showDialog("delete-event"); }}>
+                  <Icon name="trash" size={17} />
+                </button>
+              )}
+            </div>
           ))
         ) : (
           <Empty
@@ -1030,9 +1059,6 @@ function App() {
                 <span>
                   {t("最近更新")}{" "}
                   {date(latest?.completed_at ?? dashboard.topic.updated_at)}
-                </span>
-                <span className="mode-label">
-                  {latest ? providerLabel(latest.provider) : t("尚未分析")}
                 </span>
               </div>
               <div
@@ -1801,12 +1827,17 @@ function App() {
           )}
           <footer>
             <span>TRACERADAR / GROUP 65</span>
-            <span>{t("把结论留给证据，把变化留在历史。")}</span>
+            <span>COMP7608 Large Language Models</span>
           </footer>
         </main>
       </div>
     </>
   );
+
+  const removingEvent = dialog === "delete-event";
+  const removalTitle = removingEvent && deleteEventTarget
+    ? eventTitle(deleteEventTarget.title)
+    : dialog === "delete" && deleteTarget ? topicTitle(deleteTarget.title) : null;
 
   return (
     <TranslationContext.Provider value={tr}><div className="workspace" style={{ "--sidebar-width": `${sidebar.width}px` } as React.CSSProperties}>
@@ -1837,10 +1868,11 @@ function App() {
               search: t("配置联网搜索引擎"),
               replay: t("准备新闻回放"),
               delete: t("删除主题"),
+              "delete-event": t("删除事件"),
             }[dialog]
           }
           onClose={() => setDialog(null)}
-          compact={dialog === "delete"}
+          compact={Boolean(removalTitle)}
         >
           {error && (
             <div role="alert" className="error">
@@ -1974,13 +2006,16 @@ function App() {
               }}
             />
           )}
-          {dialog === "delete" && deleteTarget && (
+          {removalTitle && (
             <div className="topic-removal">
-              <h3>{tr(topicTitle(deleteTarget.title))}</h3>
-              <p>{t("将永久删除此主题及其事件、运行记录和审核记录。其他主题共用的新闻与来源会保留。")}</p>
+              <h3>{tr(removalTitle)}</h3>
+              <p>{t(removingEvent
+                ? "将永久删除此事件、进展时间线与提醒。新闻原文和运行记录会保留。"
+                : "将永久删除此主题及其事件、运行记录和审核记录。其他主题共用的新闻与来源会保留。")}</p>
               <div className="topic-removal-actions">
                 <button type="button" autoFocus disabled={busy} onClick={() => setDialog(null)}>{t("取消")}</button>
-                <button type="button" className="danger-button" disabled={busy} onClick={confirmDelete}>{t("确认删除")}</button>
+                <button type="button" className="danger-button" disabled={busy}
+                  onClick={removingEvent ? confirmDeleteEvent : confirmDelete}>{t("确认删除")}</button>
               </div>
             </div>
           )}

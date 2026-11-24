@@ -870,3 +870,28 @@ Object.assign(messages, {
   "检查信息源": ["Check sources", "檢查資訊來源"],
   "技术错误详情": ["Technical error details", "技術錯誤詳情"],
 });
+
+Object.assign(messages, {
+  "教育": ["Education", "教育"], "科学": ["Science", "科學"], "法律": ["Law", "法律"],
+  "社区民生": ["Community", "社區民生"], "国际": ["International", "國際"],
+  "学校招生与课程调整": ["School admissions and curriculum changes", "學校招生與課程調整"],
+  "考试与奖学金政策": ["Exam and scholarship policies", "考試與獎學金政策"],
+  "科研发现与后续验证": ["Research findings and follow-up studies", "科研發現與後續驗證"],
+  "航天任务进展": ["Space mission updates", "太空任務進展"],
+  "立法与司法裁决": ["Legislation and court rulings", "立法與司法裁決"],
+  "监管执法进展": ["Regulatory enforcement updates", "監管執法進展"],
+  "社区公共服务变动": ["Changes to local public services", "社區公共服務變動"],
+  "住房与社区规划": ["Housing and neighborhood planning", "房屋與社區規劃"],
+  "国际合作与峰会": ["International cooperation and summits", "國際合作與峰會"],
+  "跨境协定进展": ["Cross-border agreement updates", "跨境協定進展"],
+  "（最多勾选3项）": ["(choose up to 3)", "（最多勾選3項）"],
+  "{0}，优先级 {1}": ["{0}, priority {1}", "{0}，優先級 {1}"],
+  "优先级 1 的标签决定封面。": ["The priority 1 tag sets the cover.", "優先級 1 的標籤決定封面。"],
+  "此主题的旧标签超过 3 项。请取消多余标签后再保存。": ["This topic has more than 3 saved tags. Remove the extra tags to save changes.", "此主題的舊標籤超過 3 項。請取消多餘標籤後再儲存。"],
+  "删除事件": ["Delete event", "刪除事件"],
+  "删除事件 {0}": ["Delete event {0}", "刪除事件 {0}"],
+  "事件已删除。": ["Event deleted.", "事件已刪除。"],
+  "检查仍在运行，结束后才能删除事件。": ["Wait for the active check to finish before deleting this event.", "請等檢查完成後再刪除事件。"],
+  "将永久删除此事件、进展时间线与提醒。新闻原文和运行记录会保留。": ["This permanently deletes the event, its timeline and alerts. Source articles and run records are kept.", "這會永久刪除此事件、進展時間軸與提醒。新聞原文和執行紀錄會保留。"],
+  "审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。": ["Review decisions are recorded. Accepted changes appear in event history and run records.", "審核決定會留在紀錄中。採納後的狀態變化會出現在事件歷史和執行紀錄中。"],
+});

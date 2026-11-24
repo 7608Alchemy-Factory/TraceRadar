@@ -89,7 +89,7 @@ export type ReviewResolution = {
   resolution_id: string;
   evidence_id: string;
   decision: "dismiss" | "accept";
-  note: string;
+  note: string | null;
   actor: string;
   resolved_at: string;
   original_assessment: Assessment | EvidenceAssessment;

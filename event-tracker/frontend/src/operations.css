@@ -27,11 +27,7 @@
 .reference-translation { margin-block: 10px; }
 .reference-translation > div { margin-top: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-selected); }
 
-.cover-art, .topic-heading .topic-banner { background: transparent; }
-.cover-art { mix-blend-mode: multiply; }
-[data-theme="dark"] .cover-art { mix-blend-mode: screen; color: #aaa7b6; }
-[data-theme="dark"] .cover-print { filter: grayscale(1) contrast(1.04) invert(1); }
-[data-theme="dark"] .cover-glyphs { color: #4f4f4f; }
+[data-theme="dark"] .cover-print { filter: invert(1); }
 .live-radar {
   --radar-ink: var(--purple);
   min-width: 0; border: 1px solid var(--line); border-radius: 12px;
@@ -177,16 +173,15 @@
   transform: translateY(-10px) rotate(2deg) rotateY(0deg) scale(1.07);
   box-shadow: 0 17px 27px #15101f38;
 }
-.reel-track .frame-cover { isolation: auto; width: 65%; margin-inline: 10px auto; border: 0; }
-.frame-cover .cover-print { left: -15%; width: 112%; }
+.reel-track .frame-cover { border: 0; padding: 9px 12px 5px; }
 .reel-track .frame-copy { border-top: 1px solid var(--line); }
 .topic-heading { position: relative; min-height: 0; }
 .topic-heading > :not(.topic-banner) { position: relative; z-index: 1; }
 .topic-heading .topic-banner {
-  position: absolute; height: 135%; width: min(43%, 420px); inset: 50% 8% auto auto;
-  translate: 0 -50%; margin: 0; opacity: .22; pointer-events: none; border-radius: 0;
+  position: absolute; inset: 50% clamp(85px, 12%, 160px) auto auto;
+  height: 100%; width: min(46%, 280px); place-items: center;
+  translate: 0 -50%; opacity: .2; pointer-events: none;
 }
-.topic-heading .topic-banner .cover-print { width: 100%; }
 .topic-heading h1 { overflow-wrap: anywhere; }
 
 .activity-layout { align-items: start; grid-template-columns: minmax(180px, 245px) minmax(0,1fr); gap: clamp(12px,2.2vw,30px); }
@@ -248,7 +243,7 @@
   .run-metrics, .report-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .reel-track { padding-block: 48px; }
   .reel-track .project-frame { transform: rotate(6deg) rotateY(calc(var(--reel-angle,0deg) * .75)); }
-  .topic-heading .topic-banner { inset-inline-end: 3%; width: 52%; opacity: .17; }
+  .topic-heading .topic-banner { inset-inline-end: 2%; width: min(58%, 220px); opacity: .16; }
 }
 @media (max-width: 560px) {
   .home-header nav .workspace-clock { position: absolute; inset: 6px 9px auto auto; min-width: 0; margin: 0; }

@@ -1,4 +1,4 @@
-import { TopicTagPicker } from "./topic-tags";
+import { MAX_TOPIC_TAGS, TopicTagPicker } from "./topic-tags";
 import { t } from "./i18n";
 import React, { useEffect, useState } from "react";
 import { api, json } from "./api";
@@ -70,7 +70,7 @@ export function GoalEditor({
       <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
       </p>
-      <button className="primary" disabled={disabled}>
+      <button className="primary" disabled={disabled || tags.length > MAX_TOPIC_TAGS}>
         {t("保存追踪目标")} <Icon name="arrow" size={16} />
       </button>
     </form>
@@ -452,7 +452,7 @@ function ReviewItem({
               json(
                 "POST",
                 mode === "dismiss"
-                  ? { decision: "dismiss", note }
+                  ? { decision: "dismiss" }
                   : {
                       decision: "accept",
                       note,
@@ -570,23 +570,19 @@ function ReviewItem({
             </label>
           </>
         )}
-        <label>
+        {mode === "accept" && <label>
           {t("处理依据")}
           <textarea
             required
             maxLength={2000}
             value={note}
             onChange={(e) => setNote(e.target.value)}
-            placeholder={
-              mode === "dismiss"
-                ? t("为什么保留现有判断？")
-                : t("为什么采纳这条证据？")
-            }
+            placeholder={t("为什么采纳这条证据？")}
           />
-        </label>
+        </label>}
         <button
           className={mode === "accept" ? "primary" : ""}
-          disabled={disabled || !note.trim() || (mode === "accept" && stale)}
+          disabled={disabled || (mode === "accept" && (!note.trim() || !selected || stale))}
         >
           {mode === "accept" ? t("采纳并更新事件") : t("保留原状态并关闭")}{" "}
           <Icon name="check" size={16} />
@@ -639,7 +635,7 @@ export function ReviewPanel({
         <span className="kicker">REVIEW HISTORY</span>
         <h3>{t("人工处理记录")}</h3>
         <p className="hint">
-          {t("每次处理都会留下依据。采纳后的状态变化会出现在事件历史和运行记录中。")}
+          {t("审核决定会留在记录里。采纳后的状态变化会出现在事件历史和运行记录中。")}
         </p>
         {!resolutions.length && <p className="meta">{t("尚无处理记录")}</p>}
         {resolutions.map((r) => (
@@ -647,7 +643,7 @@ export function ReviewPanel({
             <span className={`tag ${r.decision === "accept" ? "green" : ""}`}>
               {r.decision === "accept" ? t("已采纳") : t("保留原状态")}
             </span>
-            <p>{r.note}</p>
+            {r.note && <p>{r.note}</p>}
             <small>{date(r.resolved_at)} {t("· 本地用户")}</small>
           </div>
         ))}

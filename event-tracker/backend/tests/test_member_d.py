@@ -118,6 +118,21 @@ def test_goal_edit_and_review_lock_preserve_run_snapshot(client):
     assert repo.get('runs',pending['run_id'])['snapshot']['topic']['title']=='ExampleSoft security'
 
 
+def test_keep_state_can_close_without_note(client):
+    identity = topic(client)
+    for batch in ('1', '2', '3'):
+        run(client, identity, batch)
+    dashboard = f'/api/topics/{identity}/dashboard'
+    before = client.get(dashboard).json()
+    review_id = before['reviews'][0]['evidence']['evidence_id']
+    path = f'/api/topics/{identity}/reviews/{review_id}/resolve'
+    result = client.post(path, json={'decision': 'dismiss'})
+    assert result.status_code == 200
+    assert result.json()['note'] is None
+    assert client.post(path, json={'decision': 'dismiss'}).json() == result.json()
+    assert client.get(dashboard).json()['events'] == before['events']
+
+
 def test_generic_prompt_and_wire_contract():
     settings=Settings(api_key='test',base_url='https://provider.invalid/v1',model='test')
     reply=Assessment(evidence_id='current-evidence',is_relevant=False,association=Association(type='unresolved',reason='Off topic'),novelty='no_change',reason_codes=['irrelevant'])

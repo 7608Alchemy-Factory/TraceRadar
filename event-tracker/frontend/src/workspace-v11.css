@@ -141,19 +141,19 @@ button:not(:disabled) {
   outline-offset: 6px;
 }
 .workspace-panel
-  :is(.event-row, .evidence-row, .source-row, .session-row):nth-child(-n + 6) {
+  :is(.event-list-item, .evidence-row, .source-row, .session-row):nth-child(-n + 6) {
   animation: panel-in 0.32s var(--motion-out) both;
 }
 .workspace-panel
-  :is(.event-row, .evidence-row, .source-row, .session-row):nth-child(2) {
+  :is(.event-list-item, .evidence-row, .source-row, .session-row):nth-child(2) {
   animation-delay: 35ms;
 }
 .workspace-panel
-  :is(.event-row, .evidence-row, .source-row, .session-row):nth-child(3) {
+  :is(.event-list-item, .evidence-row, .source-row, .session-row):nth-child(3) {
   animation-delay: 70ms;
 }
 .workspace-panel
-  :is(.event-row, .evidence-row, .source-row, .session-row):nth-child(n + 4) {
+  :is(.event-list-item, .evidence-row, .source-row, .session-row):nth-child(n + 4) {
   animation-delay: 105ms;
 }
 .workspace-panel .section-title h2,

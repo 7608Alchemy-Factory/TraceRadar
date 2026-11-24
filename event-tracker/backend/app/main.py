@@ -313,6 +313,11 @@ def create_app(settings=None):
     def event(identity: str):
         return repo.event_detail(identity)
 
+    @app.delete('/api/events/{identity}')
+    def delete_event(identity: str):
+        repo.delete_event(identity)
+        return {'event_id': identity}
+
     @app.get('/api/topics/{identity}/evidence')
     def evidence_decisions(identity: str):
         repo.get('topics',identity)

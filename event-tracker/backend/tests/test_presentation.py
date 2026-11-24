@@ -80,3 +80,58 @@ def test_delete_refuses_queued_run(tmp_path):
         assert blocked.status_code == 409
         assert blocked.json()['error']['code'] == 'TOPIC_RUN_ACTIVE'
         assert client.get(f"/api/runs/{record['run_id']}").json()['run']['status'] == 'pending'
+
+
+def test_topic_tag_order_limit_and_existing_records(tmp_path):
+    with TestClient(create_app(Settings(database_path=str(tmp_path / 'tags.db')))) as client:
+        body = {'title': 'Research', 'description': 'Track funding and new studies'}
+        tags = ['science', 'education', 'business', 'custom']
+        assert client.post('/api/topics', json={**body, 'tags': tags}).status_code == 422
+        result = client.post('/api/topics', json={**body, 'tags': tags[:3]}).json()
+        assert result['tags'] == tags[:3]
+        identity = result['topic_id']
+        url = f'/api/topics/{identity}'
+        assert client.patch(url, json={'tags': tags}).status_code == 422
+        client.app.state.repo.patch_topic(identity, {'tags': tags})
+        assert client.get('/api/topics').json()[0]['tags'] == tags
+        assert client.patch(url, json={'title': 'Research news'}).json()['tags'] == tags
+        assert client.patch(url, json={'tags': tags[1:]}).json()['tags'] == tags[1:]
+
+
+def test_event_deletion_keeps_other_events_articles_and_runs(tmp_path):
+    app = create_app(Settings(database_path=str(tmp_path / 'delete-event.db')))
+    with TestClient(app) as client:
+        identity, other = topic(client), topic(client)
+        url = f'/api/topics/{identity}'
+        for batch in ('1', '2', '3'):
+            run(client, identity, batch)
+        run(client, other, '1')
+        before = client.get(url + '/dashboard').json()
+        other_before = client.get(f'/api/topics/{other}/dashboard').json()
+        evidence_before = client.get(url + '/evidence').json()
+        event = next(item for item in before['events'] if item['title'].endswith('A'))
+        event_path = f"/api/events/{event['event_id']}"
+        detail = client.get(event_path).json()
+        assert detail['history'] and detail['evidence'] and detail['reviews'] and detail['updates']
+
+        pending, _ = app.state.repo.create_run(identity, {'fixture_batch_id': 'empty', 'provider': 'mock'}, None, None)
+        assert client.delete(event_path).status_code == 409
+        app.state.manager.submit(pending['run_id'])
+        app.state.manager.queue.join()
+        runs = client.get(url + '/runs').json()
+
+        assert client.delete(event_path).json() == {'event_id': event['event_id']}
+        assert client.get(event_path).status_code == 404
+        assert client.delete(event_path).status_code == 404
+        after = client.get(url + '/dashboard').json()
+        assert after['events'] == [item for item in before['events'] if item != event]
+        assert all(item['event_id'] != event['event_id'] for item in client.get('/api/radar').json())
+        assert all(item['event_id'] != event['event_id'] for item in client.get(url + '/notifications').json())
+        assert client.get(url + '/runs').json() == runs
+        assert client.get(f'/api/topics/{other}/dashboard').json() == other_before
+        assert [item['evidence'] for item in client.get(url + '/evidence').json()] == [
+            item['evidence'] for item in evidence_before
+        ]
+        assert not any(item['assessment']['association']['event_id'] == event['event_id'] for item in after['reviews'])
+        run(client, identity, '1')
+        assert client.get(url + '/dashboard').json()['events'] == after['events']

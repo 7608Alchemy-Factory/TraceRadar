@@ -19,6 +19,7 @@ export type Source = {
   role?: "anchor" | "branch" | "channel";
   health_status?: string;
   retirement_recommended?: boolean;
+  ai_verdict?: "approve" | "optional" | "skip" | null;
   registered?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };

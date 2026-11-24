@@ -612,6 +612,7 @@ def _extract_bing_real_url(raw_link: str) -> str:
 
 
 _CJK_CHAR_RE = re.compile(r'[\u4e00-\u9fff]')
+_JA_KO_SCRIPT_RE = re.compile(r'[\u3040-\u30ff\uac00-\ud7af]')
 
 
 def _is_non_chinese_query(source_cfg: dict | None) -> bool:
@@ -623,7 +624,12 @@ def _is_non_chinese_query(source_cfg: dict | None) -> bool:
     if lang in ('zh-CN', 'zh-HK'):
         return False
     qry = str(source_cfg.get('query') or '').strip()
-    return bool(qry) and not bool(_CJK_CHAR_RE.search(qry))
+    if not qry:
+        return False
+    # Japanese kana or Korean hangul (even mixed with kanji) must route to international/Tavily, not China-only Bocha.
+    if _JA_KO_SCRIPT_RE.search(qry):
+        return True
+    return not bool(_CJK_CHAR_RE.search(qry))
 
 
 def _resolve_active_search_provider(settings, source_cfg: dict | None = None) -> tuple[str, str]:

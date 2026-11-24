@@ -600,3 +600,16 @@ button:not(:disabled) {
   color: #fff;
   vertical-align: middle;
 }
+.source-row.dimmed {
+  opacity: 0.68;
+  transition: opacity 0.15s ease;
+}
+.source-row.dimmed:hover {
+  opacity: 1;
+}
+.tag.ai-pick {
+  background: #e3f5ec;
+  color: #145c43;
+  border: 1px solid #9fd3bb;
+  font-weight: 600;
+}

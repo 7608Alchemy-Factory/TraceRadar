@@ -711,6 +711,8 @@ class ConnectorRouter:
 
 
 _CJK_RE = re.compile(r'[\u4e00-\u9fff]')
+_JA_KANA_RE = re.compile(r'[\u3040-\u30ff]')
+_KO_HANGUL_RE = re.compile(r'[\uac00-\ud7af]')
 _CJK_FILLER_RE = re.compile(r'(最新的|最新|关于|關於|追踪|追蹤|跟踪|跟蹤|关注|關注|动向|動向|动态|動態|消息|情况|情況|的|了)')
 _PUBLISHER_SUFFIX_RE = re.compile(r'\s+[-–—|]\s+[^-–—|]{1,40}$')
 _QUOTED_PHRASE_RE = re.compile(r'[「『《“"]([A-Za-z0-9\u00C0-\u024F\u4e00-\u9fff\s\-\.\+\$]{2,18})[」』》”"]')
@@ -805,6 +807,26 @@ def _is_traditional_cjk(text: str) -> bool:
     trad = sum(1 for ch in s if ch in _TRAD_ONLY_CHARS)
     simp = sum(1 for ch in s if ch in _SIMP_ONLY_CHARS)
     return trad > simp
+
+
+def _infer_query_language(text: str) -> str:
+    s = str(text or '')
+    if _JA_KANA_RE.search(s):
+        return 'ja'
+    if _KO_HANGUL_RE.search(s):
+        return 'ko'
+    if _CJK_RE.search(s):
+        return 'zh-HK' if _is_traditional_cjk(s) else 'zh-CN'
+    return 'en-US'
+
+
+def _infer_verdict_from_text(reason: str) -> str:
+    s = str(reason or '')
+    if any(k in s for k in ('建议跳过', '可跳过', '暂不建议', '不建议批准', '信息过泛', '建议忽略', '与主题无关', '无需批准')):
+        return 'skip'
+    if any(k in s for k in ('建议批准', '优先批准', '强烈建议', '值得批准', '核心来源', '核心厂商', '建议跟踪', '建议追踪')):
+        return 'approve'
+    return 'optional'
 
 
 def _find_grounded_fact_snippet(
@@ -1117,6 +1139,7 @@ def _advise_watchlist_with_llm(
     latest_evidence_date: str | None = None,
     search_languages: list[str] | None = None,
     usage_out: dict | None = None,
+    verdicts_out: dict[str, str] | None = None,
 ) -> tuple[str | None, dict[str, str], dict[str, str], list[dict], str | None]:
     """Optional ON/OFF single-call general AI Watchlist advisor:
     1. Compares & ranks unapproved candidates strictly from fact_evidence.
@@ -1190,6 +1213,7 @@ def _advise_watchlist_with_llm(
         '{\n'
         '  "summary_note": "1-2 concise Chinese sentences highlighting top candidates to approve AND any branches that can now be archived",\n'
         '  "per_source": {"<unapproved_source_id>": "1 concise Chinese sentence grounded strictly in fact_evidence explaining whether to approve or skip"},\n'
+        '  "verdicts": {"<unapproved_source_id>": "approve | optional | skip"},\n'
         '  "retire_branches": [{"source_id": "<approved_branch_source_id>", "reason": "1 concise Chinese sentence explaining why this branch is now settled, expired, or superseded based on current_events"}],\n'
         '  "suggested_queries": [{"label": "concise entity or sub-topic name", "query": "2-4 focused search keywords (no site:/inurl:/after:/before:/when: operators)", "language": "optional: zh-CN, zh-HK, en-US, ko, or ja", "reason": "1 concise Chinese sentence grounded in current_events"}]\n'
         '}\n'
@@ -1209,6 +1233,14 @@ def _advise_watchlist_with_llm(
         for k, v in raw_map.items()
         if isinstance(k, str) and k in unapproved_ids and _clean_str(v, 240)
     }
+    if verdicts_out is not None:
+        raw_verdicts = parsed.get('verdicts') if isinstance(parsed.get('verdicts'), dict) else {}
+        for sid in unapproved_ids:
+            rv = _clean_str(raw_verdicts.get(sid), 16).lower()
+            if rv in ('approve', 'optional', 'skip'):
+                verdicts_out[sid] = rv
+            elif sid in per_source:
+                verdicts_out[sid] = _infer_verdict_from_text(per_source[sid])
     approved_ids = {b['source_id'] for b in approved_branches}
     retire_map: dict[str, str] = {}
     raw_retire = parsed.get('retire_branches')
@@ -1802,6 +1834,8 @@ def recommend_sources(
         elif len(anchor_words) >= 4 and anchor_words[2].lower() in ('vs', 'vs.', 'and', '&'):
             prefix_len = 4
         anchor_prefix = ' '.join(anchor_words[:prefix_len]).strip() or query
+        latin_anchor_words = [w for w in anchor_words if not _CJK_RE.search(w)]
+        latin_anchor_prefix = ' '.join(latin_anchor_words[:3]).strip()
         for info in discovered:
             term = info['term']
             slug = hashlib.sha256(_fold_latin(term).encode('utf-8')).hexdigest()[:8]
@@ -1837,8 +1871,11 @@ def recommend_sources(
                     )
                 )
             else:
-                kw_q = f'{anchor_prefix} {term}'.strip() if not _term_in_text(anchor_prefix, term.lower()) else term
+                term_is_non_cjk = not _CJK_RE.search(term)
+                chosen_prefix = latin_anchor_prefix if (term_is_non_cjk and latin_anchor_prefix) else anchor_prefix
+                kw_q = f'{chosen_prefix} {term}'.strip() if (chosen_prefix and not _term_in_text(chosen_prefix, term.lower())) else term
                 kw_q = ' '.join(kw_q.split())[:180]
+                branch_lang = primary_locale or _infer_query_language(kw_q)
                 branch_cfg = {
                     'query': kw_q,
                     'recency_days': 30,
@@ -1847,9 +1884,8 @@ def recommend_sources(
                     'max_items': 8,
                     'role': 'branch',
                     'branch_label': term,
+                    'search_language': branch_lang,
                 }
-                if primary_locale:
-                    branch_cfg['search_language'] = primary_locale
                 dynamic_candidates.append(
                     dict(
                         source_id=sid,
@@ -2075,6 +2111,7 @@ def recommend_sources(
                             registered=False,
                             health_status='candidate',
                             retirement_recommended=False,
+                            ai_verdict='approve',
                         )
                     )
                 existing_by_id[sid] = len(recommended) - 1
@@ -2085,6 +2122,7 @@ def recommend_sources(
         else:
             llm_mode = 'advisor'
             usage_box: dict = {}
+            verdicts_box: dict[str, str] = {}
             llm_summary_note, per_source, retire_map, suggested_queries, llm_summary_error = _advise_watchlist_with_llm(
                 topic,
                 unapproved_branches,
@@ -2095,12 +2133,15 @@ def recommend_sources(
                 latest_evidence_date=latest_evidence_date,
                 search_languages=selected_langs if not active_replay_anchor else None,
                 usage_out=usage_box,
+                verdicts_out=verdicts_box,
             )
             llm_usage = usage_box or None
             for s in recommended:
                 sid = s['source_id']
                 if sid in per_source:
                     s['reason'] = f"🤖 AI 决策建议：{per_source[sid]}" + (f" ｜ 依据：{s['fact_evidence']}" if s.get('fact_evidence') else '')
+                if sid in verdicts_box:
+                    s['ai_verdict'] = verdicts_box[sid]
                 if sid in retire_map:
                     if s.get('health_status') == 'noise_alert':
                         s['reason'] = f"{s['reason']} ｜ 🏁 AI 结案/归档判断：{retire_map[sid]}"
@@ -2181,10 +2222,11 @@ def recommend_sources(
                             registered=False,
                             health_status='candidate',
                             retirement_recommended=False,
+                            ai_verdict='approve',
                         )
                     )
                 else:
-                    prop_lang = prop.get('language') or primary_locale
+                    prop_lang = prop.get('language') or primary_locale or _infer_query_language(prop['query'])
                     prop_cfg = {
                         'query': prop['query'],
                         'recency_days': 30,
@@ -2210,6 +2252,7 @@ def recommend_sources(
                             registered=False,
                             health_status='candidate',
                             retirement_recommended=False,
+                            ai_verdict='approve',
                         )
                     )
                 existing_by_id[sid] = len(recommended) - 1
@@ -2223,22 +2266,29 @@ def recommend_sources(
             if not ai_applied and not llm_summary_error:
                 llm_summary_error = 'AI 顾问未返回新的补充建议，已保持 0-Token 事实依据模式。'
 
-    def _sort_key(s):
+    verdict_rank = {'approve': 0, 'optional': 1, None: 1, 'skip': 2}
+
+    def _sort_key(pair):
+        orig_idx, s = pair
         sid = s['source_id']
         role = s.get('role', 'channel')
         if role == 'anchor' and sid not in (f'gnews_{topic_slug}', f'websearch_{topic_slug}'):
-            return (0, 0, sid)
+            return (0, 0, orig_idx)
         if sid == f'websearch_{topic_slug}':
-            return (0, 1, sid)
+            return (0, 1, orig_idx)
         if role == 'branch' or sid.startswith(f'kw_{topic_slug}_'):
             if s.get('health_status') == 'archived':
-                return (1, 2, sid)
-            return (1, 0 if s.get('retirement_recommended') else 1, sid)
+                return (3, 0, orig_idx)
+            if sid in approved_set:
+                return (1, 0 if s.get('retirement_recommended') else 1, orig_idx)
+            # Unapproved candidates: AI-recommended & AI-suggested on top, AI-skip gently sunk to bottom (still visible!)
+            is_ai_suggested = 0 if ('_ai_' in sid or '_cs_' in sid) else 1
+            return (2, verdict_rank.get(s.get('ai_verdict'), 1) * 2 + is_ai_suggested, orig_idx)
         if sid == f'gnews_{topic_slug}':
-            return (2, 0, sid)
-        return (3, 0, sid)
+            return (4, 0, orig_idx)
+        return (5, 0, orig_idx)
 
-    recommended.sort(key=_sort_key)
+    recommended = [s for _, s in sorted(enumerate(recommended), key=_sort_key)]
     return {
         'recommendation_mode': 'topic_aware_v1',
         'rationale_mode': 'general_fact_grounded_v3',

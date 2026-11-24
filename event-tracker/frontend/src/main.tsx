@@ -1403,9 +1403,12 @@ function App() {
                   const channelSources = visibleSources.filter(
                     (s) => !isWatchlist(s),
                   );
-                  const renderSourceRow = (s: Source) => (
+                  const renderSourceRow = (s: Source) => {
+                    const isApproved = approved.includes(s.source_id);
+                    const isDimmed = !isApproved && s.ai_verdict === "skip";
+                    return (
                     <label
-                      className={`source-row ${approved.includes(s.source_id) ? "checked" : ""}`}
+                      className={`source-row ${isApproved ? "checked" : ""} ${isDimmed ? "dimmed" : ""}`}
                       key={s.source_id}
                     >
                       <input
@@ -1442,6 +1445,12 @@ function App() {
                         </small>
                       </span>
                       <span className="source-tags">
+                        {!isApproved && s.ai_verdict === "approve" && (
+                          <span className="tag ai-pick">AI 推荐</span>
+                        )}
+                        {!isApproved && s.ai_verdict === "skip" && (
+                          <span className="tag quiet">AI 建议跳过</span>
+                        )}
                         {typeof s.config?.search_language === "string" &&
                           SEARCH_LANGUAGE_MAP.has(s.config.search_language) && (
                             <span className="tag lang">
@@ -1470,7 +1479,8 @@ function App() {
                         </span>
                       </span>
                     </label>
-                  );
+                    );
+                  };
                   const hasRelevantEvidence = evidence.some(
                     (v) => v.status === "review" || v.assessment?.is_relevant,
                   );

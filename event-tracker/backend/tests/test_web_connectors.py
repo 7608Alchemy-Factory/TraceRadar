@@ -571,3 +571,87 @@ def test_e2e_polish_cross_source_url_dedup_entity_clean_and_query_boundary(tmp_p
         assert fetch_calls['n'] == 1  # No redundant web_fetch AND no redundant LLM assessment!
 
 
+def test_watchlist_no_mixed_lang_concat_ai_verdict_ranking_and_ja_ko_routing(monkeypatch):
+    """Verify: (1) English entities on a mixed CJK+EN topic get clean English anchor prefix & en-US tag instead of
+    Frankenstein CJK+EN concatenation; (2) AI advisor floats 'approve' & AI-suggested queries to top and sinks 'skip'
+    to bottom without hiding any candidate; (3) Japanese/Korean queries with kanji still route away from China-only Bocha.
+    """
+    from app.connectors import recommend_sources
+
+    # (3) JA/KO auto-routing even when Japanese query contains Kanji (\u4e00-\u9fff)
+    st_bocha = Settings(search_provider='auto', bocha_api_key='sk-b', tavily_api_key='')
+    st_both = Settings(search_provider='auto', bocha_api_key='sk-b', tavily_api_key='tvly-t')
+    assert wc_mod._resolve_active_search_provider(st_bocha, {'query': 'AI 数学 ニュース'})[0] == 'free'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'AI 数学 ニュース'})[0] == 'tavily'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'GEN.G 리계약 2026'})[0] == 'tavily'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': '香港麦当劳 优惠'})[0] == 'bocha'
+
+    # (1) Mixed topic '两大AI厂商 P vs NP 与千禧年难题进展' -> English entity 'Exponential Time Hypothesis' gets 'P vs NP ...' (en-US)
+    ev_decs = [
+        {
+            'status': 'completed',
+            'assessment': {'is_relevant': True},
+            'evidence': {
+                'source_id': 'ws_1',
+                'published_at': '2026-10-27T00:00:00Z',
+                'title': 'Two AI systems disprove Exponential Time Hypothesis',
+                'content': 'OpenAI and Anthropic systems independently disproved Exponential Time Hypothesis while 数学家 discussed 指数时间假设.',
+            },
+        }
+    ]
+    base_recs = recommend_sources(
+        {'topic_id': '9e72d0b5-pnp', 'title': '两大AI厂商 P vs NP 与千禧年难题进展', 'description': '追踪 PNP 与千禧年难题'},
+        [],
+        current_events=[],
+        evidence_decisions=ev_decs,
+    )
+    eth_en = next((s for s in base_recs['sources'] if (s.get('config') or {}).get('branch_label') == 'Exponential Time Hypothesis'), None)
+    assert eth_en is not None
+    assert eth_en['config']['query'] == 'P vs NP Exponential Time Hypothesis'
+    assert eth_en['config']['search_language'] == 'en-US'
+
+    # (2) AI advisor verdict ranking: AI-suggested & 'approve' float above 'skip' while keeping all candidates visible
+    cands = [s for s in base_recs['sources'] if s.get('role') == 'branch' and s.get('health_status') == 'candidate']
+    assert len(cands) >= 2
+    skip_sid, approve_sid = cands[0]['source_id'], cands[1]['source_id']
+    fake_ai = (
+        {
+            'summary_note': '优先批准核心候选，跳过泛化项。',
+            'per_source': {
+                skip_sid: '信息过泛，建议跳过。',
+                approve_sid: '属核心进展，建议批准。',
+            },
+            'verdicts': {
+                skip_sid: 'skip',
+                approve_sid: 'approve',
+            },
+            'retire_branches': [],
+            'suggested_queries': [
+                {'label': 'Valiant conjecture', 'query': 'Valiant conjecture proof verification', 'language': 'en-US', 'reason': '核心验证方向'}
+            ],
+        },
+        {'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150},
+        None,
+    )
+    monkeypatch.setattr(conn_mod, '_call_watchlist_llm', lambda *a, **kw: fake_ai)
+    ai_recs = recommend_sources(
+        {'topic_id': '9e72d0b5-pnp', 'title': '两大AI厂商 P vs NP 与千禧年难题进展', 'description': '追踪 PNP 与千禧年难题'},
+        [],
+        current_events=[],
+        evidence_decisions=ev_decs,
+        llm_summary=True,
+        settings=Settings(api_key='k', base_url='https://api.example.com/v1', model='m'),
+    )
+    ai_cands = [s for s in ai_recs['sources'] if s.get('role') == 'branch' and s.get('health_status') == 'candidate']
+    ids_order = [s['source_id'] for s in ai_cands]
+    ai_sugg_sid = next(sid for sid in ids_order if '_ai_' in sid)
+    assert skip_sid in ids_order and approve_sid in ids_order  # Nothing hidden/deleted!
+    assert ids_order.index(ai_sugg_sid) < ids_order.index(skip_sid)
+    assert ids_order.index(approve_sid) < ids_order.index(skip_sid)
+    by_id = {s['source_id']: s for s in ai_cands}
+    assert by_id[approve_sid]['ai_verdict'] == 'approve'
+    assert by_id[skip_sid]['ai_verdict'] == 'skip'
+    assert by_id[ai_sugg_sid]['ai_verdict'] == 'approve'
+
+
+

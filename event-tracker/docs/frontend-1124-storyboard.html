@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hans">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TraceRadar · 界面分镜</title>
+<style>
+:root{color-scheme:light dark;font:16px/1.55 system-ui;background:#151518;color:#eee;--line:#45454e;--accent:#ba9aff}
+*{box-sizing:border-box}body{margin:0 auto;max-width:1400px;padding:6vw}h1{font-size:clamp(2rem,6vw,5rem);margin:0;letter-spacing:-.06em}p{color:#c6c6cf}a{color:var(--accent)}
+nav{display:flex;flex-wrap:wrap;gap:12px;margin:25px 0}section{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,310px),1fr));gap:18px}
+article{background:#202025;border:1px solid var(--line);border-radius:12px;padding:17px;scroll-margin:20px}h2{font-size:1.14rem;margin:0 0 12px}.frame{position:relative;min-height:164px;overflow:hidden;background:#101014;border:1px solid var(--line);border-radius:8px;padding:10px}
+.frame b{display:block;border-bottom:1px solid var(--line);padding-bottom:7px;font:11px/1.5 monospace;color:#d5d5dd}.canvas{display:grid;grid-auto-rows:minmax(16px,auto);gap:7px;margin:10px 0 0}.row{display:flex;gap:7px;align-items:stretch}.box{flex:1;padding:6px 8px;border:1px solid #43434d;border-radius:4px;font-size:12px;color:#e4e4ec}.focus{border-color:var(--accent);background:#302549}.media{min-height:40px;background:repeating-linear-gradient(120deg,#24232d 0 5px,#2e2b3d 5px 8px);display:grid;place-items:center;color:#d2b9ff}.rail{justify-content:space-around;margin:3px 0;color:#91c8ff}.rail i{width:12px;height:12px;background:currentColor;border-radius:50%;position:relative}.rail i:nth-child(1){color:#ffc18c}.rail i:nth-child(3){color:#a4e0b6}.rail i:nth-child(4){color:#c6a8ff}.light{background:#f5f5f6;color:#17171a}.light .box{color:#17171a;background:#fff}.light b{color:#383841}
+@media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}.box{transition:transform .32s cubic-bezier(.2,.72,.22,1)}article:hover .focus{transform:translateY(-3px)}}
+</style>
+<h1>TraceRadar 界面分镜</h1>
+<p>黑白灰构成界面，紫色用于交互，橙、绿、蓝区分进展。所有转场从触发动作开始，以目标内容可读、可操作结束。</p>
+<nav aria-label="分镜目录"></nav>
+<section aria-label="界面原型"></section>
+<script>
+const scenes=[
+["首页首屏","浅灰导航 · 语言 / 太阳 / 月亮","<div class='row'><div class='box focus'>让进展，有迹可循</div><div class='box media'>CRT 雷达照片 + ASCII</div></div><div class='box'>浏览追踪主题</div>","标题分两拍显现，雷达从局部显影到完整照片。纵向滚动时，照片的扫描线接到胶片顶边。","light"],
+["主题胶片","主题数 · 左右翻页","<div class='row'><div class='box media'>篮球</div><div class='box media'>餐饮</div><div class='box media'>AI</div></div><div class='row'><div class='box'>新闻状态</div><div class='box focus'>主题标题</div><div class='box'>更新时间</div></div><div class='box'>体验三步演示 · 准备新闻回放</div>","卡片从轨道依次抬起，横滑时画面在卡框内轻微错位。选择卡片后，封面扩展成主题页横幅。"],
+["主题概览","追踪主题 / 当前主题","<div class='box media'>延续选中主题的封面</div><div class='row'><div class='box focus'>近期事件</div><div class='box'>检查新进展</div></div><div class='box'>提醒和待审核</div>","保留封面作为空间参照，标题和任务区紧随其后。切换视图时，选中指示线先移动，内容再到位。","light"],
+["全部事件","概览 / 事件 / 证据库","<div class='box'>搜索事件</div><div class='box focus'>事件名称 · 最新变化 · 状态</div><div class='box'>第二条事件</div>","列表短距离错峰入场。选中事件以后，原主题留在后景，事件档案从右侧展开。","light"],
+["事件详情","事件档案 · 关闭","<div class='box'>事件标题 · 当前状态</div><div class='row rail'><i></i><i></i><i></i><i></i></div><div class='box focus'>日期 · 节点详情 · 查看依据</div><div class='box'>当前事实 · 状态修改记录</div>","档案侧滑后亮起时间轴。点击节点时，选中标记连接到下方说明，细节短距离交叠显现。"],
+["证据库与新闻","证据库 / 查看新闻","<div class='box'>筛选来源与标题</div><div class='box focus'>新闻标题与处理状态</div><div class='box'>原文、来源与判断依据</div>","证据弹窗覆盖于当前视图，标题先定位，正文随后显现。关闭后恢复触发按钮的焦点。","light"],
+["待审核","追踪主题 / 待审核","<div class='box focus'>需要核对的报道</div><div class='row'><div class='box'>保留现有结论</div><div class='box'>采纳并修正</div></div>","沿用选项卡转场，展开审核内容时让冲突上下文留在视野里。","light"],
+["信息源","追踪主题 / 信息源","<div class='box focus'>保存追踪设置 · 检索语种</div><div class='row'><div class='box'>追踪词表</div><div class='box'>媒体渠道</div></div><div class='box'>添加来源</div>","任务区先出现，追踪词表和渠道随后进入。开关只反馈自身状态，表单位置保持稳定。","light"],
+["运行记录","追踪主题 / 运行记录","<div class='row'><div class='box'>运行列表</div><div class='box focus'>执行轨迹 · 状态 · 时间</div></div><div class='box'>原始运行记录</div>","切换记录只更新轨迹区，保留列表位置。展示处理步骤时沿纵向节奏展开。","light"],
+["新建主题","新建追踪主题 · 关闭","<div class='box'>主题名称</div><div class='box'>想持续了解的问题</div><div class='box focus'>创建主题</div>","表单从触发位置所在屏幕短距离淡入，聚焦主题名。提交后进入该主题的信息源页。"],
+["编辑追踪目标","当前主题 / 编辑目标","<div class='box'>当前主题名与追踪目标</div><div class='box'>提醒偏好</div><div class='box focus'>保存目标</div>","提示和输入始终跟随主题。保存后回到原视图，目标文字原位更新。"],
+["添加信息源","信息源 / 添加","<div class='box'>来源类型</div><div class='box'>名称与地址</div><div class='box focus'>登记来源</div>","使用统一的弹窗入场。切换类型时在同一容器替换字段；返回后来源列表保持原位置。"],
+["手动提交新闻","提交新闻 · 关闭","<div class='box'>选择手动来源</div><div class='box'>新闻标题、链接、时间</div><div class='box focus'>提交以分析</div>","先给来源选择，再显示输入。提交反馈跟随本次运行，避免重复打开任务窗口。"],
+["准备新闻回放","选择离线语料","<div class='row'><div class='box focus'>选定语料</div><div class='box'>其他语料</div></div><div class='box'>追踪目标与回放截止</div><div class='box'>创建回放主题</div>","语料选中态原位变化，保留上下文。准备完成后进入对应主题。"],
+["模型配置","模型服务 · 关闭","<div class='box'>服务地址与凭证</div><div class='box'>读取并选择模型</div><div class='box focus'>保存与测试</div>","逐段呈现输入和结果，在原地反馈连接状态。主体位置在编辑中保持稳定。"],
+["三步演示","体验模拟新闻","<div class='row'><div class='box focus'>发现事件</div><div class='box'>补充与归类</div><div class='box'>修复与冲突</div></div><div class='box'>开始演示</div>","演示保持与真实工作台相同的阅读路线，三步状态随运行推进。"],
+["手机与减少动效","TraceRadar · 语言 · 日/月","<div class='box media'>雷达与主题照片</div><div class='row'><div class='box focus'>横滑主题</div><div class='box'>下一帧</div></div><div class='row rail'><i></i><i></i><i></i></div><div class='box'>手机全宽事件档案</div>","保留触摸滚动和键盘控制。系统启用减少动效时，取消视差、胶片过渡和入场位移。","light"],
+];
+scenes.forEach(([title,bar,content,caption,mode],i)=>{
+ document.querySelector("nav").insertAdjacentHTML("beforeend",'<a href="#scene-'+i+'">'+title+'</a>');
+ document.querySelector("section").insertAdjacentHTML("beforeend",'<article id="scene-'+i+'"><h2>'+title+'</h2><div class="frame '+(mode||'')+'"><b>'+bar+'</b><div class="canvas">'+content+'</div></div><p>'+caption+'</p></article>');
+});
+</script>
+</html>

@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import React, { useLayoutEffect, useRef } from "react";
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
@@ -49,6 +50,8 @@ export function Icon({ name, size = 18 }: { name: string; size?: number }) {
     arrow: <path d="M4 12h15m-6-6 6 6-6 6" />,
     left: <path d="m14 6-6 6 6 6" />,
     right: <path d="m10 6 6 6-6 6" />,
+    sun: <><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5" /></>,
+    moon: <path d="M20.8 15A8.8 8.8 0 0 1 9 3.2 9 9 0 1 0 20.8 15z" />,
     close: <path d="m6 6 12 12M18 6 6 18" />,
     check: <path d="m5 12 4 4L19 6" />,
     play: <path d="m8 4 12 8-12 8z" />,
@@ -160,7 +163,7 @@ export function Modal({
           <span className="kicker">TRACERADAR</span>
           <h2>{title}</h2>
         </div>
-        <button className="icon-button" onClick={dismiss} aria-label="关闭窗口">
+        <button className="icon-button" onClick={dismiss} aria-label={t("关闭窗口")}>
           <Icon name="close" />
         </button>
       </div>

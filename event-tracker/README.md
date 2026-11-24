@@ -46,13 +46,17 @@ npm run dev
 
 Open http://127.0.0.1:5173. API documentation: http://127.0.0.1:8000/docs. Vite proxies `/api` to port 8000. If ports conflict, change the API port and proxy target together in `frontend/vite.config.ts`; change the Vite server port there as needed.
 
+## Frontend storyboard
+
+Open [the screen and motion storyboard](docs/frontend-1124-storyboard.html) in a browser to walk through the screens and transitions. The top-right language and theme settings are saved in the current browser. Article and user-entered text retain their source language.
+
 ## Fixed demo
 
 1. Open the homepage via the **TraceRadar** logo and select **体验三步演示** below the topic reel. ExampleSoft content, URLs, dates and sources are fictional simulated input; both fixture sources are approved automatically.
 2. Keep **规则演示** selected.
 3. Run **发现事件**, **补充与归类**, then **修复与冲突**, waiting for each to complete.
 4. Expect 2 events, 4 transitions, 3 digest notifications, 1 immediate notification and 2 review records. Event A becomes patched; conflicting and unclear reports never overwrite confirmed state.
-5. Open Event A and select a node in **事件进展** to see the dated change and its source news. The red **待审核** node shows a conflicting report. Expand **状态修改记录** for the before/after audit and open **运行记录** for execution details.
+5. Open Event A and select a node in **事件进展** to see the dated change and its source news. The purple **待审核** node shows a conflicting report. Expand **状态修改记录** for the before/after audit and open **运行记录** for execution details.
 6. Run the same batches again. Event, transition and notification counts stay unchanged. Refresh or restart to verify persistence.
 
 Notifications are in-app decisions only. Digest means a list of routine updates. No email, scheduled summary or phone delivery is implemented.

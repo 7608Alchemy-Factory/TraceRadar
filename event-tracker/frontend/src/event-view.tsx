@@ -1,3 +1,4 @@
+import { t } from "./i18n";
 import React from "react";
 import type { EventDetail, EvidenceDecision } from "./types";
 import {
@@ -51,13 +52,13 @@ export function EventView({
     <div>
       <div className="event-lead">
         <span className="meta">
-          版本 v{e.version} · 更新于 {date(e.updated_at)}
+          {t("版本 v")}{e.version} {t("· 更新于")} {date(e.updated_at)}
         </span>
         <h2>{title(e.title)}</h2>
         <div
           className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
         >
-          <strong>当前状态 · </strong>
+          <strong>{t("当前状态 ·")} </strong>
           {status(e.state.current_status)}
         </div>
       </div>
@@ -66,16 +67,16 @@ export function EventView({
         <div>
           <section className="detail-section">
             <h3>
-              当前事实 <span className="count">{e.state.key_facts.length}</span>
+              {t("当前事实")} <span className="count">{e.state.key_facts.length}</span>
             </h3>
-            {!newestFactsFirst.length && <p className="hint">暂时没有提炼出的事实。</p>}
+            {!newestFactsFirst.length && <p className="hint">{t("暂时没有提炼出的事实。")}</p>}
             <ul className="fact-list">
               {newestFactsFirst.map((f, i) => {
                 const isNew = latestAddedFactSet.has(JSON.stringify(f));
                 return (
                   <li key={i} className={isNew ? "fact-new" : ""}>
                     <span>
-                      {isNew && <span className="new-pill">本轮新增</span>}
+                      {isNew && <span className="new-pill">{t("本轮新增")}</span>}
                       {text(f.fact)}
                     </span>
                     <span className="citation-group">
@@ -84,9 +85,9 @@ export function EventView({
                           className="citation"
                           key={id}
                           onClick={() => onEvidence(id)}
-                          aria-label={`查看事实 ${i + 1} 的证据`}
+                          aria-label={t("查看事实 {0} 的证据", i + 1)}
                         >
-                          {e.state.sources.includes(id) ? e.state.sources.indexOf(id) + 1 : "依据"}
+                          {e.state.sources.includes(id) ? e.state.sources.indexOf(id) + 1 : t("依据")}
                         </button>
                       ))}
                     </span>
@@ -96,7 +97,7 @@ export function EventView({
             </ul>
           </section>
           {!!value.history.length && <details className="detail-section audit-history">
-            <summary>状态修改记录 <span className="count">{value.history.length}</span></summary>
+            <summary>{t("状态修改记录")} <span className="count">{value.history.length}</span></summary>
             {[...value.history].reverse().map((h) => {
               const added = h.after_state.key_facts.filter(
                 (f) =>
@@ -115,7 +116,7 @@ export function EventView({
                 <details className="history-row" key={h.transition_id}>
                   <summary>
                     <span>
-                      {status(h.before_state?.current_status ?? "新事件")}{" "}
+                      {status(h.before_state?.current_status ?? t("新事件"))}{" "}
                       <span className="muted">→</span>{" "}
                       {status(h.after_state.current_status)}
                     </span>
@@ -132,7 +133,7 @@ export function EventView({
                     </p>
                   ))}
                   <details className="quiet-details">
-                    <summary>完整修改记录</summary>
+                    <summary>{t("完整修改记录")}</summary>
                     <pre>{pretty(h)}</pre>
                   </details>
                 </details>
@@ -142,10 +143,10 @@ export function EventView({
         </div>
         <aside className="evidence-rail">
           <h3>
-            关联证据 <span className="count">{value.evidence.length}</span>
+            {t("关联证据")} <span className="count">{value.evidence.length}</span>
           </h3>
           <p className="hint">
-            选择标题查看原文。事实旁的数字对应新闻编号。
+            {t("选择标题查看原文。事实旁的数字对应新闻编号。")}
           </p>
           {newestEvidenceFirst.map((ev) => (
             <button
@@ -167,9 +168,9 @@ export function EventView({
                   className={`tag ${ev.relation === "conflicting" ? "amber" : ""}`}
                 >
                   {{
-                    supporting: "支持证据",
-                    conflicting: "冲突证据",
-                    duplicate: "重复报道",
+                    supporting: t("支持证据"),
+                    conflicting: t("冲突证据"),
+                    duplicate: t("重复报道"),
                   }[ev.relation ?? ""] ?? ev.relation}
                 </span>
               </span>
@@ -201,34 +202,34 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
           target="_blank"
           rel="noreferrer"
         >
-          原始链接 <Icon name="external" size={14} />
+          {t("原始链接")} <Icon name="external" size={14} />
         </a>
       )}
       <dl className="metadata-list">
         <div>
-          <dt>发布时间</dt>
+          <dt>{t("发布时间")}</dt>
           <dd>{date(e.published_at)}</dd>
         </div>
         <div>
-          <dt>获取时间</dt>
+          <dt>{t("获取时间")}</dt>
           <dd>{date(e.fetched_at)}</dd>
         </div>
         <div>
-          <dt>当前处理</dt>
+          <dt>{t("当前处理")}</dt>
           <dd>
             {value.status === "review"
-              ? "待审核"
+              ? t("待审核")
               : value.status === "failed"
-                ? "处理失败"
+                ? t("处理失败")
                 : value.status === "failed_retryable"
-                  ? "服务故障，可重试"
+                  ? t("服务故障，可重试")
                   : value.status === "pending"
-                    ? "未处理"
+                    ? t("未处理")
                     : a?.is_relevant === false
-                      ? "已排除"
+                      ? t("已排除")
                       : e.canonical_evidence_id !== e.evidence_id && !a
-                        ? "重复报道"
-                        : "已处理"}
+                        ? t("重复报道")
+                        : t("已处理")}
           </dd>
         </div>
       </dl>
@@ -236,13 +237,13 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
         <div role="alert" className="error">
           {typeof value.error === "object" && "message" in value.error
             ? String(value.error.message)
-            : "处理失败，请查看运行记录。"}
+            : t("处理失败，请查看运行记录。")}
         </div>
       )}
       {a && (
         <div className="assessment-note">
-          <h3>为什么这样处理</h3>
-          <p>{a.is_relevant ? "与追踪目标相关。" : "判断为与追踪目标无关。"}</p>
+          <h3>{t("为什么这样处理")}</h3>
+          <p>{a.is_relevant ? t("与追踪目标相关。") : t("判断为与追踪目标无关。")}</p>
           {decisions.map((decision, i) => (
             <div key={i}>
               {decision.association.title && <strong>{decision.association.title}</strong>}
@@ -253,7 +254,7 @@ export function EvidenceView({ value }: { value: EvidenceDecision }) {
         </div>
       )}
       <details className="quiet-details">
-        <summary>原始内容与技术记录</summary>
+        <summary>{t("原始内容与技术记录")}</summary>
         <p className="raw-text">{e.content}</p>
         <pre>{pretty(value)}</pre>
       </details>

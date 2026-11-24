@@ -1,3 +1,7 @@
+import { applyTheme, initialTheme, locale, setLocale, t, type Locale } from "./i18n";
+import { flushSync } from "react-dom";
+import { CoverImage } from "./covers";
+import { Preferences } from "./preferences";
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { api, json } from "./api";
@@ -24,7 +28,7 @@ import { Icon, Modal, Empty } from "./ui";
 import { EventView, EvidenceView } from "./event-view";
 import { OverviewSection, OverviewSummary } from "./overview";
 import { BrandLink, ProjectHome, topicUrl } from "./home";
-import "@fontsource-variable/host-grotesk/wght.css";
+import "@fontsource-variable/space-grotesk/wght.css";
 import "@fontsource/ibm-plex-mono/latin-400.css";
 import {
   active,
@@ -38,10 +42,13 @@ import {
   text,
   headline,
   localInput,
+  topicTitle,
+  topicDescription,
 } from "./display";
 import "./style.css";
 import "./workspace-v11.css";
 import "./radar.css";
+import "./signal.css";
 
 const tabs = [
   ["overview", "概览", "grid"],
@@ -92,7 +99,15 @@ const demoSteps = [
   },
 ];
 
+document.documentElement.dataset.theme = initialTheme();
+
 function App() {
+  const [language, setLanguage] = useState(locale);
+  const [theme, setTheme] = useState(initialTheme);
+  const preferences = <Preferences language={language} theme={theme}
+    onLanguage={(value: Locale) => { setLocale(value); setLanguage(value); }}
+    onTheme={(value) => { applyTheme(value); setTheme(value); }} />;
+
   const [topics, setTopics] = useState<Topic[]>([]),
     [selected, setSelected] = useState(""),
     [tab, setTab] = useState<Tab>("overview");
@@ -238,10 +253,34 @@ function App() {
     setTab("overview");
     setError("");
     requestAnimationFrame(() => {
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
       document.getElementById(id ? "topic-title" : "home-title")?.focus({ preventScroll: true });
     });
   }
+  function navigateTopic(id: string) {
+    const oldId = selectedRef.current;
+    if (oldId === id || !document.startViewTransition ||
+        matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      selectTopic(id);
+      return;
+    }
+    const coverSelector = `[data-topic-cover="${CSS.escape(id || oldId)}"]`;
+    const oldCover = document.querySelector<HTMLElement>(coverSelector);
+    if (oldCover) oldCover.style.viewTransitionName = "topic-cover";
+    const transition = document.startViewTransition(() => {
+      if (oldCover) oldCover.style.viewTransitionName = "";
+      flushSync(() => selectTopic(id));
+      if (!id) document.querySelector(coverSelector)?.closest("li")?.scrollIntoView({ block: "nearest", inline: "center" });
+      const newCover = document.querySelector<HTMLElement>(coverSelector);
+      if (newCover) newCover.style.viewTransitionName = "topic-cover";
+    });
+    const clearTransition = () => {
+      const cover = document.querySelector<HTMLElement>(coverSelector);
+      if (cover) cover.style.viewTransitionName = "";
+    };
+    void transition.finished.then(clearTransition, clearTransition);
+  }
+
   useEffect(() => {
     function restoreRoute() {
       const id = new URLSearchParams(location.search).get("topic");
@@ -460,7 +499,7 @@ function App() {
     );
     await refresh(true);
     setTopics(await api<Topic[]>("/topics"));
-    setToast("已保存这个主题的追踪词表与信息来源。");
+    setToast(t("已保存这个主题的追踪词表与信息来源。"));
   }
   async function action(task: () => Promise<void>) {
     if (actionPending.current) return;
@@ -503,8 +542,8 @@ function App() {
             setWatchId("");
             setToast(
               detail.run.status === "completed"
-                ? "检查已完成，工作区已更新。"
-                : "检查已结束。请在运行记录中查看处理结果。",
+                ? t("检查已完成，工作区已更新。")
+                : t("检查已结束。请在运行记录中查看处理结果。"),
             );
           }
         }
@@ -538,11 +577,11 @@ function App() {
         : undefined;
     if (engine === "qwen" && !model?.configured) {
       setDialog("settings");
-      throw Error("请先填写模型服务配置。");
+      throw Error(t("请先填写模型服务配置。"));
     }
     if (replay && !manual && !replaySource)
-      throw Error("请选择可用的回放语料。");
-    if (replay && !manual && !cutoff) throw Error("请选择回放截止时间。");
+      throw Error(t("请选择可用的回放语料。"));
+    if (replay && !manual && !cutoff) throw Error(t("请选择回放截止时间。"));
     const result = await api<{ run_id: string }>(
       `/topics/${selected}/runs`,
       json("POST", {
@@ -563,8 +602,8 @@ function App() {
     setDialog(null);
     setToast(
       manual
-        ? "新闻已提交，正在处理。"
-        : "检查已启动，可在运行记录中查看进度。",
+        ? t("新闻已提交，正在处理。")
+        : t("检查已启动，可在运行记录中查看进度。"),
     );
     await refresh();
   }
@@ -589,7 +628,7 @@ function App() {
   }
   async function createDemo() {
     await action(async () => {
-      const t = await api<Topic>(
+      const topic = await api<Topic>(
         "/topics",
         json("POST", {
           title: "ExampleSoft · 三步演示",
@@ -598,14 +637,14 @@ function App() {
         }),
       );
       await api(
-        `/topics/${t.topic_id}/sources`,
+        `/topics/${topic.topic_id}/sources`,
         json("PUT", { approved_source_ids: ["vendor", "research"] }),
       );
       setTopics(await api<Topic[]>("/topics"));
-      selectTopic(t.topic_id);
+      selectTopic(topic.topic_id);
       setProvider("mock");
       setDialog(null);
-      setToast("演示已准备好。从「第一步：发现事件」开始。");
+      setToast(t("演示已准备好。从「第一步：发现事件」开始。"));
     });
   }
   const selectedEvidence = evidence.find(
@@ -661,20 +700,20 @@ function App() {
                 {status(e.state.current_status)}
               </span>
               <span className="event-row-meta">
-                {e.state.timeline.length} 条进展
+                {e.state.timeline.length} {t("条进展")}
               </span>
               <Icon name="arrow" size={17} />
             </button>
           ))
         ) : (
           <Empty
-            title={search ? "没有符合筛选条件的事件" : "事件会在这里逐步形成"}
+            title={search ? t("没有符合筛选条件的事件") : t("事件会在这里逐步形成")}
             detail={
               search
-                ? "试试事件名称、状态或事实中的其他关键词。"
+                ? t("试试事件名称、状态或事实中的其他关键词。")
                 : fixture
-                  ? "运行第一批演示新闻，查看漏洞 A 如何被建档。"
-                  : "批准来源并运行检查。系统会按独立事项组织事件。"
+                  ? t("运行第一批演示新闻，查看漏洞 A 如何被建档。")
+                  : t("批准来源并运行检查。系统会按独立事项组织事件。")
             }
           />
         )}
@@ -688,14 +727,14 @@ function App() {
         <span className="kicker">TRACKING SESSION</span>
         <span className={`status-dot ${running ? "working" : ""}`} />
       </div>
-      <h3>{replay ? "按时间回放" : "检查新进展"}</h3>
+      <h3>{replay ? t("按时间回放") : t("检查新进展")}</h3>
       <p className="hint">
         {replay
-          ? "每次只读取截止时间之前的新闻。"
-          : "读取已批准来源，判断是否有值得记录的变化。"}
+          ? t("每次只读取截止时间之前的新闻。")
+          : t("读取已批准来源，判断是否有值得记录的变化。")}
       </p>
       <label>
-        分析方式
+        {t("分析方式")}
         <select
           value={provider}
           disabled={busy || running}
@@ -705,26 +744,26 @@ function App() {
             value="mock"
             disabled={!fixtureOnly(dashboard?.approved_sources ?? [])}
           >
-            规则演示 · ExampleSoft
+            {t("规则演示 · ExampleSoft")}
           </option>
-          <option value="qwen">真实模型分析</option>
+          <option value="qwen">{t("真实模型分析")}</option>
         </select>
       </label>
       {provider === "qwen" && (
         <p className="model-note">
-          {model?.configured ? model.model : "尚未配置模型"}{" "}
+          {model?.configured ? model.model : t("尚未配置模型")}{" "}
           <button
             className="text-button"
             onClick={() => showDialog("settings")}
           >
-            {model?.configured ? "更改" : "去配置"}{" "}
+            {model?.configured ? t("更改") : t("去配置")}{" "}
             <Icon name="arrow" size={12} />
           </button>
         </p>
       )}
       {fixture && (
         <label>
-          新闻批次
+          {t("新闻批次")}
           <select
             value={batch}
             onChange={(e) => setBatch(e.target.value)}
@@ -735,14 +774,14 @@ function App() {
                 {s.name}
               </option>
             ))}
-            <option value="empty">空批次</option>
+            <option value="empty">{t("空批次")}</option>
           </select>
         </label>
       )}
       {replay && (
         <>
           <label>
-            回放语料
+            {t("回放语料")}
             <select
               value={corpus?.corpus_id ?? ""}
               disabled={busy || running}
@@ -756,16 +795,16 @@ function App() {
             >
               {replayCorpora.map((c) => (
                 <option key={c.corpus_id} value={c.corpus_id}>
-                  {c.name} · {c.records} 条
+                  {c.name} · {c.records} {t("条")}
                 </option>
               ))}
             </select>
           </label>
           <p className="hint">
-            本次只读取选定的离线来源，避免混入模拟新闻、实时 RSS 或重复语料。
+            {t("本次只读取选定的离线来源，避免混入模拟新闻、实时 RSS 或重复语料。")}
           </p>
           <label>
-            回放截止 · 本地时间
+            {t("回放截止 · 本地时间")}
             <input
               type="datetime-local"
               value={asOf}
@@ -781,7 +820,7 @@ function App() {
                 className={asOf === localInput(c) ? "selected" : ""}
                 onClick={() => setAsOf(localInput(c))}
               >
-                <span>阶段 {i + 1}</span>
+                <span>{t("阶段")} {i + 1}</span>
                 <small>{date(c, false)}</small>
               </button>
             ))}
@@ -799,10 +838,10 @@ function App() {
       >
         <Icon name="play" size={14} />
         {running
-          ? "正在检查…"
+          ? t("正在检查…")
           : provider === "qwen" && !model?.configured
-            ? "打开模型配置"
-            : "开始检查"}
+            ? t("打开模型配置")
+            : t("开始检查")}
       </button>
       <button
         className="text-button full"
@@ -815,15 +854,15 @@ function App() {
         }}
       >
         <Icon name="plus" size={15} />{" "}
-        {manualAvailable ? "手动提交新闻" : "管理手动来源"}
+        {manualAvailable ? t("手动提交新闻") : t("管理手动来源")}
       </button>
       <div className="run-footnote">
         {replaySources.length ? replaySources.length : (dashboard?.approved_sources.length ?? 0)}{" "}
-        个本次来源 · {replay ? "离线回放" : "手动触发"}
+        {t("个本次来源 ·")} {replay ? t("离线回放") : t("手动触发")}
         <br />
         {latest
-          ? `最近检查 ${date(latest.completed_at ?? latest.started_at)}`
-          : "尚未运行"}
+          ? t("最近检查 {0}", date(latest.completed_at ?? latest.started_at))
+          : t("尚未运行")}
       </div>
     </aside>
   );
@@ -835,7 +874,7 @@ function App() {
           {error}
           <button
             className="icon-button"
-            aria-label="关闭错误提示"
+            aria-label={t("关闭错误提示")}
             onClick={() => setError("")}
           >
             <Icon name="close" size={14} />
@@ -851,16 +890,17 @@ function App() {
     </div>
   );
 
+  const currentTopic = dashboard?.topic ?? topics.find((topic) => topic.topic_id === selected);
   const workspaceView = (
     <>
       <aside className="sidebar">
-        <BrandLink onHome={() => selectTopic("")} />
+        <BrandLink onHome={() => navigateTopic("")} />
         <div className="sidebar-section-label topic-label">
-          追踪主题
+          {t("追踪主题")}
           <button
             className="icon-button"
             disabled={busy}
-            aria-label="新建追踪主题"
+            aria-label={t("新建追踪主题")}
             onClick={() => showDialog("new")}
           >
             <Icon name="plus" size={15} />
@@ -876,32 +916,32 @@ function App() {
               onClick={() => selectTopic(t.topic_id)}
             >
               <span className="topic-dot" />
-              <span>{t.title}</span>
+              <span>{topicTitle(t.title)}</span>
             </button>
           ))}
-          {!topics.length && <p className="sidebar-hint">创建第一个追踪主题</p>}
+          {!topics.length && <p className="sidebar-hint">{t("创建第一个追踪主题")}</p>}
         </div>
         <button className="sidebar-replay" onClick={() => showDialog("replay")}>
           <Icon name="play" size={14} />
-          <span>准备新闻回放</span>
+          <span>{t("准备新闻回放")}</span>
         </button>
         <div className="sidebar-bottom">
-          <button aria-label="看懂这个演示" onClick={() => showDialog("help")}>
+          <button aria-label={t("看懂这个演示")} onClick={() => showDialog("help")}>
             <Icon name="help" />
-            看懂这个演示
+            {t("看懂这个演示")}
           </button>
-          <button aria-label="模型配置" onClick={() => showDialog("settings")}>
+          <button aria-label={t("模型配置")} onClick={() => showDialog("settings")}>
             <Icon name="settings" />
-            模型配置
+            {t("模型配置")}
             <span className={`tiny-dot ${model?.configured ? "online" : ""}`} />
           </button>
           <div className="sidebar-status">
             <span className={`status-dot ${health ? "online" : ""}`} />
             {health
-              ? "本地服务在线"
+              ? t("本地服务在线")
               : loading
-                ? "正在连接本地服务"
-                : "本地服务不可用"}
+                ? t("正在连接本地服务")
+                : t("本地服务不可用")}
           </div>
         </div>
       </aside>
@@ -911,20 +951,21 @@ function App() {
             <a href={topicUrl("")} onClick={(e) => {
               if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
               e.preventDefault();
-              selectTopic("");
-            }}>追踪主题</a>
+              navigateTopic("");
+            }}>{t("追踪主题")}</a>
           </div>
           <div className="topbar-actions">
+            {preferences}
             <button
               className="icon-button mobile-replay"
-              aria-label="准备语料回放"
+              aria-label={t("准备语料回放")}
               onClick={() => showDialog("replay")}
             >
               <Icon name="play" />
             </button>
             <button
               className="icon-button mobile-new"
-              aria-label="新建主题"
+              aria-label={t("新建主题")}
               disabled={busy}
               onClick={() => showDialog("new")}
             >
@@ -936,9 +977,9 @@ function App() {
           <div className="page-heading">
             <div>
               <h1 id="topic-title" tabIndex={-1}>
-                {eventTitle(dashboard?.topic.title ?? topics.find((t) => t.topic_id === selected)?.title ?? "追踪主题")}
+                {currentTopic ? topicTitle(currentTopic.title) : t("追踪主题")}
               </h1>
-              {dashboard && <p>{dashboard.topic.description}</p>}
+              {currentTopic && <p>{topicDescription(currentTopic.description)}</p>}
             </div>
             {dashboard && (
               <button
@@ -946,12 +987,13 @@ function App() {
                 disabled={busy || running}
                 onClick={() => showDialog("goal")}
               >
-                编辑追踪目标 <Icon name="arrow" size={14} />
+                {t("编辑追踪目标")} <Icon name="arrow" size={14} />
               </button>
             )}
           </div>
+          {currentTopic && <CoverImage topic={currentTopic} className="topic-banner" />}
           {feedback}
-          {loading && <p className="loading">正在读取工作区…</p>}
+          {loading && <p className="loading">{t("正在读取工作区…")}</p>}
           {dashboard && (
             <>
               <div className="topic-meta">
@@ -961,20 +1003,20 @@ function App() {
                   <span className="tiny-dot online" />
                   {status(dashboard.topic.status)}
                 </span>
-                <span>{dashboard.approved_sources.length} 个来源</span>
+                <span>{dashboard.approved_sources.length} {t("个来源")}</span>
                 <span>
-                  最近更新{" "}
+                  {t("最近更新")}{" "}
                   {date(latest?.completed_at ?? dashboard.topic.updated_at)}
                 </span>
                 <span className="mode-label">
-                  {latest ? providerLabel(latest.provider) : "尚未分析"}
+                  {latest ? providerLabel(latest.provider) : t("尚未分析")}
                 </span>
               </div>
               <div
                 className="tabbar"
                 ref={tabStrip}
                 role="tablist"
-                aria-label="主题视图"
+                aria-label={t("主题视图")}
                 onKeyDown={(e) => {
                   const index = tabs.findIndex(([id]) => id === tab);
                   const next = {
@@ -1002,7 +1044,7 @@ function App() {
                     onClick={() => openTab(id)}
                   >
                     <Icon name={icon} size={15} />
-                    {label}
+                    {t(label)}
                     {id === "review" && !!dashboard.reviews.length && (
                       <span className="tab-count">
                         {dashboard.reviews.length}
@@ -1024,11 +1066,11 @@ function App() {
                   <Icon name="search" size={17} />
                   <input
                     type="search"
-                    aria-label={tab === "evidence" ? "筛选证据" : "筛选事件"}
+                    aria-label={tab === "evidence" ? t("筛选证据") : t("筛选事件")}
                     placeholder={
                       tab === "evidence"
-                        ? "筛选标题、来源或内容"
-                        : "筛选事件、状态或事实"
+                        ? t("筛选标题、来源或内容")
+                        : t("筛选事件、状态或事实")
                     }
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -1051,42 +1093,42 @@ function App() {
                         metrics={[
                           {
                             value: dashboard.events.length,
-                            label: "追踪事件",
+                            label: t("追踪事件"),
                             open: () => openTab("events", true),
                           },
                           {
                             value: currentEvidence.length,
-                            label: "当前来源证据",
+                            label: t("当前来源证据"),
                             open: () => openTab("evidence", true),
                           },
                           {
                             value: dashboard.reviews.length,
-                            label: "待审核",
+                            label: t("待审核"),
                             open: () => openTab("review", true),
                           },
                         ]}
                       />
                       <div className="overview-sections">
                         <OverviewSection
-                          title="近期事件"
-                          label="查看全部事件"
+                          title={t("近期事件")}
+                          label={t("查看全部事件")}
                           onOpen={() => openTab("events", true)}
                         >
                           {renderEventList(3)}
                         </OverviewSection>
                         <OverviewSection
-                          title="变化与提醒"
-                          label="查看审核队列"
+                          title={t("变化与提醒")}
+                          label={t("查看审核队列")}
                           onOpen={() => openTab("review", true)}
                         >
                           {!!dashboard.reviews.length && (
                             <p className="review-callout">
-                              {dashboard.reviews.length} 条证据等待人工判断
+                              {dashboard.reviews.length} {t("条证据等待人工判断")}
                             </p>
                           )}
                           {!notices.length ? (
                             <p className="blank-line">
-                              有新的状态变化后，提醒会出现在这里。
+                              {t("有新的状态变化后，提醒会出现在这里。")}
                             </p>
                           ) : (
                             notices.slice(0, 5).map((n) => (
@@ -1104,7 +1146,7 @@ function App() {
                                     {eventTitle(
                                       dashboard.events.find(
                                         (e) => e.event_id === n.event_id,
-                                      )?.title ?? "事件更新",
+                                      )?.title ?? t("事件更新"),
                                     )}
                                   </strong>
                                   <small>{actionLabel(n.action)}</small>
@@ -1120,12 +1162,12 @@ function App() {
                       {fixture && (
                         <section className="section-block">
                           <div className="section-title">
-                            <h2>跟着演示走一遍</h2>
+                            <h2>{t("跟着演示走一遍")}</h2>
                             <button
                               className="text-button"
                               onClick={() => showDialog("help")}
                             >
-                              模拟演示说明
+                              {t("模拟演示说明")}
                             </button>
                           </div>
                           <ol className="demo-steps">
@@ -1148,8 +1190,8 @@ function App() {
                                   )}
                                 </span>
                                 <div>
-                                  <h3>{s.name}</h3>
-                                  <p>{s.description}</p>
+                                  <h3>{t(s.name)}</h3>
+                                  <p>{t(s.description)}</p>
                                 </div>
                                 <button
                                   disabled={busy || running}
@@ -1162,7 +1204,7 @@ function App() {
                                     )
                                   }
                                 >
-                                  {done(s.id) ? "再次运行" : "运行这一步"}{" "}
+                                  {done(s.id) ? t("再次运行") : t("运行这一步")}{" "}
                                   <Icon name="arrow" size={14} />
                                 </button>
                               </li>
@@ -1177,9 +1219,9 @@ function App() {
                 {tab === "events" && (
                   <section className="section-block">
                     <div className="section-title">
-                      <h2>全部事件</h2>
+                      <h2>{t("全部事件")}</h2>
                       <span className="meta">
-                        选择一行查看事实、时间线与依据
+                        {t("选择一行查看事实、时间线与依据")}
                       </span>
                     </div>
                     {renderEventList()}
@@ -1188,8 +1230,8 @@ function App() {
                 {tab === "evidence" && (
                   <section className="section-block">
                     <div className="section-title">
-                      <h2>证据库</h2>
-                      <span className="meta">包括被排除、重复与待审的信息</span>
+                      <h2>{t("证据库")}</h2>
+                      <span className="meta">{t("包括被排除、重复与待审的信息")}</span>
                     </div>
                     <label className="check-row">
                       <input
@@ -1199,17 +1241,17 @@ function App() {
                           setShowHistorySources(e.target.checked)
                         }
                       />
-                      显示全部来源的历史记录
+                      {t("显示全部来源的历史记录")}
                     </label>
                     {!evidenceRows.length ? (
                       <Empty
                         title={
-                          search ? "没有符合筛选条件的证据" : "还没有读入的新闻"
+                          search ? t("没有符合筛选条件的证据") : t("还没有读入的新闻")
                         }
                         detail={
                           search
-                            ? "试试其他关键词，或查阅全部来源的历史记录。"
-                            : "运行一次检查，或手动提交一条新闻。"
+                            ? t("试试其他关键词，或查阅全部来源的历史记录。")
+                            : t("运行一次检查，或手动提交一条新闻。")
                         }
                       />
                     ) : (
@@ -1222,14 +1264,14 @@ function App() {
                             v.status === "completed";
                           const label =
                             v.status === "review"
-                              ? "待审核"
+                              ? t("待审核")
                               : ["failed", "failed_retryable", "pending"].includes(v.status)
                                 ? status(v.status)
                                 : duplicate
-                                  ? "重复报道"
+                                  ? t("重复报道")
                                   : v.assessment?.is_relevant === false
-                                    ? "已排除"
-                                    : "已处理";
+                                    ? t("已排除")
+                                    : t("已处理");
                           return (
                             <button
                               className="evidence-row"
@@ -1272,7 +1314,7 @@ function App() {
                     action={action}
                     onSaved={async () => {
                       await refresh();
-                      setToast("审核已记录，事件与历史已刷新。");
+                      setToast(t("审核已记录，事件与历史已刷新。"));
                     }}
                   />
                 )}
@@ -1332,25 +1374,23 @@ function App() {
                         {typeof s.config?.search_language === "string" &&
                           SEARCH_LANGUAGE_MAP.has(s.config.search_language) && (
                             <span className="tag lang">
-                              {SEARCH_LANGUAGE_MAP.get(
-                                s.config.search_language,
-                              )}
+                              {t(SEARCH_LANGUAGE_MAP.get(s.config.search_language) ?? s.config.search_language)}
                             </span>
                           )}
                         <span
                           className={`tag ${s.retirement_recommended ? "amber" : s.health_status === "quiet" || s.health_status === "archived" ? "quiet" : ""}`}
                         >
                           {s.retirement_recommended
-                            ? "建议清理"
+                            ? t("建议清理")
                             : s.health_status === "quiet"
-                              ? "静默正常"
+                              ? t("静默正常")
                               : s.health_status === "archived"
-                                ? "已归档"
+                                ? t("已归档")
                                 : {
-                                    fixture: "模拟来源",
-                                    replay: "离线回放",
+                                    fixture: t("模拟来源"),
+                                    replay: t("离线回放"),
                                     rss: "RSS",
-                                    manual: "手动录入",
+                                    manual: t("手动录入"),
                                   }[s.type]}
                         </span>
                       </span>
@@ -1403,12 +1443,12 @@ function App() {
                     <div className="sources-layout">
                       <section className="section-block">
                         <div className="section-title">
-                          <h2>追踪词表与信息来源</h2>
+                          <h2>{t("追踪词表与信息来源")}</h2>
                           <button
                             disabled={busy || running}
                             onClick={() => showDialog("source")}
                           >
-                            <Icon name="plus" size={15} /> 添加来源
+                            <Icon name="plus" size={15} /> {t("添加来源")}
                           </button>
                         </div>
                         <div
@@ -1416,10 +1456,10 @@ function App() {
                         >
                           <span className="watchlist-save-status">
                             {hasUnsavedSources
-                              ? `有未保存的勾选变更（当前勾选 ${approved.length} 项），请点击保存后生效。`
+                              ? t("有未保存的勾选变更（当前勾选 {0} 项），请点击保存后生效。", approved.length)
                               : isColdStartTopic
-                                ? `已生效 ${approved.length} 项。空主题可点击「AI 冷启动拆词」自动生成 ≤3 个初始检索方向与推荐语种。`
-                                : `已生效 ${approved.length} 项追踪配置。默认使用 0-Token 已有事件事实作为扩展理由。`}
+                                ? t("已生效 {0} 项。空主题可点击「AI 冷启动拆词」自动生成 ≤3 个初始检索方向与推荐语种。", approved.length)
+                                : t("已生效 {0} 项追踪配置。默认使用 0-Token 已有事件事实作为扩展理由。", approved.length)}
                           </span>
                           <div className="watchlist-save-actions">
                             <button
@@ -1436,30 +1476,30 @@ function App() {
                                     if (res.llm_summary_enabled) {
                                       setToast(
                                         res.llm_mode === "cold_start"
-                                          ? "已生成 AI Cold-Start 初始检索建议，请勾选需要的来源并保存。"
-                                          : "已开启 AI 对比推荐理由（单次轻量总结）。",
+                                          ? t("已生成 AI Cold-Start 初始检索建议，请勾选需要的来源并保存。")
+                                          : t("已开启 AI 对比推荐理由（单次轻量总结）。"),
                                       );
                                     } else {
                                       setError(
                                         res.llm_summary_error ||
-                                          "AI 助手未能开启（请检查模型配置），已保持 0-Token 模式。",
+                                          t("AI 助手未能开启（请检查模型配置），已保持 0-Token 模式。"),
                                       );
                                     }
                                   } else {
-                                    setToast("已切换回 0-Token 事实依据模式。");
+                                    setToast(t("已切换回 0-Token 事实依据模式。"));
                                   }
                                 })
                               }
                             >
                               {langsDirtyForLlm
-                                ? "按新语种重新生成"
+                                ? t("按新语种重新生成")
                                 : isColdStartTopic
                                   ? llmSummaryOn
-                                    ? "AI 冷启动拆词：ON"
-                                    : "AI 冷启动拆词：OFF"
+                                    ? t("AI 冷启动拆词：ON")
+                                    : t("AI 冷启动拆词：OFF")
                                   : llmSummaryOn
-                                    ? "AI 对比理由：ON"
-                                    : "AI 对比理由：OFF (0-Token)"}
+                                    ? t("AI 对比理由：ON")
+                                    : t("AI 对比理由：OFF (0-Token)")}
                             </button>
                             <button
                               type="button"
@@ -1467,13 +1507,13 @@ function App() {
                               disabled={busy || running || !hasUnsavedSources}
                               onClick={() => void action(saveApprovedSources)}
                             >
-                              保存批准来源 <Icon name="check" size={15} />
+                              {t("保存批准来源")} <Icon name="check" size={15} />
                             </button>
                           </div>
                         </div>
                         {!replay ? (
                           <div className="lang-picker-bar">
-                            <span className="lang-picker-label">检索语种</span>
+                            <span className="lang-picker-label">{t("检索语种")}</span>
                             <div className="lang-picker-pills">
                               <button
                                 type="button"
@@ -1488,7 +1528,7 @@ function App() {
                                   }
                                 }}
                               >
-                                自动（AI 推荐）
+                                {t("自动（AI 推荐）")}
                               </button>
                               {SEARCH_LANGUAGE_OPTIONS.map((opt) => (
                                 <button
@@ -1498,14 +1538,14 @@ function App() {
                                   disabled={busy || running}
                                   onClick={() => toggleLanguage(opt.code)}
                                 >
-                                  {opt.label}
+                                  {t(opt.label)}
                                 </button>
                               ))}
                             </div>
                           </div>
                         ) : (
                           <p className="hint replay-lang-hint">
-                            离线搜索池按本地语料布尔检索，无需选择网搜语种；空主题下点击「AI 冷启动拆词」可基于目标字面拆出 ≤3 个初始检索支线（零未来泄露）。
+                            {t("离线搜索池按本地语料布尔检索，无需选择网搜语种；空主题下点击「AI 冷启动拆词」可基于目标字面拆出 ≤3 个初始检索支线（零未来泄露）。")}
                           </p>
                         )}
                         {llmSummaryNote && (
@@ -1513,19 +1553,19 @@ function App() {
                             <div className="llm-summary-head">
                               <strong>
                                 {llmMode === "cold_start"
-                                  ? "AI Cold-Start 初始检索方案"
-                                  : "AI 扩展优先级对比建议"}
+                                  ? t("AI Cold-Start 初始检索方案")
+                                  : t("AI 扩展优先级对比建议")}
                               </strong>
                               <span className="llm-meta-badges">
                                 {!replay &&
                                   recommendedLanguages.map((lg) => (
                                     <span className="tag lang" key={lg}>
-                                      推荐：{SEARCH_LANGUAGE_MAP.get(lg) ?? lg}
+                                      {t("推荐：")}{t(SEARCH_LANGUAGE_MAP.get(lg) ?? lg)}
                                     </span>
                                   ))}
                                 {llmUsage?.total_tokens != null && (
                                   <span className="tag quiet">
-                                    本次消耗 {llmUsage.total_tokens} tokens
+                                    {t("本次消耗")} {llmUsage.total_tokens} tokens
                                   </span>
                                 )}
                               </span>
@@ -1536,8 +1576,8 @@ function App() {
                         {watchlistSources.length > 0 && (
                           <>
                             <div className="source-group-hd">
-                              <span>追踪关键词与支线词表（Watchlist · 盯谁）</span>
-                              <small>{watchlistSources.length} 项</small>
+                              <span>{t("追踪关键词与支线词表（Watchlist · 盯谁）")}</span>
+                              <small>{watchlistSources.length} {t("项")}</small>
                             </div>
                             <div className="source-list">
                               {watchlistSources.map(renderSourceRow)}
@@ -1547,8 +1587,8 @@ function App() {
                         {channelSources.length > 0 && (
                           <>
                             <div className="source-group-hd">
-                              <span>媒体渠道与语料源（Channels · 去哪抓）</span>
-                              <small>{channelSources.length} 项</small>
+                              <span>{t("媒体渠道与语料源（Channels · 去哪抓）")}</span>
+                              <small>{channelSources.length} {t("项")}</small>
                             </div>
                             <div className="source-list">
                               {channelSources.map(renderSourceRow)}
@@ -1561,15 +1601,15 @@ function App() {
                             disabled={busy || running || !hasUnsavedSources}
                             onClick={() => void action(saveApprovedSources)}
                           >
-                            保存批准来源 <Icon name="check" size={15} />
+                            {t("保存批准来源")} <Icon name="check" size={15} />
                           </button>
                         </div>
                       </section>
                       <aside className="context-panel">
                         <span className="kicker">YOUR PREFERENCES</span>
-                        <h3>提醒偏好</h3>
+                        <h3>{t("提醒偏好")}</h3>
                         <label>
-                          何时提醒
+                          {t("何时提醒")}
                           <select
                             value={dashboard.topic.notification_preferences}
                             disabled={busy || running}
@@ -1585,23 +1625,23 @@ function App() {
                               })
                             }
                           >
-                            <option value="standard">重大进展即时提醒</option>
-                            <option value="digest_only">全部进入更新汇总</option>
+                            <option value="standard">{t("重大进展即时提醒")}</option>
+                            <option value="digest_only">{t("全部进入更新汇总")}</option>
                           </select>
                         </label>
                         <p className="hint">
-                          普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。
+                          {t("普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。")}
                         </p>
                         <div className="context-divider" />
-                        <h3>想测试离线回放语料？</h3>
+                        <h3>{t("想测试离线回放语料？")}</h3>
                         <p className="hint">
-                          单独创建回放主题，按时间切片验证多事件建档与关键词演化，避免混入模拟新闻和实时订阅。
+                          {t("单独创建回放主题，按时间切片验证多事件建档与关键词演化，避免混入模拟新闻和实时订阅。")}
                         </p>
                         <button
                           className="text-button"
                           onClick={() => showDialog("replay")}
                         >
-                          准备回放工作区 <Icon name="arrow" size={14} />
+                          {t("准备回放工作区")} <Icon name="arrow" size={14} />
                         </button>
                       </aside>
                     </div>
@@ -1611,7 +1651,7 @@ function App() {
                   <div className="activity-layout">
                     <section className="run-list">
                       <span className="kicker">SESSIONS</span>
-                      <h2>检查历史</h2>
+                      <h2>{t("检查历史")}</h2>
                       {dashboard.recent_runs.map((r) => (
                         <button
                           className={`session-row ${run?.run.run_id === r.run_id ? "selected" : ""}`}
@@ -1656,9 +1696,9 @@ function App() {
                             </span>
                           </div>
                           <div className="run-summary">
-                            读取 <b>{run.run.counts.fetched ?? 0}</b> · 状态更新{" "}
-                            <b>{run.run.counts.committed ?? 0}</b> · 跳过{" "}
-                            <b>{run.run.counts.skipped ?? 0}</b> · 待审{" "}
+                            {t("读取")} <b>{run.run.counts.fetched ?? 0}</b> {t("· 状态更新")}{" "}
+                            <b>{run.run.counts.committed ?? 0}</b> {t("· 跳过")}{" "}
+                            <b>{run.run.counts.skipped ?? 0}</b> {t("· 待审")}{" "}
                             <b>{run.run.counts.review ?? 0}</b>
                           </div>
                           {run.run.error != null && (
@@ -1667,7 +1707,7 @@ function App() {
                           {unfinished.length > 0 && !active(run.run.status) && (
                             <>
                               <div className="section-title">
-                                <h3>失败或未处理的证据</h3>
+                                <h3>{t("失败或未处理的证据")}</h3>
                                 <button
                                   disabled={running || busy}
                                   onClick={() =>
@@ -1676,7 +1716,7 @@ function App() {
                                     )
                                   }
                                 >
-                                  续跑未完成证据
+                                  {t("续跑未完成证据")}
                                 </button>
                               </div>
                               <ul>
@@ -1688,7 +1728,7 @@ function App() {
                                     <span className="meta">
                                       {item.external_id} · {status(item.status)}
                                       {" · "}
-                                      {item.attempts} 次尝试
+                                      {item.attempts} {t("次尝试")}
                                       {item.error && ` · ${item.error.message}`}
                                     </span>
                                   </li>
@@ -1704,7 +1744,7 @@ function App() {
                                   <summary>
                                     <span>{stepLabel(s.step_name)}</span>
                                     <span className="meta">
-                                      {status(s.status)} · {s.attempt} 次
+                                      {status(s.status)} · {s.attempt} {t("次")}
                                     </span>
                                   </summary>
                                   <div className="trace-human">
@@ -1715,7 +1755,7 @@ function App() {
                                           setEvidenceId(s.evidence_id!)
                                         }
                                       >
-                                        查看处理的新闻{" "}
+                                        {t("查看处理的新闻")}{" "}
                                         <Icon name="arrow" size={13} />
                                       </button>
                                     )}
@@ -1730,14 +1770,14 @@ function App() {
                             ))}
                           </ol>
                           <details className="quiet-details">
-                            <summary>完整运行记录</summary>
+                            <summary>{t("完整运行记录")}</summary>
                             <pre>{pretty(run.run)}</pre>
                           </details>
                         </>
                       ) : (
                         <Empty
-                          title="还没有运行记录"
-                          detail="每次检查都会留下有顺序的步骤、处理结果和错误。"
+                          title={t("还没有运行记录")}
+                          detail={t("每次检查都会留下有顺序的步骤、处理结果和错误。")}
                         />
                       )}
                     </section>
@@ -1748,7 +1788,7 @@ function App() {
           )}
           <footer>
             <span>TRACERADAR / GROUP 65</span>
-            <span>把结论留给证据，把变化留在历史。</span>
+            <span>{t("把结论留给证据，把变化留在历史。")}</span>
           </footer>
         </main>
       </div>
@@ -1763,8 +1803,9 @@ function App() {
           loading={loading}
           busy={busy}
           feedback={feedback}
-          onHome={() => selectTopic("")}
-          onTopic={selectTopic}
+          preferences={preferences}
+          onHome={() => navigateTopic("")}
+          onTopic={navigateTopic}
           onNew={() => showDialog("new")}
           onDemo={createDemo}
           onReplay={() => showDialog("replay")}
@@ -1777,13 +1818,13 @@ function App() {
         <Modal
           title={
             {
-              new: "新建追踪主题",
-              goal: "编辑追踪目标",
-              source: "添加信息来源",
-              manual: "提交一条新闻",
-              settings: "配置真实模型",
-              replay: "准备新闻回放",
-              help: "看懂 ExampleSoft 演示",
+              new: t("新建追踪主题"),
+              goal: t("编辑追踪目标"),
+              source: t("添加信息来源"),
+              manual: t("提交一条新闻"),
+              settings: t("配置真实模型"),
+              replay: t("准备新闻回放"),
+              help: t("看懂 ExampleSoft 演示"),
             }[dialog]
           }
           onClose={() => setDialog(null)}
@@ -1817,28 +1858,28 @@ function App() {
               }}
             >
               <label>
-                主题名称
+                {t("主题名称")}
                 <input
                   autoFocus
                   required
                   maxLength={200}
                   value={newTitle}
                   onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder="例如：某公司的收购进展"
+                  placeholder={t("例如：某公司的收购进展")}
                 />
               </label>
               <label>
-                你想持续了解什么？
+                {t("你想持续了解什么？")}
                 <textarea
                   required
                   maxLength={4000}
                   value={newDescription}
                   onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder="说明关注的事项、重要变化和需要区分的情况。"
+                  placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
                 />
               </label>
               <button className="primary" disabled={busy}>
-                创建主题 <Icon name="arrow" size={16} />
+                {t("创建主题")} <Icon name="arrow" size={16} />
               </button>
             </form>
           )}
@@ -1851,7 +1892,7 @@ function App() {
                 await refresh();
                 setTopics(await api<Topic[]>("/topics"));
                 setDialog(null);
-                setToast("追踪目标已更新。");
+                setToast(t("追踪目标已更新。"));
               }}
             />
           )}
@@ -1863,7 +1904,7 @@ function App() {
                 await refreshSources(false);
                 setDialog(null);
                 setTab("sources");
-                setToast("来源已添加，请勾选并保存批准。");
+                setToast(t("来源已添加，请勾选并保存批准。"));
               }}
               knownIds={sources.map((s) => s.source_id)}
             />
@@ -1894,77 +1935,76 @@ function App() {
               corpora={corpora}
               disabled={busy}
               action={action}
-              onPrepared={async (t, c) => {
+              onPrepared={async (topic, c) => {
                 setTopics(await api<Topic[]>("/topics"));
-                selectTopic(t.topic_id);
+                selectTopic(topic.topic_id);
                 setProvider("qwen");
                 setAsOf(localInput(c.cutoffs[0]));
                 setDialog(null);
-                setToast("回放工作区已准备好。配置模型后，从阶段 1 开始。");
+                setToast(t("回放工作区已准备好。配置模型后，从阶段 1 开始。"));
               }}
             />
           )}
           {dialog === "help" && (
             <div className="help-content">
-              <span className="tag amber">全部为模拟数据</span>
-              <h3>ExampleSoft 是虚构公司，来自同学原有的代码。</h3>
+              <span className="tag amber">{t("全部为模拟数据")}</span>
+              <h3>{t("ExampleSoft 是虚构公司，来自同学原有的代码。")}</h3>
               <p>
-                仓库原本就有 ExampleSoft
-                的三批新闻、规则判断器和演示页面。我增加了“D验收”测试主题，用来检查新增功能。“D验收”本身不是产品功能。
+                {t("仓库原本就有 ExampleSoft 的三批新闻、规则判断器和演示页面。我增加了“D验收”测试主题，用来检查新增功能。“D验收”本身不是产品功能。")}
               </p>
               <div className="help-flow">
                 {demoSteps.map((s, i) => (
                   <div key={s.id}>
                     <b>0{i + 1}</b>
-                    <h4>{s.name}</h4>
-                    <p>{s.description}</p>
+                    <h4>{t(s.name)}</h4>
+                    <p>{t(s.description)}</p>
                   </div>
                 ))}
               </div>
-              <h3>这些栏目各自回答什么问题？</h3>
+              <h3>{t("这些栏目各自回答什么问题？")}</h3>
               <dl className="help-definitions">
                 <div>
-                  <dt>事件</dt>
-                  <dd>同一件事现在发展到哪里？例如漏洞 A，从披露到修复。</dd>
+                  <dt>{t("事件")}</dt>
+                  <dd>{t("同一件事现在发展到哪里？例如漏洞 A，从披露到修复。")}</dd>
                 </div>
                 <div>
-                  <dt>证据</dt>
-                  <dd>这个判断来自哪篇新闻？排除与重复的信息也能查看。</dd>
+                  <dt>{t("证据")}</dt>
+                  <dd>{t("这个判断来自哪篇新闻？排除与重复的信息也能查看。")}</dd>
                 </div>
                 <div>
-                  <dt>时间线与历史</dt>
-                  <dd>什么时候发生变化？系统之前和现在分别怎样判断？</dd>
+                  <dt>{t("时间线与历史")}</dt>
+                  <dd>{t("什么时候发生变化？系统之前和现在分别怎样判断？")}</dd>
                 </div>
                 <div>
-                  <dt>待审核</dt>
-                  <dd>哪里有矛盾？人可以保留原状态，或核对后采纳并修正。</dd>
+                  <dt>{t("待审核")}</dt>
+                  <dd>{t("哪里有矛盾？人可以保留原状态，或核对后采纳并修正。")}</dd>
                 </div>
                 <div>
-                  <dt>运行记录</dt>
-                  <dd>这次读取了什么、跳过了什么、在哪一步失败？</dd>
+                  <dt>{t("运行记录")}</dt>
+                  <dd>{t("这次读取了什么、跳过了什么、在哪一步失败？")}</dd>
                 </div>
               </dl>
               <p className="hint">
-                规则演示验证工作流程；真实模型才能分析其他主题。演示运行成功，不代表模型效果已经通过评测。
+                {t("规则演示验证工作流程；真实模型才能分析其他主题。演示运行成功，不代表模型效果已经通过评测。")}
               </p>
               <button
                 className="primary"
                 disabled={busy}
                 onClick={() => void createDemo()}
               >
-                新建一个干净的三步演示 <Icon name="arrow" size={15} />
+                {t("新建一个干净的三步演示")} <Icon name="arrow" size={15} />
               </button>
             </div>
           )}
         </Modal>
       )}
       {event && (
-        <Modal title="事件档案" onClose={() => setEvent(null)} wide sheet>
+        <Modal title={t("事件档案")} onClose={() => setEvent(null)} wide sheet>
           <EventView value={event} onEvidence={setEvidenceId} />
         </Modal>
       )}
       {selectedEvidence && (
-        <Modal title="新闻与判断依据" onClose={() => setEvidenceId("")}>
+        <Modal title={t("新闻与判断依据")} onClose={() => setEvidenceId("")}>
           <EvidenceView value={selectedEvidence} />
         </Modal>
       )}

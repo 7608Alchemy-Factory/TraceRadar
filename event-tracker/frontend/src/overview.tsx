@@ -1,3 +1,4 @@
+import { locale, t } from "./i18n";
 import type { ReactNode } from "react";
 
 type Metric = { value: number; label: string; open: () => void };
@@ -5,12 +6,12 @@ type Metric = { value: number; label: string; open: () => void };
 export function OverviewSummary({ metrics }: { metrics: Metric[] }) {
   return (
     <section className="overview-summary" aria-labelledby="overview-summary-title">
-      <h2 id="overview-summary-title">追踪概况</h2>
+      <h2 id="overview-summary-title">{t("追踪概况")}</h2>
       <div className="overview-metrics">
         {metrics.map(({ value, label, open }) => (
           <button type="button" key={label} onClick={open}>
             <span>{label}</span>
-            <strong>{value.toLocaleString("zh-HK")}</strong>
+            <strong>{value.toLocaleString(locale())}</strong>
           </button>
         ))}
       </div>

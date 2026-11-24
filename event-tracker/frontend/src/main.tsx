@@ -2,7 +2,8 @@ import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
 import { SidebarTopics } from "./sidebar-topics";
 import { useTopicOrder } from "./topic-order";
 import { searchProviderLabel, SourceHealth } from "./source-health";
-import { MAX_TOPIC_TAGS, TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
+import { tagLabel, tagOptions } from "./topic-tags";
+import type { TopicExample } from "./topic-example-catalog";
 import { formatScheduledTime, useWorkspaceZone, WorkspaceClock } from "./clock";
 import { ScheduleBadge, ScheduleEditor, type ScheduleInput } from "./schedule";
 import { InboxPanel, NoticeRows, useWorkspaceUpdates } from "./workspace-updates";
@@ -31,7 +32,8 @@ import type {
   Corpus,
 } from "./types";
 import {
-  GoalEditor,
+  TopicForm,
+  type TopicFields,
   RegisterSource,
   ManualEvidenceForm,
   ReviewPanel,
@@ -214,9 +216,9 @@ function App() {
     registered: boolean;
     config: Record<string, unknown>;
   } | null>(null);
-  const [newTitle, setNewTitle] = useState(""),
-    [newDescription, setNewDescription] = useState("");
-  const [newTags, setNewTags] = useState<string[]>([]);
+  const [topicTemplate, setTopicTemplate] = useState<TopicExample>();
+  const [defaultTag, setDefaultTag] = useState("");
+  const topicDrafts = useRef(new Map<string, TopicFields>());
   const [deleteTarget, setDeleteTarget] = useState<Topic>();
   const [deleteEventTarget, setDeleteEventTarget] = useState<TrackedEvent>();
   const [deleteEventDisposition, setDeleteEventDisposition] = useState<"irrelevant" | "unwanted">("irrelevant");
@@ -852,9 +854,9 @@ function App() {
     setError("");
     setDialog(d);
   }
-  function openNewTopic(tag?: string, example?: string) {
-    if (tag) setNewTags((tags) => tags.includes(tag) || tags.length >= MAX_TOPIC_TAGS ? tags : [...tags, tag]);
-    if (example) setNewTitle(example);
+  function openNewTopic(tag?: string, example?: TopicExample) {
+    setTopicTemplate(example);
+    setDefaultTag(tag ?? "");
     showDialog("new");
   }
   function requestDelete(topic: Topic) {
@@ -1292,7 +1294,7 @@ function App() {
             {dashboard && (
               <div className="topic-heading-actions">
                 <button className="heading-edit" type="button" disabled={busy || running} onClick={() => showDialog("goal")}>
-                  <span>{t("编辑追踪目标")}</span><Icon name="arrow" size={15} />
+                  <span>{t("编辑标题")}</span><Icon name="arrow" size={15} />
                 </button>
                 <button className="heading-edit" type="button" disabled={busy || running}
                   onClick={() => requestDelete(dashboard.topic)}>
@@ -2327,7 +2329,7 @@ function App() {
           title={
             {
               new: t("新建追踪主题"),
-              goal: t("编辑追踪目标"),
+              goal: t("编辑标题"),
               source: t("添加信息来源"),
               manual: t("提交一条新闻"),
               settings: t("配置真实模型"),
@@ -2357,68 +2359,38 @@ function App() {
               await reloadUpdates();
             })} />}
           {dialog === "new" && (
-            <form
-              className="form-stack"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void action(async () => {
-                  const t = await api<Topic>(
-                    "/topics",
-                    json("POST", {
-                      title: newTitle,
-                      description: newDescription,
-                      tags: newTags,
-                    }),
-                  );
-                  setTopics(await loadWorkspaceTopics());
-                  selectTopic(t.topic_id);
-                  setDialog(null);
-                  setTab("sources");
-                  setNewTitle("");
-                  setNewDescription("");
-                  setNewTags([]);
-                });
-              }}
-            >
-              <label>
-                {t("主题名称")}
-                <input
-                  autoFocus
-                  required
-                  maxLength={200}
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder={t("例如：某公司的收购进展")}
-                />
-              </label>
-              <label>
-                {t("你想持续了解什么？")}
-                <textarea
-                  required
-                  maxLength={4000}
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
-                />
-              </label>
-              <TopicTagPicker value={newTags} options={tagOptions(topics)} onChange={setNewTags} />
-              <button className="primary" disabled={busy}>
-                {t("创建主题")} <Icon name="arrow" size={16} />
-              </button>
-            </form>
+            <TopicForm
+              key={topicTemplate?.id ?? defaultTag}
+              mode="create"
+              initial={topicTemplate ?? topicDrafts.current.get(defaultTag) ?? { tags: defaultTag ? [defaultTag] : [] }}
+              notes={topicTemplate?.notes}
+              onDraftChange={topicTemplate ? undefined : (fields) => topicDrafts.current.set(defaultTag, fields)}
+              availableTags={tagOptions(topics)}
+              disabled={busy}
+              onSubmit={(fields) => void action(async () => {
+                const created = await api<Topic>("/topics", json("POST", fields));
+                if (!topicTemplate) topicDrafts.current.delete(defaultTag);
+                setTopics((previous) => [...previous, created]);
+                selectTopic(created.topic_id);
+                setDialog(null);
+                setTab("sources");
+              })}
+            />
           )}
           {dialog === "goal" && dashboard && (
-            <GoalEditor
-              topic={dashboard.topic}
+            <TopicForm
+              key={dashboard.topic.topic_id}
+              mode="edit"
+              initial={dashboard.topic}
               availableTags={tagOptions(topics)}
               disabled={busy || running}
-              action={action}
-              onSaved={async () => {
+              onSubmit={(fields) => void action(async () => {
+                await api(`/topics/${dashboard.topic.topic_id}`, json("PATCH", fields));
                 await refresh();
                 setTopics(await loadWorkspaceTopics());
                 setDialog(null);
-                setToast(t("追踪目标已更新。"));
-              }}
+                setToast(t("主题已更新。"));
+              })}
             />
           )}
           {dialog === "source" && (

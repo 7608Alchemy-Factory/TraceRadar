@@ -9,7 +9,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type Poi
 import { Icon } from "./ui";
 import { status, longDate, topicTitle, topicDescription } from "./display";
 import type { Schedule, Topic } from "./types";
-import { tagExamples, tagLabel, tagOptions } from "./topic-tags";
+import { isCategory, tagLabel, tagOptions } from "./topic-tags";
+import type { TopicExample } from "./topic-example-catalog";
 
 export function topicUrl(id: string) {
   const url = new URL(location.href);
@@ -54,7 +55,7 @@ type HomeProps = {
   preferences: ReactNode;
   onHome: () => void;
   onTopic: (id: string) => void;
-  onNew: (tag?: string, example?: string) => void;
+  onNew: (tag?: string, example?: TopicExample) => void;
   onSettings: () => void;
 };
 
@@ -68,11 +69,22 @@ export function ProjectHome({
   const [spotlight, setSpotlight] = useState("");
   const [edges, setEdges] = useState({ start: true, end: true });
   const [category, setCategory] = useState("");
+  const [catalog, setCatalog] = useState<TopicExample[] | null>();
   const tags = tagOptions(topics);
   const activeCategory = tags.includes(category) ? category : "";
   const items = topics.filter((topic) =>
     !activeCategory || topic.tags?.some((tag) => tag.toLocaleLowerCase() === activeCategory.toLocaleLowerCase()));
-  const examples = tagExamples(activeCategory);
+  const examples = catalog?.filter((example) => example.tags[0] === activeCategory) ?? [];
+
+  useEffect(() => {
+    if (!isCategory(activeCategory) || catalog !== undefined) return;
+    let current = true;
+    void import("virtual:topic-examples").then(
+      ({ default: entries }) => { if (current) setCatalog(entries); },
+      () => { if (current) setCatalog(null); },
+    );
+    return () => { current = false; };
+  }, [activeCategory, catalog]);
 
   useLayoutEffect(() => {
     window.clearTimeout(hover.current?.timer);
@@ -263,11 +275,13 @@ export function ProjectHome({
               <p>{t("新建一个主题开始追踪。")}</p>
             </div>
           )}
-          {!!examples.length && <div className="topic-examples">
+          {isCategory(activeCategory) && <div className="topic-examples">
             <h3>{t("主题示例")}</h3>
-            <ul>{examples.map((example) => <li key={example}>
-              <button type="button" disabled={busy} onClick={() => onNew(activeCategory, example)}>{example}</button>
-            </li>)}</ul>
+            {catalog ? <ul>{examples.map((example) => <li key={example.id}>
+              <button type="button" disabled={busy} onClick={() => onNew(activeCategory, example)}>{example.title}</button>
+            </li>)}</ul> : <p className="hint" role="status">
+              {t(catalog === null ? "无法读取主题示例，请刷新后重试。" : "正在读取主题示例…")}
+            </p>}
           </div>}
         </section>
       </main>

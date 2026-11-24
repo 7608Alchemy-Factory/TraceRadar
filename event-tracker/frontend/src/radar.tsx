@@ -63,7 +63,7 @@ export function EventRadar({ topics, schedules, timeZone, onTopic }: {
   });
   return (
     <section className="live-radar" aria-label={t("事件雷达")}>
-      <div className="radar-header"><h2>{t("事件雷达")}</h2><span>{known.length} {t("条近期信号")}</span></div>
+      <div className="radar-header"><h2>{t("事件雷达")}</h2></div>
       <div className="radar-field">
         <div className="radar-feed">
           {recent.length > 0 && <><h3 className="radar-feed-label">{t("近期事件")}</h3><ol>

@@ -15,26 +15,37 @@ import type {
 import { date, text, title as eventTitle, headline } from "./display";
 import { searchProviderLabel } from "./source-health";
 import { Icon, Empty } from "./ui";
+import type { TopicExample } from "./topic-example-catalog";
 export type Act = (task: () => Promise<void>) => Promise<void>;
 
-export function GoalEditor({
-  topic,
+export type TopicFields = { title: string; description: string; tags: string[]; exclusions: string[] };
+
+export function TopicForm({
+  initial,
   availableTags,
   disabled,
-  action,
-  onSaved,
+  mode,
+  notes,
+  onDraftChange,
+  onSubmit,
 }: {
-  topic: Topic;
+  initial?: Partial<TopicFields>;
   availableTags: string[];
   disabled: boolean;
-  action: Act;
-  onSaved: () => Promise<void>;
+  mode: "create" | "edit";
+  notes?: TopicExample["notes"];
+  onDraftChange?: (fields: TopicFields) => void;
+  onSubmit: (fields: TopicFields) => void;
 }) {
-  const [title, setTitle] = useState(topic.title),
-    [description, setDescription] = useState(topic.description);
-  const [tags, setTags] = useState(topic.tags ?? []);
-  const [exclusions, setExclusions] = useState<string[]>(topic.exclusions ?? []);
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [tags, setTags] = useState(initial?.tags ?? []);
+  const [exclusions, setExclusions] = useState(initial?.exclusions ?? []);
   const [newExclusion, setNewExclusion] = useState("");
+  const canSave = !disabled && !!title.trim() && !!description.trim() && tags.length <= MAX_TOPIC_TAGS;
+  useEffect(() => {
+    onDraftChange?.({ title, description, tags, exclusions });
+  }, [title, description, tags, exclusions, onDraftChange]);
   const addExclusion = () => {
     const clean = newExclusion.trim();
     if (!clean || exclusions.length >= 20) return;
@@ -48,21 +59,17 @@ export function GoalEditor({
       className="form-stack"
       onSubmit={(e) => {
         e.preventDefault();
-        void action(async () => {
-          await api(
-            `/topics/${topic.topic_id}`,
-            json("PATCH", { title, description, tags, exclusions }),
-          );
-          await onSaved();
-        });
+        if (canSave) onSubmit({ title: title.trim(), description: description.trim(), tags, exclusions });
       }}
     >
       <label>
         {t("主题名称")}
         <input
+          autoFocus={mode === "create"}
           required
           maxLength={200}
           value={title}
+          placeholder={t("例如：某公司的收购进展")}
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
@@ -73,6 +80,7 @@ export function GoalEditor({
           aria-label={t("追踪目标")}
           maxLength={4000}
           value={description}
+          placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
@@ -120,11 +128,19 @@ export function GoalEditor({
           </button>
         </div>
       </fieldset>
-      <p className="hint">
+      {notes && <details className="topic-example-notes">
+        <summary>{t("示例备注")}</summary>
+        <dl>
+          <dt>{t("推荐检查")}</dt><dd>{notes.recommendedCheck}</dd>
+          <dt>{t("通过标准")}</dt><dd>{notes.passCriteria}</dd>
+          <dt>{t("验收样例")}</dt><dd>{notes.testCase}</dd>
+        </dl>
+      </details>}
+      {mode === "edit" && <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
-      </p>
-      <button className="primary" disabled={disabled || tags.length > MAX_TOPIC_TAGS}>
-        {t("保存追踪目标")} <Icon name="arrow" size={16} />
+      </p>}
+      <button className="primary" disabled={!canSave}>
+        {t(mode === "create" ? "创建主题" : "保存修改")} <Icon name="arrow" size={16} />
       </button>
     </form>
   );

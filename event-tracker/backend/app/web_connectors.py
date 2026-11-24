@@ -16,13 +16,13 @@ import tempfile
 from urllib.parse import parse_qs, quote_plus, urljoin, urlsplit
 import xml.etree.ElementTree as ET
 
-from dotenv import set_key
 import httpx
 
 from .core import AppError
 from .domain import now
 from .evidence_processing import canonicalize_url, clean_text, parse_published_at
 from .llm import is_local_model_url, valid_model_url
+from .secret_storage import save_env
 
 _MAX_PAGE_BYTES = 2 * 1024 * 1024  # 2 MB cap per fetched HTML/Markdown document
 _MAX_SNAPSHOT_CHARS = 64_000
@@ -1422,19 +1422,7 @@ def save_search_settings(settings, body) -> dict:
         pending_attrs['web_fetch_jina_fallback'] = bool(fb)
         updates['WEB_FETCH_JINA_FALLBACK'] = 'true' if fb else 'false'
 
-    target = Path(settings.env_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix='.search-', suffix='.tmp')
-    os.close(fd)
-    try:
-        Path(temporary).write_text(target.read_text(encoding='utf-8') if target.exists() else '', encoding='utf-8')
-        for k, v in updates.items():
-            set_key(temporary, k, v)
-        os.replace(temporary, target)
-    finally:
-        if Path(temporary).exists():
-            Path(temporary).unlink(missing_ok=True)
-
+    save_env(settings.env_path, updates)
     for attr, val in pending_attrs.items():
         setattr(settings, attr, val)
     return search_settings_status(settings)

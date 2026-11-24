@@ -276,6 +276,7 @@ class ModelDiscoveryInput(Model):
 class RunInput(Model):
     fixture_batch_id: str = Field(default='1', min_length=1, max_length=100)
     provider: Literal['mock', 'qwen'] | None = None
+    agent_mode: bool = False
     as_of: AwareDatetime | None = None
     prefilter_enabled: bool = False
     near_duplicate_enabled: bool = True

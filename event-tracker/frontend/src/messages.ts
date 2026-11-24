@@ -552,6 +552,8 @@ export const messages: Record<
   已取消: ["Cancelled", "已取消"],
   规则演示: ["Rules demo", "規則演示"],
   模型分析: ["Model analysis", "模型分析"],
+  "本次使用 Agent 模式": ["Use Agent mode for this run", "本次使用 Agent 模式"],
+  "Agent 模式": ["Agent mode", "Agent 模式"],
   人工审核: ["Human review", "人工稽核"],
   即时提醒: ["Immediate alert", "即時提醒"],
   更新汇总: ["Digest", "更新彙總"],

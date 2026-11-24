@@ -97,7 +97,9 @@ Each run writes `report.json` with processing outcomes and counts, plus `review.
 
 ## Model setup
 
-Open **模型配置**, enter your compatible HTTPS API base URL or local Ollama loopback URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. Alternatively copy `.env.example` to `.env`, fill the legacy `QWEN_API_KEY`, `QWEN_BASE_URL` and `QWEN_MODEL` names, and restart. The provider identifier qwen is retained for compatibility; the actual model comes from configuration. Missing configuration is rejected before queuing. Credentials remain in the backend; `.env` is ignored by Git.
+Open **模型配置**, enter your compatible HTTPS API base URL or local Ollama loopback URL and key, use **读取可用模型** to choose an actual API model ID, then save and test. Saving applies to later runs immediately. The provider identifier `qwen` is retained for compatibility. Missing configuration is rejected before queuing.
+
+On Windows, TraceRadar saves model and search keys as DPAPI-encrypted values in the Git-ignored `.env`. Startup converts existing plaintext keys in that file. The encrypted values belong to the Windows account that saved them, so enter your own keys when moving to another account or computer. You can also supply `QWEN_API_KEY`, `BOCHA_API_KEY`, `TAVILY_API_KEY` and `JINA_API_KEY` through the backend process environment. Use that option for keys on other operating systems.
 
 Adapter follows [Alibaba Cloud Chat Completions](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions) and [structured output documentation](https://www.alibabacloud.com/help/en/model-studio/qwen-structured-output). JSON mode is followed by Pydantic validation and State Manager reference/ownership checks. Network/temporary failures have at most 2 attempts; authentication fails immediately. Invalid JSON/schema has at most one repair attempt. No Mock fallback occurs.
 

@@ -2,9 +2,10 @@
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from .core import AppError
-from .domain import uid, now
+from .domain import uid, now, unique_topic_tags
 from .llm import PROMPT_VERSION
 
 
@@ -449,6 +450,241 @@ class Repository:
                            FROM notifications n JOIN transitions t ON t.id=n.transition_id
                            JOIN runs r ON r.id=t.run_id WHERE n.event_id=?''', (identity,))]
         return dict(event=event, history=history, evidence=evidence, updates=updates, reviews=self.reviews(event['topic_id'], identity))
+
+    def patch_event(self, identity, changes):
+        with self.connection(True) as db:
+            row = db.execute('SELECT data FROM events WHERE id=?', (identity,)).fetchone()
+            if not row:
+                raise AppError('NOT_FOUND', 'Event not found.', 404)
+            existing = json.loads(row[0])
+            topic_id = existing['topic_id']
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before editing events.')
+            topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+            topic = json.loads(topic_row[0]) if topic_row else {'topic_id': topic_id}
+            before_title = existing['title']
+            new_title = changes['title'].strip() if isinstance(changes.get('title'), str) else before_title
+            if not new_title:
+                raise AppError('INVALID_TITLE', 'Event title cannot be empty.', 422)
+            title_changed = new_title != before_title
+            if changes.get('title_locked') is not None:
+                title_locked = bool(changes['title_locked'])
+            elif title_changed:
+                title_locked = True
+            else:
+                title_locked = bool(existing.get('title_locked'))
+            stamp = now()
+            updated = dict(
+                existing,
+                title=new_title,
+                title_locked=title_locked,
+                version=existing['version'] + (1 if title_changed else 0),
+                updated_at=stamp if title_changed else existing['updated_at'],
+            )
+            db.execute('UPDATE events SET version=?,data=? WHERE id=?', (updated['version'], dump(updated), identity))
+            if title_changed:
+                run_id, transition_id = uid(), uid()
+                run = dict(
+                    run_id=run_id, topic_id=topic_id, trigger_type='human_edit', provider='human', status='completed',
+                    fixture_batch_id='edit', model=None, prompt_version='human-edit-v1', started_at=stamp, completed_at=stamp,
+                    counts={'committed': 1}, error=None, snapshot={'topic': topic, 'sources': []},
+                )
+                transition = dict(
+                    transition_id=transition_id, event_id=identity, run_id=run_id,
+                    before_state=existing['state'], after_state=existing['state'],
+                    before_title=before_title, after_title=new_title,
+                    evidence_ids=[], idempotency_key=f'human-title:{identity}:{transition_id}',
+                    impact_reason=f'人工调整事件标题：{before_title} → {new_title}'[:280],
+                    committed_at=stamp,
+                )
+                notification = dict(
+                    notification_id=uid(), topic_id=topic_id, event_id=identity, transition_id=transition_id,
+                    priority='low', action='record_only', reason_codes=['title_updated', 'human_edit'], created_at=stamp,
+                )
+                step = dict(
+                    step_id=uid(), run_id=run_id, sequence=1, step_name='human_edit_event', evidence_id=None,
+                    status='completed', attempt=1, input_refs=[identity], output_refs=[transition_id],
+                    decision={'before_title': before_title, 'after_title': new_title, 'title_locked': title_locked},
+                    error=None, started_at=stamp, completed_at=stamp,
+                )
+                db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run_id, topic_id, 'completed', None, None, dump(run)))
+                db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)',
+                           (transition_id, identity, run_id, transition['idempotency_key'], dump(transition)))
+                db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)',
+                           (notification['notification_id'], topic_id, identity, transition_id, dump(notification)))
+                db.execute('INSERT INTO steps VALUES(?,?,?,?)', (step['step_id'], run_id, 1, dump(step)))
+        return self.event_detail(identity)
+
+    def dismiss_event(self, identity, *, disposition='irrelevant', reason=None, add_exclusion=True):
+        """Remove an off-topic/unwanted event, suppress its orphaned evidence from re-ingesting, and optionally save an exclusion."""
+        with self.connection(True) as db:
+            row = db.execute('SELECT data FROM events WHERE id=?', (identity,)).fetchone()
+            if not row:
+                raise AppError('NOT_FOUND', 'Event not found.', 404)
+            event = json.loads(row[0])
+            topic_id = event['topic_id']
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before removing events.')
+            linked_ids = {
+                r[0] for r in db.execute('SELECT evidence_id FROM event_evidence WHERE event_id=?', (identity,))
+            } | set((event.get('state') or {}).get('sources') or [])
+            db.execute('DELETE FROM notifications WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM transitions WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM event_evidence WHERE event_id=?', (identity,))
+            db.execute('DELETE FROM events WHERE id=?', (identity,))
+
+            clean_reason = (reason or '').strip()[:160]
+            suppressed = 0
+            for eid in linked_ids:
+                still_linked = db.execute(
+                    'SELECT 1 FROM event_evidence ee JOIN events e ON e.id=ee.event_id WHERE e.topic_id=? AND ee.evidence_id=? LIMIT 1',
+                    (topic_id, eid),
+                ).fetchone()
+                if still_linked:
+                    continue
+                dismissed_assessment = {
+                    'evidence_id': eid,
+                    'is_relevant': False,
+                    'event_decisions': [],
+                    'dismissed_by_user': True,
+                    'dismissed_disposition': disposition,
+                    'dismissed_reason': clean_reason or event['title'],
+                }
+                changed = db.execute(
+                    "UPDATE topic_evidence SET status='completed', assessment=?, error=NULL WHERE topic_id=? AND evidence_id=?",
+                    (dump(dismissed_assessment), topic_id, eid),
+                )
+                if changed.rowcount:
+                    suppressed += 1
+
+            topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+            topic = json.loads(topic_row[0])
+            added_rule = None
+            if add_exclusion:
+                rule_text = clean_reason or (
+                    f"排除与「{event['title']}」无关内容" if disposition == 'irrelevant' else f"不再追踪「{event['title']}」"
+                )
+                rule_text = rule_text.strip()[:160]
+                if rule_text:
+                    exclusions = list(topic.get('exclusions') or [])
+                    merged = unique_topic_tags([*exclusions, rule_text])[:20]
+                    if merged != exclusions:
+                        topic['exclusions'] = merged
+                        topic['updated_at'] = now()
+                        db.execute('UPDATE topics SET data=? WHERE id=?', (dump(topic), topic_id))
+                        added_rule = rule_text
+        return {
+            'event_id': identity,
+            'topic_id': topic_id,
+            'disposition': disposition,
+            'dismissed_evidence_count': suppressed,
+            'added_exclusion': added_rule,
+            'topic': topic,
+        }
+
+    def merge_event(self, source_id, target_id, *, new_title=None, reason=None):
+        """Merge source event's grounded facts, timeline, and evidence into target event with full audit trail."""
+        if source_id == target_id:
+            raise AppError('INVALID_MERGE', 'Choose a different target event to merge into.', 422)
+        with self.connection(True) as db:
+            src_row = db.execute('SELECT data FROM events WHERE id=?', (source_id,)).fetchone()
+            tgt_row = db.execute('SELECT data FROM events WHERE id=?', (target_id,)).fetchone()
+            if not src_row or not tgt_row:
+                raise AppError('NOT_FOUND', 'Event not found.', 404)
+            source = json.loads(src_row[0])
+            target = json.loads(tgt_row[0])
+            if source['topic_id'] != target['topic_id']:
+                raise AppError('CROSS_TOPIC_EVENT', 'Cannot merge events from different topics.', 422)
+            topic_id = target['topic_id']
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                raise AppError('TOPIC_RUN_ACTIVE', 'Wait for the active run before merging events.')
+            topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+            topic = json.loads(topic_row[0]) if topic_row else {'topic_id': topic_id}
+
+            t_state = target['state']
+            s_state = source['state']
+            merged_facts = list(t_state['key_facts'])
+            seen_facts = {(f['fact'], tuple(sorted(f['evidence_ids']))) for f in merged_facts}
+            for fact in s_state['key_facts']:
+                key = (fact['fact'], tuple(sorted(fact['evidence_ids'])))
+                if key not in seen_facts:
+                    seen_facts.add(key)
+                    merged_facts.append(fact)
+
+            merged_timeline = list(t_state['timeline'])
+            seen_tl = {(item['occurred_at'], item['description'], tuple(sorted(item['evidence_ids']))) for item in merged_timeline}
+            for item in s_state['timeline']:
+                key = (item['occurred_at'], item['description'], tuple(sorted(item['evidence_ids'])))
+                if key not in seen_tl:
+                    seen_tl.add(key)
+                    merged_timeline.append(item)
+            merged_timeline.sort(key=lambda item: datetime.fromisoformat(item['occurred_at'].replace('Z', '+00:00')))
+
+            merged_sources = list(dict.fromkeys([*t_state['sources'], *s_state['sources']]))
+            merged_state = {
+                'current_status': t_state['current_status'],
+                'timeline': merged_timeline,
+                'key_facts': merged_facts,
+                'sources': merged_sources,
+            }
+
+            before_title = target['title']
+            clean_title = new_title.strip() if isinstance(new_title, str) and new_title.strip() else before_title
+            title_changed = clean_title != before_title
+            stamp, run_id, transition_id = now(), uid(), uid()
+            updated_target = dict(
+                target,
+                title=clean_title,
+                title_locked=True if title_changed else bool(target.get('title_locked')),
+                state=merged_state,
+                version=target['version'] + 1,
+                updated_at=stamp,
+            )
+
+            # Re-link source evidence to target before deleting source event
+            for row in db.execute('SELECT evidence_id, relation FROM event_evidence WHERE event_id=?', (source_id,)).fetchall():
+                db.execute('INSERT OR IGNORE INTO event_evidence VALUES(?,?,?)', (target_id, row[0], row[1]))
+            db.execute('DELETE FROM notifications WHERE event_id=?', (source_id,))
+            db.execute('DELETE FROM transitions WHERE event_id=?', (source_id,))
+            db.execute('DELETE FROM event_evidence WHERE event_id=?', (source_id,))
+            db.execute('DELETE FROM events WHERE id=?', (source_id,))
+
+            db.execute('UPDATE events SET version=?,data=? WHERE id=?',
+                       (updated_target['version'], dump(updated_target), target_id))
+            merge_note = (reason or '').strip() or f"人工合并事件「{source['title']}」"
+            run = dict(
+                run_id=run_id, topic_id=topic_id, trigger_type='human_merge', provider='human', status='completed',
+                fixture_batch_id='merge', model=None, prompt_version='human-merge-v1', started_at=stamp, completed_at=stamp,
+                counts={'committed': 1}, error=None, snapshot={'topic': topic, 'sources': []},
+            )
+            transition = dict(
+                transition_id=transition_id, event_id=target_id, run_id=run_id,
+                before_state=t_state, after_state=merged_state,
+                evidence_ids=list(dict.fromkeys(s_state['sources'])),
+                idempotency_key=f'human-merge:{source_id}:{target_id}:{transition_id}',
+                impact_reason=merge_note[:280],
+                merged_from_event_id=source_id,
+                merged_from_title=source['title'],
+                committed_at=stamp,
+                **({'before_title': before_title, 'after_title': clean_title} if title_changed else {}),
+            )
+            notification = dict(
+                notification_id=uid(), topic_id=topic_id, event_id=target_id, transition_id=transition_id,
+                priority='low', action='record_only', reason_codes=['event_merged', 'human_merge'], created_at=stamp,
+            )
+            step = dict(
+                step_id=uid(), run_id=run_id, sequence=1, step_name='human_merge_event', evidence_id=None,
+                status='completed', attempt=1, input_refs=[source_id, target_id], output_refs=[transition_id],
+                decision={'merged_from': source_id, 'merged_title': source['title'], 'reason': merge_note},
+                error=None, started_at=stamp, completed_at=stamp,
+            )
+            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run_id, topic_id, 'completed', None, None, dump(run)))
+            db.execute('INSERT INTO transitions VALUES(?,?,?,?,?)',
+                       (transition_id, target_id, run_id, transition['idempotency_key'], dump(transition)))
+            db.execute('INSERT INTO notifications VALUES(?,?,?,?,?)',
+                       (notification['notification_id'], topic_id, target_id, transition_id, dump(notification)))
+            db.execute('INSERT INTO steps VALUES(?,?,?,?)', (step['step_id'], run_id, 1, dump(step)))
+        return self.event_detail(target_id)
 
     def reviews(self, topic_id, event_id=None):
         with self.connection() as db:

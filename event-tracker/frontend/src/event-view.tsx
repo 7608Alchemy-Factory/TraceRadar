@@ -1,7 +1,7 @@
 import { ReferenceTranslation, useTranslation } from "./reference-translation";
 import { t } from "./i18n";
-import React from "react";
-import type { EventDetail, EvidenceDecision } from "./types";
+import React, { useEffect, useState } from "react";
+import type { Event, EventDetail, EvidenceDecision } from "./types";
 import {
   date,
   text,
@@ -17,12 +17,50 @@ import { EventTimeline } from "./event-timeline";
 export function EventView({
   value,
   onEvidence,
+  otherEvents = [],
+  disabled = false,
+  onPatchTitle,
+  onDismiss,
+  onMerge,
 }: {
   value: EventDetail;
   onEvidence: (id: string) => void;
+  otherEvents?: Event[];
+  disabled?: boolean;
+  onPatchTitle?: (nextTitle: string, locked?: boolean) => Promise<void>;
+  onDismiss?: (payload: {
+    disposition: "irrelevant" | "unwanted";
+    reason: string;
+    add_exclusion: boolean;
+  }) => Promise<void>;
+  onMerge?: (payload: {
+    target_event_id: string;
+    new_title?: string;
+    reason?: string;
+  }) => Promise<void>;
 }) {
   const tr = useTranslation();
   const e = value.event;
+  const [panel, setPanel] = useState<"none" | "rename" | "merge" | "dismiss">("none");
+  const [draftTitle, setDraftTitle] = useState(e.title);
+  const [lockTitle, setLockTitle] = useState(true);
+  const [disposition, setDisposition] = useState<"irrelevant" | "unwanted">("irrelevant");
+  const [dismissReason, setDismissReason] = useState("");
+  const [addExclusion, setAddExclusion] = useState(true);
+  const [mergeTargetId, setMergeTargetId] = useState(otherEvents[0]?.event_id ?? "");
+  const [mergeTitle, setMergeTitle] = useState("");
+  const [mergeReason, setMergeReason] = useState("");
+
+  useEffect(() => {
+    setDraftTitle(e.title);
+    setLockTitle(true);
+    setPanel("none");
+    setDismissReason("");
+    setMergeTitle("");
+    setMergeReason("");
+    setMergeTargetId(otherEvents[0]?.event_id ?? "");
+  }, [e.event_id, e.title]);
+
   const latestTransition = value.history[value.history.length - 1];
   const latestRunTransitions = latestTransition?.run_id
     ? value.history.filter((h) => h.run_id === latestTransition.run_id)
@@ -53,9 +91,55 @@ export function EventView({
   return (
     <div>
       <div className="event-lead">
-        <span className="meta">
-          {t("版本 v")}{e.version} {t("· 更新于")} {date(e.updated_at)}
-        </span>
+        <div className="row-between">
+          <span className="meta">
+            {t("版本 v")}{e.version} {t("· 更新于")} {date(e.updated_at)}
+            {e.title_locked && <span className="tag quiet lock-badge">{t("标题已锁定")}</span>}
+          </span>
+          {(onPatchTitle || onMerge || onDismiss) && (
+            <div className="event-manage-bar">
+              {onPatchTitle && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    setDraftTitle(e.title);
+                    setLockTitle(true);
+                    setPanel(panel === "rename" ? "none" : "rename");
+                  }}
+                >
+                  {t("修改标题")}
+                </button>
+              )}
+              {onMerge && otherEvents.length > 0 && (
+                <button
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    setMergeTargetId((prev) =>
+                      otherEvents.some((x) => x.event_id === prev)
+                        ? prev
+                        : otherEvents[0]?.event_id ?? "",
+                    );
+                    setPanel(panel === "merge" ? "none" : "merge");
+                  }}
+                >
+                  {t("合并到其他事件")}
+                </button>
+              )}
+              {onDismiss && (
+                <button
+                  type="button"
+                  className="danger-ghost"
+                  disabled={disabled}
+                  onClick={() => setPanel(panel === "dismiss" ? "none" : "dismiss")}
+                >
+                  {t("移除事件")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
         <h2>{tr(title(e.title))}</h2>
         <div
           className={`tag ${e.state.current_status === "patched" ? "green" : ""}`}
@@ -63,6 +147,155 @@ export function EventView({
           <strong>{t("当前状态 ·")} </strong>
           {tr(status(e.state.current_status))}
         </div>
+        {panel === "rename" && onPatchTitle && (
+          <form
+            className="event-manage-panel form-stack"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              if (!draftTitle.trim()) return;
+              void onPatchTitle(draftTitle.trim(), lockTitle).then(() => setPanel("none"));
+            }}
+          >
+            <label>
+              {t("新的事件标题")}
+              <input
+                required
+                maxLength={200}
+                value={draftTitle}
+                onChange={(ev) => setDraftTitle(ev.target.value)}
+              />
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={lockTitle}
+                onChange={(ev) => setLockTitle(ev.target.checked)}
+              />
+              {t("锁定标题（后续模型更新不再自动改写此标题）")}
+            </label>
+            <div className="action-row">
+              <button className="primary" disabled={disabled || !draftTitle.trim()}>
+                {t("保存标题")}
+              </button>
+              <button type="button" onClick={() => setPanel("none")}>
+                {t("取消")}
+              </button>
+            </div>
+          </form>
+        )}
+        {panel === "merge" && onMerge && otherEvents.length > 0 && (
+          <form
+            className="event-manage-panel form-stack"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              if (!mergeTargetId) return;
+              void onMerge({
+                target_event_id: mergeTargetId,
+                ...(mergeTitle.trim() ? { new_title: mergeTitle.trim() } : {}),
+                ...(mergeReason.trim() ? { reason: mergeReason.trim() } : {}),
+              }).then(() => setPanel("none"));
+            }}
+          >
+            <label>
+              {t("将当前事件的事实、时间线与证据合并到")}
+              <select
+                value={mergeTargetId}
+                onChange={(ev) => setMergeTargetId(ev.target.value)}
+              >
+                {otherEvents.map((other) => (
+                  <option key={other.event_id} value={other.event_id}>
+                    {other.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              {t("合并后的新标题（可选，留空保留目标事件原标题）")}
+              <input
+                maxLength={200}
+                value={mergeTitle}
+                onChange={(ev) => setMergeTitle(ev.target.value)}
+                placeholder={otherEvents.find((x) => x.event_id === mergeTargetId)?.title ?? ""}
+              />
+            </label>
+            <label>
+              {t("合并说明（可选）")}
+              <input
+                maxLength={240}
+                value={mergeReason}
+                onChange={(ev) => setMergeReason(ev.target.value)}
+                placeholder={t("例如：同一转会期的重复拆条，合并追踪")}
+              />
+            </label>
+            <div className="action-row">
+              <button className="primary" disabled={disabled || !mergeTargetId}>
+                {t("确认合并")}
+              </button>
+              <button type="button" onClick={() => setPanel("none")}>
+                {t("取消")}
+              </button>
+            </div>
+          </form>
+        )}
+        {panel === "dismiss" && onDismiss && (
+          <form
+            className="event-manage-panel danger form-stack"
+            onSubmit={(ev) => {
+              ev.preventDefault();
+              void onDismiss({
+                disposition,
+                reason: dismissReason.trim(),
+                add_exclusion: addExclusion,
+              });
+            }}
+          >
+            <div className="action-row">
+              <label className="check-row">
+                <input
+                  type="radio"
+                  name="dismiss-disposition"
+                  checked={disposition === "irrelevant"}
+                  onChange={() => setDisposition("irrelevant")}
+                />
+                {t("不相关 / 误报")}
+              </label>
+              <label className="check-row">
+                <input
+                  type="radio"
+                  name="dismiss-disposition"
+                  checked={disposition === "unwanted"}
+                  onChange={() => setDisposition("unwanted")}
+                />
+                {t("不想继续追踪")}
+              </label>
+            </div>
+            <label>
+              {t("原因说明（将作为长期排除规则反馈给后续检查）")}
+              <input
+                maxLength={160}
+                value={dismissReason}
+                onChange={(ev) => setDismissReason(ev.target.value)}
+                placeholder={t("例如：排除无畏契约分部，仅追踪英雄联盟 LPL 分部")}
+              />
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={addExclusion}
+                onChange={(ev) => setAddExclusion(ev.target.checked)}
+              />
+              {t("沉淀为该主题的长期排除规则（可在编辑目标中随时撤回）；原新闻会保留为已排除，下次检查不重复建档")}
+            </label>
+            <div className="action-row">
+              <button className="danger-button" disabled={disabled}>
+                {t("确认移除事件")}
+              </button>
+              <button type="button" onClick={() => setPanel("none")}>
+                {t("取消")}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
       <EventTimeline value={value} onEvidence={onEvidence} />
       <div className="event-detail-grid">
@@ -118,12 +351,22 @@ export function EventView({
                 <details className="history-row" key={h.transition_id}>
                   <summary>
                     <span>
-                      {status(h.before_state?.current_status ?? t("新事件"))}{" "}
-                      <span className="muted">→</span>{" "}
-                      {status(h.after_state.current_status)}
+                      {h.before_title && h.after_title ? (
+                        <>
+                          {t("标题变更：")}
+                          {h.before_title} <span className="muted">→</span> {h.after_title}
+                        </>
+                      ) : (
+                        <>
+                          {status(h.before_state?.current_status ?? t("新事件"))}{" "}
+                          <span className="muted">→</span>{" "}
+                          {status(h.after_state.current_status)}
+                        </>
+                      )}
                     </span>
                     <time>{date(h.committed_at)}</time>
                   </summary>
+                  {h.impact_reason && <p className="hint">{tr(h.impact_reason)}</p>}
                   {added.map((f, i) => (
                     <p className="diff-added" key={i}>
                       ＋ {tr(text(f.fact))}

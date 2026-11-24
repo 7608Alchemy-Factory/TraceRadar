@@ -179,6 +179,7 @@ def test_web_search_validation_and_bocha_adapter(tmp_path, monkeypatch):
         search_provider='auto',
         bocha_api_key='sk-test-bocha-key',
         bocha_base_url='https://api.bochaai.com/v1',
+        tavily_api_key='',
     )
     router = ConnectorRouter(st.fixture_path, st.corpus_root, settings=st)
     items = router.fetch(
@@ -397,7 +398,7 @@ def test_redteam_p0_repeat_web_search_custom_source_and_webpage_revert(tmp_path,
             'error': None,
         }
 
-    st = Settings(database_path=str(tmp_path / 'p0.db'), env_path=tmp_path / '.env', search_provider='bocha', bocha_api_key='sk-test')
+    st = Settings(database_path=str(tmp_path / 'p0.db'), env_path=tmp_path / '.env', search_provider='bocha', bocha_api_key='sk-test', tavily_api_key='')
     with TestClient(create_app(st), base_url='http://127.0.0.1:5173') as client:
         tid = client.post(
             '/api/topics',
@@ -578,12 +579,13 @@ def test_watchlist_no_mixed_lang_concat_ai_verdict_ranking_and_ja_ko_routing(mon
     """
     from app.connectors import recommend_sources
 
-    # (3) JA/KO auto-routing even when Japanese query contains Kanji (\u4e00-\u9fff)
+    # (3) JA/KO auto-routing: local Bing/Google News first (never China-only Bocha), EN routes to Tavily, ZH routes to Bocha
     st_bocha = Settings(search_provider='auto', bocha_api_key='sk-b', tavily_api_key='')
     st_both = Settings(search_provider='auto', bocha_api_key='sk-b', tavily_api_key='tvly-t')
     assert wc_mod._resolve_active_search_provider(st_bocha, {'query': 'AI 数学 ニュース'})[0] == 'free'
-    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'AI 数学 ニュース'})[0] == 'tavily'
-    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'GEN.G 리계약 2026'})[0] == 'tavily'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'AI 数学 ニュース'})[0] == 'free'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'GEN.G 리계약 2026'})[0] == 'free'
+    assert wc_mod._resolve_active_search_provider(st_both, {'query': 'Gen.G LCK roster 2027', 'search_language': 'en-US'})[0] == 'tavily'
     assert wc_mod._resolve_active_search_provider(st_both, {'query': '香港麦当劳 优惠'})[0] == 'bocha'
 
     # (1) Mixed topic '两大AI厂商 P vs NP 与千禧年难题进展' -> English entity 'Exponential Time Hypothesis' gets 'P vs NP ...' (en-US)
@@ -652,6 +654,215 @@ def test_watchlist_no_mixed_lang_concat_ai_verdict_ranking_and_ja_ko_routing(mon
     assert by_id[approve_sid]['ai_verdict'] == 'approve'
     assert by_id[skip_sid]['ai_verdict'] == 'skip'
     assert by_id[ai_sugg_sid]['ai_verdict'] == 'approve'
+
+
+def test_tavily_denoising_ko_local_first_and_skip_social_web_fetch(monkeypatch):
+    """Verify: (1) Tavily always excludes tavily.com and uses topic='news'; (2) KO/JA runs local Bing/Google first
+    and tops up with Tavily only when <3 results; (3) enrich_items_with_web_fetch skips video/login-wall hosts.
+    """
+    captured_tavily = []
+
+    def fake_post(url, headers=None, json=None, timeout=None, **kw):
+        captured_tavily.append((url, json))
+        return httpx.Response(
+            200,
+            json={
+                'results': [
+                    {
+                        'url': 'https://example.org/kr-topup-1',
+                        'title': 'Gen.G 2027 LCK Topup',
+                        'content': 'A' * 600,
+                        'published_date': '2026-11-23T09:00:00Z',
+                    }
+                ]
+            },
+        )
+
+    monkeypatch.setattr(wc_mod.httpx, 'post', fake_post)
+    st = Settings(search_provider='auto', bocha_api_key='sk-b', tavily_api_key='tvly-t')
+    router = ConnectorRouter(st.fixture_path, st.corpus_root, settings=st)
+
+    # Mock local free search to return only 1 item -> triggers Tavily top-up for KO
+    monkeypatch.setattr(
+        router.web_search,
+        '_fetch_free_bing_and_google',
+        lambda *a, **kw: (
+            [
+                {
+                    'title': '젠지 시우 영입',
+                    'url': 'https://news.example.kr/geng-1',
+                    'content': 'B' * 600,
+                    'published_at': '2026-11-24T01:00:00Z',
+                }
+            ],
+            'free_bing_rss',
+        ),
+    )
+    ko_items = router.fetch(
+        {
+            'source_id': 'ko_geng',
+            'name': 'KO Gen.G',
+            'type': 'web_search',
+            'endpoint': 'search://geng',
+            'config': {'query': '젠지 LCK 이적', 'search_language': 'ko', 'recency_days': 90, 'max_items': 5, 'fetch_full_text': False},
+        },
+        'live',
+    )
+    assert len(ko_items) == 2
+    assert router.last_fetch_stats['provider_used'] == 'free_bing_rss+tavily'
+    assert captured_tavily[-1][1]['topic'] == 'news'
+    assert 'tavily.com' in captured_tavily[-1][1]['exclude_domains']
+
+    # Skip web_fetch on video/login-wall hosts (keep snippet intact without fetching login chrome)
+    called_urls = []
+    monkeypatch.setattr(wc_mod, 'web_fetch', lambda url, **kw: called_urls.append(url) or {'ok': True, 'content': 'X' * 500, 'method': 'direct_httpx'})
+    be = router.web_search.build_evidence
+    sample = [
+        be(source_id='s1', external_id='u1', url='https://www.instagram.com/reel/abc', title='IG post', content='Clean snippet', published_at='2026-11-24T00:00:00Z'),
+        be(source_id='s1', external_id='u2', url='https://www.youtube.com/watch?v=123', title='YT clip', content='YT snippet', published_at='2026-11-24T00:00:00Z'),
+        be(source_id='s1', external_id='u3', url='https://news.jkn.co.kr/post/111', title='KR news', content='Short', published_at='2026-11-24T00:00:00Z'),
+    ]
+    _, stats = wc_mod.enrich_items_with_web_fetch(
+        sample,
+        validate_url=router.web_search.validate_url,
+        build_evidence=be,
+    )
+    assert called_urls == ['https://news.jkn.co.kr/post/111']
+    assert stats['fulltext_attempted'] == 1
+
+
+def test_event_rename_lock_dismiss_merge_and_source_patch(tmp_path, monkeypatch):
+    """End-to-end verification of:
+    - PATCH /api/events/{id}: rename + title_locked + before_title/after_title transition
+    - StateManager proposed_title evolution (applies when unlocked, blocked when title_locked)
+    - POST /api/events/{id}/dismiss: removes event, appends topic exclusion without mutating description,
+      marks orphaned evidence completed+irrelevant so re-running does NOT recreate the event
+    - POST /api/events/{id}/merge: merges facts/timeline/sources into target and deletes source event
+    - PATCH /api/sources/{id}: edits web_search query & updates endpoint cleanly
+    """
+    from app.domain import Assessment, Association, EventState, Fact, TimelineItem
+    from app.llm import MockProvider
+
+    st = Settings(database_path=str(tmp_path / 'evt.db'), env_path=tmp_path / '.env')
+    with TestClient(create_app(st), base_url='http://127.0.0.1:5173') as client:
+        tid = client.post(
+            '/api/topics',
+            json={'title': 'ExampleSoft Security', 'description': 'Track ExampleSoft vulnerabilities only.'},
+        ).json()['topic_id']
+        # Register & patch a web_search source
+        reg = client.post(
+            '/api/sources',
+            json={
+                'source_id': 'ws_edit_test',
+                'name': 'Initial query',
+                'type': 'web_search',
+                'endpoint': 'search://BLG',
+                'config': {'query': 'BLG 转会', 'search_language': 'zh-CN'},
+            },
+        )
+        assert reg.status_code == 201
+        patched_src = client.patch(
+            '/api/sources/ws_edit_test',
+            json={'name': 'Fixed query', 'config': {'query': 'BLG LPL 转会', 'search_language': 'zh-CN'}},
+        )
+        assert patched_src.status_code == 200
+        assert patched_src.json()['config']['query'] == 'BLG LPL 转会'
+        assert 'LPL' in patched_src.json()['endpoint']
+
+        # Approve fixture sources ('vendor', 'research') and run batch 1 & 2 (creates Vulnerability A and Vulnerability B)
+        ap = client.put(f'/api/topics/{tid}/sources', json={'approved_source_ids': ['vendor', 'research']})
+        assert ap.status_code == 200
+        for batch_id in ('1', '2'):
+            r = client.post(f'/api/topics/{tid}/runs', json={'fixture_batch_id': batch_id, 'provider': 'mock'})
+            assert r.status_code == 202
+            _wait_run(client, r.json()['run_id'])
+
+        dash = client.get(f'/api/topics/{tid}/dashboard').json()
+        events = dash['events']
+        assert len(events) >= 2
+        ev_a = next(e for e in events if 'vulnerability A' in e['title'])
+        ev_b = next(e for e in events if 'vulnerability B' in e['title'])
+
+        # 1. Unlocked event: model proposed_title evolves title on major_milestone and records before_title/after_title
+        orig_assess = MockProvider.assess
+
+        def assess_with_proposed_title(self, topic, events_in, evidence, sources):
+            a = orig_assess(self, topic, events_in, evidence, sources)
+            if a.association.event_id == ev_a['event_id'] and a.novelty == 'new_fact':
+                return a.model_copy(update={'proposed_title': 'ExampleSoft 漏洞 A（已发布补丁）'})
+            return a
+
+        monkeypatch.setattr(MockProvider, 'assess', assess_with_proposed_title)
+        r_evolve = client.post(f'/api/topics/{tid}/runs', json={'fixture_batch_id': '3', 'provider': 'mock'})
+        assert r_evolve.status_code == 202
+        _wait_run(client, r_evolve.json()['run_id'])
+        ev_a_evolved = client.get(f"/api/events/{ev_a['event_id']}").json()
+        assert ev_a_evolved['event']['title'] == 'ExampleSoft 漏洞 A（已发布补丁）'
+        assert any(
+            h.get('before_title') == 'ExampleSoft vulnerability A'
+            and h.get('after_title') == 'ExampleSoft 漏洞 A（已发布补丁）'
+            for h in ev_a_evolved['history']
+        )
+
+        # 2. User rename locks title (title_locked=True) + records human audit transition
+        ren = client.patch(f"/api/events/{ev_a['event_id']}", json={'title': 'ExampleSoft 漏洞 A（用户锁定标题）'})
+        assert ren.status_code == 200
+        assert ren.json()['event']['title'] == 'ExampleSoft 漏洞 A（用户锁定标题）'
+        assert ren.json()['event']['title_locked'] is True
+        assert any(h.get('after_title') == 'ExampleSoft 漏洞 A（用户锁定标题）' for h in ren.json()['history'])
+
+        # 3. Dismiss ev_b as irrelevant -> removed, exclusion saved, description untouched, re-run does NOT recreate it
+        orig_desc = dash['topic']['description']
+        dis = client.post(
+            f"/api/events/{ev_b['event_id']}/dismiss",
+            json={'disposition': 'irrelevant', 'reason': '排除漏洞 B 相关噪音', 'add_exclusion': True},
+        )
+        assert dis.status_code == 200
+        assert '排除漏洞 B 相关噪音' in dis.json()['topic']['exclusions']
+        assert dis.json()['topic']['description'] == orig_desc
+        assert client.get(f"/api/events/{ev_b['event_id']}").status_code == 404
+
+        # Re-running batch 2 must skip the dismissed evidence and NOT recreate ev_b
+        r_re = client.post(f'/api/topics/{tid}/runs', json={'fixture_batch_id': '2', 'provider': 'mock'})
+        assert r_re.status_code == 202
+        _wait_run(client, r_re.json()['run_id'])
+        events_after_dismiss = client.get(f'/api/topics/{tid}/dashboard').json()['events']
+        assert not any('vulnerability B' in e['title'] for e in events_after_dismiss)
+
+        # 4. Create a manual second event and merge it into ev_a
+        client.post('/api/sources', json={'source_id': 'manual_merge', 'name': 'Manual', 'type': 'manual', 'endpoint': 'manual://notes', 'config': {}})
+        client.put(f'/api/topics/{tid}/sources', json={'approved_source_ids': ['vendor', 'research', 'manual_merge']})
+        monkeypatch.setattr(MockProvider, 'assess', orig_assess)
+        r_m = client.post(
+            f'/api/topics/{tid}/runs',
+            json={
+                'fixture_batch_id': 'empty',
+                'provider': 'mock',
+                'manual_items': [
+                    {
+                        'source_id': 'manual_merge',
+                        'external_id': 'man-c-1',
+                        'title': 'ExampleSoft vulnerability C disclosed',
+                        'content': 'ExampleSoft vulnerability C disclosed in edge proxy.',
+                        'url': 'https://example.org/c1',
+                        'published_at': '2026-11-15T10:00:00Z',
+                    }
+                ],
+            },
+        )
+        assert r_m.status_code == 202
+        _wait_run(client, r_m.json()['run_id'])
+        events_before_merge = client.get(f'/api/topics/{tid}/dashboard').json()['events']
+        ev_c = next(e for e in events_before_merge if 'vulnerability C' in e['title'])
+        merged = client.post(
+            f"/api/events/{ev_c['event_id']}/merge",
+            json={'target_event_id': ev_a['event_id'], 'new_title': '合并后的 ExampleSoft 漏洞总览', 'reason': '同一批次漏洞合并追踪'},
+        )
+        assert merged.status_code == 200
+        assert merged.json()['event']['title'] == '合并后的 ExampleSoft 漏洞总览'
+        assert len(merged.json()['event']['state']['sources']) > len(ev_a_evolved['event']['state']['sources'])
+        assert client.get(f"/api/events/{ev_c['event_id']}").status_code == 404
+
 
 
 

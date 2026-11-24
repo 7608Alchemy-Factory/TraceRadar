@@ -498,6 +498,25 @@ def _preserve_existing_revisions(items: list[dict], existing_items: list[dict] |
     return out
 
 
+_SKIP_WEB_FETCH_HOSTS = frozenset({
+    'instagram.com',
+    'facebook.com',
+    'tiktok.com',
+    'youtube.com',
+    'youtu.be',
+    'x.com',
+    'twitter.com',
+})
+
+
+def _is_skip_web_fetch_host(url: str) -> bool:
+    try:
+        host = (urlsplit(url).hostname or '').lower().rstrip('.')
+    except ValueError:
+        return False
+    return any(host == h or host.endswith(f'.{h}') for h in _SKIP_WEB_FETCH_HOSTS)
+
+
 def enrich_items_with_web_fetch(
     items: list[dict],
     *,
@@ -527,7 +546,7 @@ def enrich_items_with_web_fetch(
     skipped_existing = 0
     for idx, item in enumerate(enriched):
         url = str(item.get('url') or '').strip()
-        if not url.startswith(('http://', 'https://')) or _is_google_news_opaque_url(url):
+        if not url.startswith(('http://', 'https://')) or _is_google_news_opaque_url(url) or _is_skip_web_fetch_host(url):
             continue
         cu = canonicalize_url(url)
         key = (str(item.get('source_id') or ''), str(item.get('external_id') or ''))
@@ -613,6 +632,32 @@ def _extract_bing_real_url(raw_link: str) -> str:
 
 _CJK_CHAR_RE = re.compile(r'[\u4e00-\u9fff]')
 _JA_KO_SCRIPT_RE = re.compile(r'[\u3040-\u30ff\uac00-\ud7af]')
+_HANGUL_RE = re.compile(r'[\uac00-\ud7af]')
+_KANA_RE = re.compile(r'[\u3040-\u30ff]')
+_TAVILY_DEFAULT_EXCLUDE_DOMAINS = ('tavily.com',)
+
+
+def _is_ko_ja_query(source_cfg: dict | None) -> bool:
+    if not source_cfg:
+        return False
+    lang = str(source_cfg.get('search_language') or source_cfg.get('language') or '').strip()
+    if lang in ('ko', 'ja'):
+        return True
+    if lang in ('zh-CN', 'zh-HK', 'en-US'):
+        return False
+    qry = str(source_cfg.get('query') or '').strip()
+    return bool(qry and _JA_KO_SCRIPT_RE.search(qry))
+
+
+def _infer_effective_language(source_cfg: dict | None, explicit_lang: str | None) -> str | None:
+    if explicit_lang:
+        return explicit_lang
+    qry = str((source_cfg or {}).get('query') or '').strip()
+    if _HANGUL_RE.search(qry):
+        return 'ko'
+    if _KANA_RE.search(qry):
+        return 'ja'
+    return None
 
 
 def _is_non_chinese_query(source_cfg: dict | None) -> bool:
@@ -626,7 +671,6 @@ def _is_non_chinese_query(source_cfg: dict | None) -> bool:
     qry = str(source_cfg.get('query') or '').strip()
     if not qry:
         return False
-    # Japanese kana or Korean hangul (even mixed with kanji) must route to international/Tavily, not China-only Bocha.
     if _JA_KO_SCRIPT_RE.search(qry):
         return True
     return not bool(_CJK_CHAR_RE.search(qry))
@@ -646,7 +690,12 @@ def _resolve_active_search_provider(settings, source_cfg: dict | None = None) ->
         return 'bocha', '博查全网搜索（Bocha API）'
     if pref == 'tavily' and has_tavily:
         return 'tavily', 'Tavily 全网搜索'
-    # Auto mode: route non-Chinese queries to Tavily or international Bing/Google+web_fetch so China-only Bocha doesn't dilute EN/KO/JA recall.
+    # Auto mode:
+    # - KO/JA: local Bing/Google News (ko-KR / ja-JP) + web_fetch first (Tavily supplements only if <3 items).
+    # - EN (other non-Chinese): Tavily when configured, else international Bing/Google+web_fetch.
+    # - ZH: Bocha when configured, else Tavily, else free.
+    if source_cfg is not None and _is_ko_ja_query(source_cfg):
+        return 'free', '日韩本地新闻优先（Bing/Google 本地版 + web_fetch，不足时 Tavily 补召回）'
     if source_cfg is not None and _is_non_chinese_query(source_cfg):
         if has_tavily:
             return 'tavily', 'Tavily 全网搜索'
@@ -765,18 +814,21 @@ class WebSearchConnector:
         after_date: str | None,
         recency_days: int | None,
         include_domains: list[str] | None,
+        exclude_domains: list[str] | None = None,
     ) -> list[dict]:
         api_key = str(getattr(self.settings, 'tavily_api_key', '') or '').strip()
         base_url = str(getattr(self.settings, 'tavily_base_url', 'https://api.tavily.com') or 'https://api.tavily.com').strip().rstrip('/')
         if not valid_model_url(base_url):
             raise AppError('INVALID_SEARCH_CONFIG', 'Tavily API 地址不合法（仅允许 HTTPS）。', 422)
         endpoint = base_url if base_url.endswith('/search') else f'{base_url}/search'
+        merged_excludes = list(dict.fromkeys([*_TAVILY_DEFAULT_EXCLUDE_DOMAINS, *(exclude_domains or [])]))[:20]
         payload: dict = {
             'query': query,
-            'topic': 'news' if (after_date or (recency_days and recency_days <= 31)) else 'general',
+            'topic': 'news',
             'max_results': max(1, min(20, count)),
             'include_answer': False,
             'include_raw_content': False,
+            'exclude_domains': merged_excludes,
         }
         if after_date:
             payload['start_date'] = after_date
@@ -920,16 +972,21 @@ class WebSearchConnector:
             raise AppError('INVALID_SOURCE', 'Web search source requires a non-empty query.', 422)
         max_items = int(cfg.get('max_items') or 8)
         max_items = max(1, min(20, max_items))
-        language = str(cfg.get('search_language') or cfg.get('language') or '').strip() or None
+        language = _infer_effective_language(cfg, str(cfg.get('search_language') or cfg.get('language') or '').strip() or None)
         after_date = str(cfg.get('after_date') or '').strip() or None
         recency_days = cfg.get('recency_days') if isinstance(cfg.get('recency_days'), int) and not isinstance(cfg.get('recency_days'), bool) else None
         include_domains = [d for d in (cfg.get('include_domains') or []) if isinstance(d, str) and _DOMAIN_RE.match(d.strip())]
+        exclude_domains = [d for d in (cfg.get('exclude_domains') or []) if isinstance(d, str) and _DOMAIN_RE.match(d.strip())]
         fetch_full_text = cfg.get('fetch_full_text', True) is not False
         as_of = kwargs.get('as_of')
         cutoff = self.to_utc_dt(as_of) if as_of else None
         after_dt_cutoff = self.to_utc_dt(f'{after_date}T00:00:00Z') if after_date and re.match(r'^20\d{2}-\d{2}-\d{2}$', after_date) else None
 
         provider, _ = _resolve_active_search_provider(self.settings, cfg)
+        global_pref = str(getattr(self.settings, 'search_provider', 'auto') or 'auto').strip().lower() if self.settings else 'auto'
+        cfg_pref = str(cfg.get('search_provider') or '').strip().lower()
+        effective_pref = cfg_pref if cfg_pref in _ALLOWED_SEARCH_PROVIDERS and cfg_pref != 'auto' else global_pref
+        has_tavily = bool(self.settings and str(getattr(self.settings, 'tavily_api_key', '') or '').strip())
         fallback_reason = None
         provider_used = provider
 
@@ -959,6 +1016,7 @@ class WebSearchConnector:
                     after_date=after_date,
                     recency_days=recency_days,
                     include_domains=include_domains or None,
+                    exclude_domains=exclude_domains or None,
                 )
             except AppError as exc:
                 if exc.code == 'SEARCH_AUTH_ERROR' or cfg.get('fallback_to_free', True) is False:
@@ -987,6 +1045,36 @@ class WebSearchConnector:
                 recency_days=recency_days,
                 as_of=as_of,
             )
+            # In auto mode for KO/JA local-first queries, supplement with denoised Tavily only when local news returns < 3 items.
+            if (
+                effective_pref == 'auto'
+                and _is_ko_ja_query(cfg)
+                and has_tavily
+                and len(raw_items) < min(3, max_items)
+            ):
+                try:
+                    extra = self._fetch_tavily(
+                        query,
+                        max_items - len(raw_items),
+                        after_date=after_date,
+                        recency_days=recency_days,
+                        include_domains=include_domains or None,
+                        exclude_domains=exclude_domains or None,
+                    )
+                    seen_urls = {canonicalize_url(str(x.get('url') or '')) for x in raw_items}
+                    added = 0
+                    for ex in extra:
+                        cu = canonicalize_url(str(ex.get('url') or ''))
+                        if cu and cu in seen_urls:
+                            continue
+                        if cu:
+                            seen_urls.add(cu)
+                        raw_items.append(ex)
+                        added += 1
+                    if added:
+                        provider_used = f'{provider_used}+tavily'
+                except AppError:
+                    pass
 
         future_filtered = 0
         before_after_filtered = 0

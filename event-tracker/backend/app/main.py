@@ -1,7 +1,7 @@
 import logging
 from threading import RLock
 from dataclasses import replace
-from urllib.parse import urlsplit
+from urllib.parse import quote_plus, urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
 from fastapi import Body, FastAPI, Header, Request
@@ -10,7 +10,11 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
+from .domain import (
+    Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, SourcePatchInput,
+    EventPatch, EventDismissInput, EventMergeInput, RunInput, ReviewResolutionInput,
+    ModelSettingsInput, ModelDiscoveryInput, uid, now,
+)
 from .repositories import Repository
 from .connectors import SOURCES, ConnectorRouter, recommend_sources, validate_source_definition
 from .llm import get_provider
@@ -240,6 +244,27 @@ def create_app(settings=None):
         validated = validate_source_definition(body.model_dump(mode='json'), config.corpus_root)
         return repo.register_source(validated)
 
+    @app.patch('/api/sources/{source_id}', response_model=Source)
+    def patch_source(source_id: str, body: SourcePatchInput):
+        if repo.active_runs():
+            raise AppError('RUN_ACTIVE', 'Wait for active runs to finish before editing sources.')
+        existing = repo.get('sources', source_id)
+        merged = dict(existing)
+        if body.name is not None:
+            merged['name'] = body.name.strip()
+        if body.config is not None:
+            cfg = dict(existing.get('config') or {})
+            cfg.update(body.config)
+            merged['config'] = cfg
+        if body.endpoint is not None:
+            merged['endpoint'] = body.endpoint.strip()
+        elif merged.get('type') == 'web_search' and isinstance((merged.get('config') or {}).get('query'), str):
+            q = merged['config']['query'].strip()
+            if q:
+                merged['endpoint'] = f"search://{quote_plus(q)}"[:900]
+        validated = validate_source_definition(merged, config.corpus_root)
+        return repo.register_source(validated)
+
     @app.put('/api/topics/{identity}/sources')
     def approve(identity: str, body: SourceApproval):
         return {'approved_sources': repo.approve(identity, body.approved_source_ids)}
@@ -316,6 +341,28 @@ def create_app(settings=None):
     @app.get('/api/events/{identity}')
     def event(identity: str):
         return repo.event_detail(identity)
+
+    @app.patch('/api/events/{identity}')
+    def patch_event(identity: str, body: EventPatch):
+        return repo.patch_event(identity, body.model_dump(exclude_none=True))
+
+    @app.post('/api/events/{identity}/dismiss')
+    def dismiss_event(identity: str, body: EventDismissInput):
+        return repo.dismiss_event(
+            identity,
+            disposition=body.disposition,
+            reason=body.reason,
+            add_exclusion=body.add_exclusion,
+        )
+
+    @app.post('/api/events/{identity}/merge')
+    def merge_event(identity: str, body: EventMergeInput):
+        return repo.merge_event(
+            identity,
+            body.target_event_id,
+            new_title=body.new_title,
+            reason=body.reason,
+        )
 
     @app.get('/api/topics/{identity}/evidence')
     def evidence_decisions(identity: str):

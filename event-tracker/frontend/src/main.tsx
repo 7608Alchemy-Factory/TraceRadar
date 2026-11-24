@@ -19,6 +19,7 @@ import type {
   Notification,
   RunDetail,
   EventDetail,
+  EventSuggestion,
   EvidenceDecision,
   ModelStatus,
   SearchStatus,
@@ -160,6 +161,20 @@ function App() {
     completion_tokens?: number;
     total_tokens?: number;
   } | null>(null);
+  const [eventSuggestions, setEventSuggestions] = useState<EventSuggestion[]>(
+    [],
+  );
+  const [editingSource, setEditingSource] = useState<{
+    source_id: string;
+    name: string;
+    type: Source["type"];
+    query: string;
+    endpoint: string;
+    search_language: string;
+    fetch_full_text: boolean;
+    registered: boolean;
+    config: Record<string, unknown>;
+  } | null>(null);
   const [newTitle, setNewTitle] = useState(""),
     [newDescription, setNewDescription] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
@@ -260,6 +275,8 @@ function App() {
     setLastLlmLangs("");
     setRecommendedLanguages([]);
     setLlmUsage(null);
+    setEventSuggestions([]);
+    setEditingSource(null);
     setWatchId("");
     setEvent(null);
     setEvidenceId("");
@@ -472,6 +489,7 @@ function App() {
       llm_summary_note?: string | null;
       llm_summary_error?: string | null;
       recommended_languages?: string[];
+      event_suggestions?: EventSuggestion[];
       llm_usage?: {
         prompt_tokens?: number;
         completion_tokens?: number;
@@ -492,6 +510,7 @@ function App() {
     setLastLlmLangs(enabled ? activeLangs.join(",") : "");
     setRecommendedLanguages(s.recommended_languages ?? []);
     setLlmUsage(s.llm_usage ?? null);
+    setEventSuggestions(s.event_suggestions ?? []);
     return s;
   }
   async function saveApprovedSources() {
@@ -629,6 +648,92 @@ function App() {
     await action(async () => {
       const detail = await api<EventDetail>(`/events/${id}`);
       if (selectedRef.current === topicId) setEvent(detail);
+    });
+  }
+  async function removeExclusion(rule: string) {
+    if (!dashboard) return;
+    const next = (dashboard.topic.exclusions ?? []).filter((x) => x !== rule);
+    await action(async () => {
+      await api(`/topics/${selected}`, json("PATCH", { exclusions: next }));
+      await refresh();
+      setTopics(await loadWorkspaceTopics());
+      setToast(t("已撤回该排除规则。"));
+    });
+  }
+  async function saveEditedSource() {
+    if (!editingSource) return;
+    await action(async () => {
+      const cleanName = editingSource.name.trim();
+      const nextConfig: Record<string, unknown> = { ...editingSource.config };
+      let nextEndpoint = editingSource.endpoint.trim();
+      if (editingSource.type === "web_search") {
+        const cleanQuery = editingSource.query.trim();
+        if (!cleanQuery) throw Error(t("搜索关键词不能为空。"));
+        nextConfig.query = cleanQuery;
+        nextConfig.fetch_full_text = editingSource.fetch_full_text;
+        if (editingSource.search_language) {
+          nextConfig.search_language = editingSource.search_language;
+        } else {
+          delete nextConfig.search_language;
+        }
+        nextEndpoint = `search://${encodeURIComponent(cleanQuery).slice(0, 800)}`;
+      } else if (editingSource.type === "rss") {
+        nextConfig.fetch_full_text = editingSource.fetch_full_text;
+      }
+      if (editingSource.registered) {
+        await api(
+          `/sources/${editingSource.source_id}`,
+          json("PATCH", {
+            name: cleanName || editingSource.source_id,
+            endpoint: nextEndpoint,
+            config: nextConfig,
+          }),
+        );
+      } else {
+        await api(
+          "/sources",
+          json("POST", {
+            source_id: editingSource.source_id,
+            name: cleanName || editingSource.source_id,
+            type: editingSource.type,
+            endpoint: nextEndpoint,
+            config: nextConfig,
+          }),
+        );
+      }
+      setEditingSource(null);
+      await refreshSources(false);
+      await refresh();
+      setToast(t("来源配置已更新，下次检查生效。"));
+    });
+  }
+  async function applyEventSuggestion(sug: EventSuggestion) {
+    await action(async () => {
+      if (sug.action === "dismiss") {
+        await api(
+          `/events/${sug.event_id}/dismiss`,
+          json("POST", {
+            disposition: "irrelevant",
+            reason: sug.reason,
+            add_exclusion: true,
+          }),
+        );
+        setToast(t("已按建议移除误报事件并记入主题排除规则。"));
+      } else if (sug.action === "merge" && sug.target_event_id) {
+        await api(
+          `/events/${sug.event_id}/merge`,
+          json("POST", {
+            target_event_id: sug.target_event_id,
+            reason: sug.reason,
+          }),
+        );
+        setToast(t("已按建议合并重复事件。"));
+      }
+      setEventSuggestions((prev) =>
+        prev.filter((item) => item.event_id !== sug.event_id),
+      );
+      await refresh();
+      setTopics(await loadWorkspaceTopics());
     });
   }
   async function resumeRun(id: string) {
@@ -1190,9 +1295,66 @@ function App() {
                     <div className="section-title">
                       <h2>{t("全部事件")}</h2>
                       <span className="meta">
-                        {t("选择一行查看事实、时间线与依据")}
+                        {t("选择一行查看事实、时间线与依据（弹窗内可改标题、合并或移除）")}
                       </span>
                     </div>
+                    {!!dashboard.topic.exclusions?.length && (
+                      <div className="exclusion-bar">
+                        <span className="exclusion-bar-label">{t("已生效排除规则：")}</span>
+                        <div className="exclusion-pills">
+                          {dashboard.topic.exclusions.map((rule) => (
+                            <span className="exclusion-pill" key={rule}>
+                              <span>{rule}</span>
+                              <button
+                                type="button"
+                                disabled={busy || running}
+                                aria-label={t("移除排除规则")}
+                                onClick={() => void removeExclusion(rule)}
+                              >
+                                ×
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {eventSuggestions.length > 0 && (
+                      <div className="ai-event-suggestions">
+                        <strong>{t("AI 审计发现以下疑似异常事件（需人工确认）")}</strong>
+                        {eventSuggestions.map((sug) => (
+                          <div className="ai-event-suggestion-row" key={`${sug.action}-${sug.event_id}`}>
+                            <span>
+                              <b>
+                                {sug.action === "merge"
+                                  ? t("建议合并：「{0}」→「{1}」", sug.event_title, sug.target_event_title ?? "")
+                                  : t("建议移除：「{0}」", sug.event_title)}
+                              </b>
+                              <small>{sug.reason}</small>
+                            </span>
+                            <div className="action-row">
+                              <button
+                                type="button"
+                                disabled={busy || running}
+                                onClick={() => void applyEventSuggestion(sug)}
+                              >
+                                {sug.action === "merge" ? t("确认合并") : t("移出并记入排除")}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() =>
+                                  setEventSuggestions((prev) =>
+                                    prev.filter((x) => x.event_id !== sug.event_id),
+                                  )
+                                }
+                              >
+                                {t("忽略")}
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                     {renderEventList()}
                   </section>
                 )}
@@ -1319,10 +1481,15 @@ function App() {
                   const renderSourceRow = (s: Source) => {
                     const isApproved = approved.includes(s.source_id);
                     const isDimmed = !isApproved && s.ai_verdict === "skip";
+                    const editable =
+                      s.type === "web_search" ||
+                      s.type === "webpage" ||
+                      s.type === "rss";
+                    const isEditing = editingSource?.source_id === s.source_id;
                     return (
+                    <div className="source-row-wrap" key={s.source_id}>
                     <label
                       className={`source-row ${isApproved ? "checked" : ""} ${isDimmed ? "dimmed" : ""}`}
-                      key={s.source_id}
                     >
                       <input
                         type="checkbox"
@@ -1358,6 +1525,38 @@ function App() {
                         </small>
                       </span>
                       <span className="source-tags">
+                        {editable && (
+                          <button
+                            type="button"
+                            className="inline-edit-btn"
+                            disabled={busy || running}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (isEditing) {
+                                setEditingSource(null);
+                                return;
+                              }
+                              const cfg = (s.config ?? {}) as Record<string, unknown>;
+                              setEditingSource({
+                                source_id: s.source_id,
+                                name: s.name,
+                                type: s.type,
+                                query: typeof cfg.query === "string" ? cfg.query : "",
+                                endpoint: s.endpoint,
+                                search_language:
+                                  typeof cfg.search_language === "string"
+                                    ? cfg.search_language
+                                    : "",
+                                fetch_full_text: cfg.fetch_full_text !== false,
+                                registered: s.registered !== false,
+                                config: cfg,
+                              });
+                            }}
+                          >
+                            {isEditing ? t("收起") : t("改词")}
+                          </button>
+                        )}
                         {!isApproved && s.ai_verdict === "approve" && (
                           <span className="tag ai-pick">{t("AI 推荐")}</span>
                         )}
@@ -1390,6 +1589,95 @@ function App() {
                         </span>
                       </span>
                     </label>
+                    {isEditing && editingSource && (
+                      <form
+                        className="source-edit-panel form-stack"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          void saveEditedSource();
+                        }}
+                      >
+                        <label>
+                          {t("显示名称")}
+                          <input
+                            required
+                            maxLength={200}
+                            value={editingSource.name}
+                            onChange={(e) =>
+                              setEditingSource({ ...editingSource, name: e.target.value })
+                            }
+                          />
+                        </label>
+                        {editingSource.type === "web_search" ? (
+                          <>
+                            <label>
+                              {t("搜索关键词")}
+                              <input
+                                required
+                                maxLength={200}
+                                value={editingSource.query}
+                                onChange={(e) =>
+                                  setEditingSource({ ...editingSource, query: e.target.value })
+                                }
+                              />
+                            </label>
+                            <label>
+                              {t("检索语种")}
+                              <select
+                                value={editingSource.search_language}
+                                onChange={(e) =>
+                                  setEditingSource({
+                                    ...editingSource,
+                                    search_language: e.target.value,
+                                  })
+                                }
+                              >
+                                <option value="">{t("自动判断")}</option>
+                                {SEARCH_LANGUAGE_OPTIONS.map((opt) => (
+                                  <option key={opt.code} value={opt.code}>
+                                    {t(opt.label)} ({opt.code})
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="check-row">
+                              <input
+                                type="checkbox"
+                                checked={editingSource.fetch_full_text}
+                                onChange={(e) =>
+                                  setEditingSource({
+                                    ...editingSource,
+                                    fetch_full_text: e.target.checked,
+                                  })
+                                }
+                              />
+                              {t("仅对新文章并发抓取正文（web_fetch，失败自动回退摘要）")}
+                            </label>
+                          </>
+                        ) : (
+                          <label>
+                            {editingSource.type === "webpage" ? t("目标网页 URL") : t("订阅地址")}
+                            <input
+                              type="url"
+                              required
+                              value={editingSource.endpoint}
+                              onChange={(e) =>
+                                setEditingSource({ ...editingSource, endpoint: e.target.value })
+                              }
+                            />
+                          </label>
+                        )}
+                        <div className="action-row">
+                          <button className="primary" disabled={busy || running}>
+                            {t("保存修改")}
+                          </button>
+                          <button type="button" onClick={() => setEditingSource(null)}>
+                            {t("取消")}
+                          </button>
+                        </div>
+                      </form>
+                    )}
+                    </div>
                     );
                   };
                   const hasRelevantEvidence = evidence.some(
@@ -1581,6 +1869,43 @@ function App() {
                               </span>
                             </div>
                             <p>{llmSummaryNote}</p>
+                          </div>
+                        )}
+                        {eventSuggestions.length > 0 && (
+                          <div className="ai-event-suggestions">
+                            <strong>{t("AI 审计发现以下疑似异常事件（需人工确认）")}</strong>
+                            {eventSuggestions.map((sug) => (
+                              <div className="ai-event-suggestion-row" key={`${sug.action}-${sug.event_id}`}>
+                                <span>
+                                  <b>
+                                    {sug.action === "merge"
+                                      ? t("建议合并：「{0}」→「{1}」", sug.event_title, sug.target_event_title ?? "")
+                                      : t("建议移除：「{0}」", sug.event_title)}
+                                  </b>
+                                  <small>{sug.reason}</small>
+                                </span>
+                                <div className="action-row">
+                                  <button
+                                    type="button"
+                                    disabled={busy || running}
+                                    onClick={() => void applyEventSuggestion(sug)}
+                                  >
+                                    {sug.action === "merge" ? t("确认合并") : t("移出并记入排除")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() =>
+                                      setEventSuggestions((prev) =>
+                                        prev.filter((x) => x.event_id !== sug.event_id),
+                                      )
+                                    }
+                                  >
+                                    {t("忽略")}
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         )}
                         {watchlistSources.length > 0 && (
@@ -1986,7 +2311,58 @@ function App() {
       )}
       {event && (
         <Modal title={t("事件档案")} onClose={() => setEvent(null)} wide sheet>
-          <EventView value={event} onEvidence={setEvidenceId} />
+          <EventView
+            value={event}
+            onEvidence={setEvidenceId}
+            otherEvents={(dashboard?.events ?? []).filter(
+              (item) => item.event_id !== event.event.event_id,
+            )}
+            disabled={busy || running}
+            onPatchTitle={async (nextTitle, locked) => {
+              await action(async () => {
+                const updated = await api<EventDetail>(
+                  `/events/${event.event.event_id}`,
+                  json("PATCH", { title: nextTitle, title_locked: locked }),
+                );
+                setEvent(updated);
+                await refresh();
+                setToast(t("事件标题已更新。"));
+              });
+            }}
+            onDismiss={async (payload) => {
+              await action(async () => {
+                await api(
+                  `/events/${event.event.event_id}/dismiss`,
+                  json("POST", payload),
+                );
+                setEventSuggestions((prev) =>
+                  prev.filter((x) => x.event_id !== event.event.event_id),
+                );
+                setEvent(null);
+                await refresh();
+                setTopics(await loadWorkspaceTopics());
+                setToast(
+                  payload.add_exclusion
+                    ? t("已移除事件并加入主题排除规则，原新闻不会重复建档。")
+                    : t("已移除事件，原新闻已标为已排除。"),
+                );
+              });
+            }}
+            onMerge={async (payload) => {
+              await action(async () => {
+                const merged = await api<EventDetail>(
+                  `/events/${event.event.event_id}/merge`,
+                  json("POST", payload),
+                );
+                setEventSuggestions((prev) =>
+                  prev.filter((x) => x.event_id !== event.event.event_id),
+                );
+                setEvent(merged);
+                await refresh();
+                setToast(t("已合并事件，事实与时间线已整合。"));
+              });
+            }}
+          />
         </Modal>
       )}
       {selectedEvidence && (

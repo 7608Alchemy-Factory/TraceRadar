@@ -1,6 +1,7 @@
 // API responses are defined by backend/app/domain.py. Keep these projections aligned.
 export type Topic = {
   tags?: string[];
+  exclusions?: string[];
   topic_id: string;
   title: string;
   description: string;
@@ -39,10 +40,19 @@ export type Event = {
   event_id: string;
   topic_id: string;
   title: string;
+  title_locked?: boolean;
   state: EventState;
   version: number;
   created_at: string;
   updated_at: string;
+};
+export type EventSuggestion = {
+  action: "dismiss" | "merge";
+  event_id: string;
+  event_title: string;
+  target_event_id?: string | null;
+  target_event_title?: string | null;
+  reason: string;
 };
 export type Evidence = {
   evidence_id: string;
@@ -158,6 +168,10 @@ export type Transition = {
   evidence_ids: string[];
   committed_at: string;
   impact_reason?: string;
+  before_title?: string;
+  after_title?: string;
+  merged_from_event_id?: string;
+  merged_from_title?: string;
 };
 export type EventDetail = {
   event: Event;

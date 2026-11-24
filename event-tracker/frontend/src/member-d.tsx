@@ -32,6 +32,16 @@ export function GoalEditor({
   const [title, setTitle] = useState(topic.title),
     [description, setDescription] = useState(topic.description);
   const [tags, setTags] = useState(topic.tags ?? []);
+  const [exclusions, setExclusions] = useState<string[]>(topic.exclusions ?? []);
+  const [newExclusion, setNewExclusion] = useState("");
+  const addExclusion = () => {
+    const clean = newExclusion.trim();
+    if (!clean || exclusions.length >= 20) return;
+    if (!exclusions.some((x) => x.toLowerCase() === clean.toLowerCase())) {
+      setExclusions([...exclusions, clean]);
+    }
+    setNewExclusion("");
+  };
   return (
     <form
       className="form-stack"
@@ -40,7 +50,7 @@ export function GoalEditor({
         void action(async () => {
           await api(
             `/topics/${topic.topic_id}`,
-            json("PATCH", { title, description, tags }),
+            json("PATCH", { title, description, tags, exclusions }),
           );
           await onSaved();
         });
@@ -66,6 +76,49 @@ export function GoalEditor({
         />
       </label>
       <TopicTagPicker value={tags} options={availableTags} onChange={setTags} />
+      <fieldset className="topic-tag-picker">
+        <legend>{t("排除规则（不追踪 / 不相关）")}</legend>
+        {exclusions.length > 0 ? (
+          <div className="exclusion-pills">
+            {exclusions.map((rule) => (
+              <span className="exclusion-pill" key={rule}>
+                <span>{rule}</span>
+                <button
+                  type="button"
+                  aria-label={t("移除排除规则")}
+                  onClick={() => setExclusions(exclusions.filter((x) => x !== rule))}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="hint">{t("暂无排除规则。移除误报事件或手动添加后，系统会在后续拆词与相关性判断中自动避开。")}</p>
+        )}
+        <div className="custom-tag">
+          <input
+            aria-label={t("新增排除规则")}
+            placeholder={t("例如：排除无畏契约分部、不追踪旧赛季回顾")}
+            value={newExclusion}
+            maxLength={160}
+            onChange={(e) => setNewExclusion(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                addExclusion();
+              }
+            }}
+          />
+          <button
+            type="button"
+            disabled={!newExclusion.trim() || exclusions.length >= 20}
+            onClick={addExclusion}
+          >
+            {t("添加排除")}
+          </button>
+        </div>
+      </fieldset>
       <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
       </p>

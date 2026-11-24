@@ -18,6 +18,8 @@ class Model(BaseModel):
 
 TopicTags = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]],
                       Field(max_length=12)]
+TopicExclusions = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]],
+                            Field(max_length=20)]
 
 
 def unique_topic_tags(tags):
@@ -32,8 +34,9 @@ class TopicInput(Model):
     description: str = Field(min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] = 'standard'
     tags: TopicTags = Field(default_factory=list)
+    exclusions: TopicExclusions = Field(default_factory=list)
 
-    @field_validator('tags')
+    @field_validator('tags', 'exclusions')
     @classmethod
     def unique_tags(cls, tags):
         return unique_topic_tags(tags)
@@ -44,8 +47,9 @@ class TopicPatch(Model):
     description: str | None = Field(default=None, min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] | None = None
     tags: TopicTags | None = None
+    exclusions: TopicExclusions | None = None
 
-    @field_validator('tags')
+    @field_validator('tags', 'exclusions')
     @classmethod
     def unique_tags(cls, tags):
         return unique_topic_tags(tags) if tags is not None else None
@@ -68,6 +72,12 @@ class Source(Model):
 
 class SourceRegisterInput(Source):
     pass
+
+
+class SourcePatchInput(Model):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    endpoint: str | None = Field(default=None, min_length=1, max_length=1000)
+    config: dict | None = None
 
 
 class SourceApproval(Model):
@@ -115,10 +125,28 @@ class Event(Model):
     event_id: str
     topic_id: str
     title: str
+    title_locked: bool = False
     state: EventState
     version: int
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class EventPatch(Model):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    title_locked: bool | None = None
+
+
+class EventDismissInput(Model):
+    disposition: Literal['irrelevant', 'unwanted'] = 'irrelevant'
+    reason: str | None = Field(default=None, max_length=160)
+    add_exclusion: bool = True
+
+
+class EventMergeInput(Model):
+    target_event_id: str = Field(min_length=1, max_length=100)
+    new_title: str | None = Field(default=None, min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=240)
 
 
 class Association(Model):
@@ -157,6 +185,7 @@ class EventDecision(Model):
     reason_codes: list[str]
     update_kind: UpdateKind | None = None
     impact_reason: str | None = Field(default=None, max_length=280)
+    proposed_title: str | None = Field(default=None, max_length=200)
     expected_version: int | None = None
 
 

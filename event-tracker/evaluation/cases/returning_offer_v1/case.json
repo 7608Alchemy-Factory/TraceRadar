@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "case_id": "returning_offer_v1",
+  "kind": "synthetic_expiry_and_reactivation",
+  "topic": {
+    "title": "东岸咖啡早餐组合优惠追踪",
+    "description": "持续追踪东岸咖啡名为「早晨组合」的同一系列优惠；记录每轮价格和有效期，优惠结束后更新为失效，新一轮同系列优惠公布后可重新激活。",
+    "notification_preferences": "standard"
+  },
+  "runtime_source": {
+    "source_id": "benchmark_returning_offer",
+    "name": "Returning offer replay (synthetic)",
+    "type": "replay",
+    "endpoint": "replay://returning_offer_v1/all.json",
+    "config": {
+      "corpus_path": "returning_offer_v1/all.json"
+    }
+  },
+  "fixture": "fixtures/returning_offer_v1/all.json",
+  "timezone": "Asia/Shanghai",
+  "stages": [
+    {
+      "stage_id": "s1_first_offer",
+      "as_of": "2026-09-03T15:59:59Z"
+    },
+    {
+      "stage_id": "s2_expired",
+      "as_of": "2026-09-06T15:59:59Z"
+    },
+    {
+      "stage_id": "s3_new_round",
+      "as_of": "2026-09-12T15:59:59Z"
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 import json
+import sys
 import pytest
+from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 from app.core import Settings
 from app.main import create_app
@@ -79,7 +81,8 @@ def test_invalid_or_interrupted_review_cannot_partially_commit(client,failure):
     assert not any(r['provider']=='human' for r in c.app.state.repo.runs(identity))
 
 
-def test_model_settings_stay_local_and_never_return_key(client):
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows DPAPI')
+def test_model_settings_stay_local_and_never_return_key(client, monkeypatch):
     c,settings=client
     body={'base_url':'https://provider.example/v1','model':'team-model','api_key':'private-test-key'}
     assert c.get('/api/settings/model').json()['configured'] is False
@@ -87,11 +90,16 @@ def test_model_settings_stay_local_and_never_return_key(client):
     assert result.status_code==200,result.text
     assert 'private-test-key' not in result.text
     assert result.json()['key_configured'] and result.json()['configured']
-    assert 'private-test-key' in settings.env_path.read_text()
+    assert 'private-test-key' not in settings.env_path.read_text()
+    saved_key = dotenv_values(settings.env_path)['QWEN_API_KEY']
+    assert saved_key.startswith('aes256gcm:dpapi:')
+    monkeypatch.setenv('QWEN_API_KEY', saved_key)
+    assert Settings().api_key == 'private-test-key'
     assert settings.api_key=='private-test-key'
     assert 'private-test-key' not in c.get('/api/settings/model').text
     assert c.put('/api/settings/model',json={**body,'api_key':None,'model':'team-model-v2'}).status_code==200
     assert settings.api_key=='private-test-key'
+    assert dotenv_values(settings.env_path)['QWEN_API_KEY'] == saved_key
     before=settings.env_path.read_text()
     assert c.put('/api/settings/model',json={**body,'base_url':'https://user:password@provider.example/v1'}).status_code==422
     assert settings.env_path.read_text()==before
@@ -104,8 +112,8 @@ def test_unconfigured_connection_check_and_replay_metadata(client):
     c,_=client
     assert c.post('/api/settings/model/check').json()['error']['code']=='QWEN_NOT_CONFIGURED'
     corpora=c.get('/api/replay/corpora').json()
-    assert [(r['corpus_id'],r['records']) for r in corpora]==[('lbj',30),('nba',18)]
-    assert all(len(r['cutoffs'])==3 and r['cutoffs']==sorted(r['cutoffs']) for r in corpora)
+    assert [(r['corpus_id'],r['records']) for r in corpora]==[('lbj_daily',53),('mcd_hk_real',51),('lbj',30),('nba',18)]
+    assert all(len(r['cutoffs'])>=3 and r['cutoffs']==sorted(r['cutoffs']) for r in corpora)
     assert 'labels' not in json.dumps(corpora)
 
 

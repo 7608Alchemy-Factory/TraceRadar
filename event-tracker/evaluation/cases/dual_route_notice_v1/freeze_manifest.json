@@ -1,0 +1,11 @@
+{
+  "case_id": "dual_route_notice_v1",
+  "frozen_on": "2026-11-24",
+  "status": "frozen",
+  "case_sha256": "60d8168a3ed53f95a7c39055fb8ab6ffbbd8f4793ef8ea0fab1ecc3851a51585",
+  "fixture_sha256": "f82f8aed15c88198fbd38aa6cebfa64f036cd00639ffc340110c73f2aad5557d",
+  "ground_truth_sha256": "e579411fc6cd37db87777a58cb8d0768d5f8047ed74a08716cb1ade05c2109c7",
+  "hash_rule": "SHA-256 after normalizing CRLF to LF, so Git checkout line endings do not change the freeze identity",
+  "review_basis": "Project owner reviewed the synthetic dual-route case and requested freezing it on 2026-11-24; explicit cross-route forbidden assertions were clarified before the freeze.",
+  "review_limit": "The notices and source URLs are synthetic, so this case tests reasoning on supplied evidence rather than real-world source retrieval. A separate second annotator sign-off is not recorded."
+}

@@ -1,0 +1,314 @@
+{
+  "schema_version": "2.0",
+  "case_id": "cedar_patch_v1",
+  "annotation_status": "frozen",
+  "events": [
+    {
+      "event_key": "cedardesk_preview_vulnerability",
+      "boundary": "CedarDesk 文件预览漏洞从调查到修复的同一事项"
+    }
+  ],
+  "evidence_labels": [
+    {
+      "item_id": "CP-01",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "create_event"
+    },
+    {
+      "item_id": "CP-02",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": "CP-01",
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "no_state_change"
+    },
+    {
+      "item_id": "CP-03",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "review_without_confirming_claim; unverified assertion"
+    },
+    {
+      "item_id": "CP-04",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "update_event"
+    },
+    {
+      "item_id": "CP-05",
+      "relevance": "irrelevant",
+      "event_keys": [],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "ignore"
+    },
+    {
+      "item_id": "CP-06",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "update_event"
+    },
+    {
+      "item_id": "CP-07",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "update_event"
+    },
+    {
+      "item_id": "CP-08",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "major_milestone"
+    },
+    {
+      "item_id": "CP-09",
+      "relevance": "relevant",
+      "event_keys": [
+        "cedardesk_preview_vulnerability"
+      ],
+      "duplicate_of": "CP-08",
+      "provenance_status": "verified",
+      "scoring_exclusions": [],
+      "review_note": "no_state_change"
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "CP-01-C1",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "2026-04-01 厂商表示正在调查文件预览组件安全报告，当时影响范围未确认",
+      "supporting_item_ids": [
+        "CP-01"
+      ],
+      "first_visible_stage_id": "s1_initial"
+    },
+    {
+      "claim_id": "CP-04-C1",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "桌面版 4.2.0 与 4.2.1 受影响",
+      "supporting_item_ids": [
+        "CP-04"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-04-C2",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "利用需要用户打开特制文档",
+      "supporting_item_ids": [
+        "CP-04"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-04-C3",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "4.1.x 和网页版本不受影响",
+      "supporting_item_ids": [
+        "CP-04"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-04-C4",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "截至 2026-04-03 厂商尚未确认在野利用，正式补丁当时仍在开发",
+      "supporting_item_ids": [
+        "CP-04"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-06-C1",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "关闭文件预览是临时缓解措施，不是补丁",
+      "supporting_item_ids": [
+        "CP-06"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-07-C1",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "独立研究员在 4.2.1 复现了需要打开特制文档的利用条件",
+      "supporting_item_ids": [
+        "CP-07"
+      ],
+      "first_visible_stage_id": "s2_confirmed"
+    },
+    {
+      "claim_id": "CP-08-C1",
+      "event_key": "cedardesk_preview_vulnerability",
+      "statement": "桌面版 4.2.2 已发布并修复该漏洞，受影响用户应升级",
+      "supporting_item_ids": [
+        "CP-08"
+      ],
+      "first_visible_stage_id": "s3_patched"
+    }
+  ],
+  "stage_expectations": [
+    {
+      "stage_id": "s1_initial",
+      "events": [
+        {
+          "event_key": "cedardesk_preview_vulnerability",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "status_summary": "厂商正在调查；影响范围和可利用条件尚未确认；匿名帖子的全面远程入侵说法未获证实。"
+          },
+          "required_claim_ids": [
+            "CP-01-C1"
+          ],
+          "forbidden_assertions": [
+            "所有版本均受影响",
+            "无需用户操作即可利用"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s2_confirmed",
+      "events": [
+        {
+          "event_key": "cedardesk_preview_vulnerability",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "status_summary": "桌面版 4.2.0 与 4.2.1 存在需要打开特制文档的漏洞；已发布关闭预览的临时缓解措施，正式补丁未发布。"
+          },
+          "required_claim_ids": [
+            "CP-01-C1",
+            "CP-04-C1",
+            "CP-04-C2",
+            "CP-04-C3",
+            "CP-04-C4",
+            "CP-06-C1",
+            "CP-07-C1"
+          ],
+          "forbidden_assertions": [
+            "网页版本受影响",
+            "临时缓解措施就是正式补丁",
+            "已确认在野利用"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s3_patched",
+      "events": [
+        {
+          "event_key": "cedardesk_preview_vulnerability",
+          "lifecycle_status": "not_applicable",
+          "state_facets": {
+            "status_summary": "桌面版 4.2.2 已修复漏洞；4.2.0 与 4.2.1 用户应升级；保留此前调查、确认和缓解措施的历史。"
+          },
+          "required_claim_ids": [
+            "CP-01-C1",
+            "CP-04-C1",
+            "CP-04-C2",
+            "CP-04-C3",
+            "CP-04-C4",
+            "CP-06-C1",
+            "CP-07-C1",
+            "CP-08-C1"
+          ],
+          "forbidden_assertions": [
+            "补丁仍未发布",
+            "所有版本均受影响"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "CP-01-cedardesk_preview_vulnerability",
+      "event_key": "cedardesk_preview_vulnerability",
+      "stage_id": "s1_initial",
+      "supporting_item_ids": [
+        "CP-01"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "厂商首次报告调查，建立追踪事项"
+    },
+    {
+      "milestone_id": "CP-04-cedardesk_preview_vulnerability",
+      "event_key": "cedardesk_preview_vulnerability",
+      "stage_id": "s2_confirmed",
+      "supporting_item_ids": [
+        "CP-04"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "厂商确认影响范围与触发条件"
+    },
+    {
+      "milestone_id": "CP-06-cedardesk_preview_vulnerability",
+      "event_key": "cedardesk_preview_vulnerability",
+      "stage_id": "s2_confirmed",
+      "supporting_item_ids": [
+        "CP-06"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "厂商发布临时缓解措施"
+    },
+    {
+      "milestone_id": "CP-07-cedardesk_preview_vulnerability",
+      "event_key": "cedardesk_preview_vulnerability",
+      "stage_id": "s2_confirmed",
+      "supporting_item_ids": [
+        "CP-07"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "独立复现补充已知利用条件"
+    },
+    {
+      "milestone_id": "CP-08-cedardesk_preview_vulnerability",
+      "event_key": "cedardesk_preview_vulnerability",
+      "stage_id": "s3_patched",
+      "supporting_item_ids": [
+        "CP-08"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "immediate",
+      "reason": "正式补丁发布，是重大进展"
+    }
+  ]
+}

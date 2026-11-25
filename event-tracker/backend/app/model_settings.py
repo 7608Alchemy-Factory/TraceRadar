@@ -1,12 +1,9 @@
 """Local configuration. Responses never include credentials or credential fragments."""
-import os
-import tempfile
-from pathlib import Path
 from urllib.parse import urlsplit
-from dotenv import set_key
 import httpx
 from .core import AppError
-from .llm import provider_error
+from .llm import is_local_model_url, request_provider, valid_model_url
+from .secret_storage import SecretStorageError, save_env
 
 
 def model_status(settings):
@@ -17,14 +14,8 @@ def model_status(settings):
 
 def validate_address(address):
     address=address.strip().rstrip('/')
-    try:
-        url = urlsplit(address)
-        _ = url.port
-        valid = url.scheme == 'https' and url.hostname and not (url.username or url.password or url.query or url.fragment) and not url.path.rstrip('/').endswith('/chat/completions')
-    except ValueError:
-        valid = False
-    if not valid or any(c in address for c in '\r\n'):
-        raise AppError('INVALID_MODEL_CONFIG', 'Use an HTTPS API base URL and a nonblank model name.', 422)
+    if not valid_model_url(address):
+        raise AppError('INVALID_MODEL_CONFIG', 'Use an HTTPS API base URL or a local Ollama loopback URL.', 422)
     return address
 
 
@@ -34,15 +25,15 @@ def discover_models(settings,body,client=None):
     if not key or any(c in key for c in '\r\n'):
         raise AppError('INVALID_MODEL_CONFIG','请先填写 API Key。',422)
     try:
-        response=(client or httpx).get(address+'/models',headers={'Authorization':'Bearer '+key},timeout=settings.timeout)
-        if response.is_error:
-            raise provider_error(response)
+        response = request_provider(
+            (client or httpx).get, address + '/models',
+            headers={'Authorization': 'Bearer ' + key}, timeout=settings.timeout,
+            **({'trust_env': False} if client is None and is_local_model_url(urlsplit(address)) else {}),
+        )
         models=response.json()['data']
         result=[dict(id=m['id'],name=m.get('name',m['id'])) for m in models if isinstance(m,dict) and isinstance(m.get('id'),str)]
         if not result:raise ValueError('Empty model list')
         return {'models':result}
-    except (httpx.TimeoutException,httpx.NetworkError):
-        raise AppError('PROVIDER_UNAVAILABLE','无法读取模型列表，请检查网络和 API 地址。',502)
     except (ValueError,KeyError,TypeError):
         raise AppError('PROVIDER_MODELS','该服务未返回兼容模型列表，请按服务商文档填写准确的模型 ID。',502)
 
@@ -56,17 +47,12 @@ def save_model_settings(settings, body):
     key = body.api_key.strip() if body.api_key else settings.api_key
     if not key or any(c in key for c in '\r\n'):
         raise AppError('INVALID_MODEL_CONFIG', 'An API key is required; leave blank only to retain an existing key.', 422)
-    target = Path(settings.env_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(dir=target.parent, prefix='.model-', suffix='.tmp')
-    os.close(fd)
+    updates = {'QWEN_BASE_URL': address, 'QWEN_MODEL': model}
+    if body.api_key:
+        updates['QWEN_API_KEY'] = key
     try:
-        Path(temporary).write_text(target.read_text(encoding='utf-8') if target.exists() else '', encoding='utf-8')
-        for name,value in [('QWEN_BASE_URL',address),('QWEN_MODEL',model),('QWEN_API_KEY',key)]:
-            set_key(temporary,name,value)
-        os.replace(temporary,target)
-    finally:
-        if Path(temporary).exists():
-            Path(temporary).unlink()
+        save_env(settings.env_path, updates)
+    except SecretStorageError as exc:
+        raise AppError('SECRET_STORAGE_UNAVAILABLE', str(exc), 422) from exc
     settings.base_url, settings.model, settings.api_key = address, model, key
     return model_status(settings)

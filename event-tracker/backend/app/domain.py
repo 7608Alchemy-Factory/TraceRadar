@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import uuid4
-from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, model_validator
+from pydantic import BaseModel, ConfigDict, Field, AwareDatetime, StringConstraints, model_validator, field_validator
 
 
 def uid() -> str:
@@ -16,19 +16,48 @@ class Model(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
 
+TopicTag = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=36)]
+TopicTags = Annotated[list[TopicTag], Field(max_length=3)]
+TopicExclusions = Annotated[list[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=160)]],
+                            Field(max_length=20)]
+
+
+def unique_topic_tags(tags):
+    unique = {}
+    for tag in tags:
+        unique.setdefault(tag.casefold(), tag)
+    return list(unique.values())
+
+
 class TopicInput(Model):
     title: str = Field(min_length=1, max_length=200)
     description: str = Field(min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] = 'standard'
+    tags: TopicTags = Field(default_factory=list)
+    exclusions: TopicExclusions = Field(default_factory=list)
+
+    @field_validator('tags', 'exclusions')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags)
 
 
 class TopicPatch(Model):
     title: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = Field(default=None, min_length=1, max_length=4000)
     notification_preferences: Literal['standard', 'digest_only'] | None = None
+    tags: TopicTags | None = None
+    exclusions: TopicExclusions | None = None
+
+    @field_validator('tags', 'exclusions')
+    @classmethod
+    def unique_tags(cls, tags):
+        return unique_topic_tags(tags) if tags is not None else None
 
 
 class Topic(TopicInput):
+    # Older records may contain more tags than the current input limit.
+    tags: Annotated[list[TopicTag], Field(max_length=12)] = Field(default_factory=list)
     topic_id: str
     status: Literal['draft', 'active'] = 'draft'
     created_at: AwareDatetime
@@ -38,13 +67,19 @@ class Topic(TopicInput):
 class Source(Model):
     source_id: str = Field(pattern=r'^[a-z0-9][a-z0-9_-]{1,63}$')
     name: str = Field(min_length=1, max_length=200)
-    type: Literal['fixture', 'replay', 'rss', 'manual'] = 'fixture'
+    type: Literal['fixture', 'replay', 'rss', 'manual', 'web_search', 'webpage'] = 'fixture'
     endpoint: str = Field(min_length=1, max_length=1000)
     config: dict = Field(default_factory=dict)
 
 
 class SourceRegisterInput(Source):
     pass
+
+
+class SourcePatchInput(Model):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    endpoint: str | None = Field(default=None, min_length=1, max_length=1000)
+    config: dict | None = None
 
 
 class SourceApproval(Model):
@@ -92,10 +127,28 @@ class Event(Model):
     event_id: str
     topic_id: str
     title: str
+    title_locked: bool = False
     state: EventState
     version: int
     created_at: AwareDatetime
     updated_at: AwareDatetime
+
+
+class EventPatch(Model):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    title_locked: bool | None = None
+
+
+class EventDismissInput(Model):
+    disposition: Literal['irrelevant', 'unwanted'] = 'irrelevant'
+    reason: str | None = Field(default=None, max_length=160)
+    add_exclusion: bool = True
+
+
+class EventMergeInput(Model):
+    target_event_id: str = Field(min_length=1, max_length=100)
+    new_title: str | None = Field(default=None, min_length=1, max_length=200)
+    reason: str | None = Field(default=None, max_length=240)
 
 
 class Association(Model):
@@ -118,18 +171,55 @@ class Association(Model):
 UpdateKind = Literal['event_created', 'fact_added', 'major_milestone', 'minor_update']
 
 
-class Assessment(Model):
-    evidence_id: str
-    is_relevant: bool
+class EventDecision(Model):
     association: Association
     novelty: Literal['new_fact', 'confirmation', 'conflict', 'no_change']
     supported_claims: list[Fact] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
-    proposed_state: EventState | None = None
+    proposed_state: EventState | None = Field(
+        default=None,
+        description=(
+            'A new_fact decision requires an explicit resulting status. '
+            'A confirmation or no_change decision leaves this field null or omitted.'
+        ),
+    )
     requires_review: bool = False
     reason_codes: list[str]
     update_kind: UpdateKind | None = None
+    impact_reason: str | None = Field(default=None, max_length=280)
+    proposed_title: str | None = Field(default=None, max_length=200)
     expected_version: int | None = None
+
+
+class Assessment(EventDecision):
+    """Legacy single-event assessment, still accepted from providers and old records."""
+    evidence_id: str
+    is_relevant: bool
+
+
+class EvidenceAssessment(Model):
+    evidence_id: str
+    is_relevant: bool
+    event_decisions: list[EventDecision]
+
+    @model_validator(mode='after')
+    def check_decisions(self):
+        if self.is_relevant != bool(self.event_decisions):
+            raise ValueError('Relevant evidence needs event decisions; irrelevant evidence needs an empty list.')
+        targets = [
+            (a.type, a.event_id or ' '.join(a.title.casefold().split()))
+            for d in self.event_decisions for a in [d.association] if a.type != 'unresolved'
+        ]
+        if len(targets) != len(set(targets)):
+            raise ValueError('Include at most one decision per Event.')
+        return self
+
+
+def assessment_items(assessment: Assessment | EvidenceAssessment) -> list[Assessment]:
+    if isinstance(assessment, Assessment):
+        return [assessment]
+    return [Assessment(**decision.model_dump(), evidence_id=assessment.evidence_id,
+                       is_relevant=assessment.is_relevant) for decision in assessment.event_decisions]
 
 
 class StateUpdateProposal(Model):
@@ -151,7 +241,7 @@ class ManualEvidenceItem(Model):
 
 class ReviewResolutionInput(Model):
     decision: Literal['dismiss', 'accept']
-    note: str = Field(min_length=1, max_length=2000)
+    note: str | None = Field(default=None, min_length=1, max_length=2000)
     event_id: str | None = None
     expected_version: int | None = Field(default=None, ge=1)
     current_status: str | None = Field(default=None, min_length=1, max_length=2000)
@@ -161,8 +251,9 @@ class ReviewResolutionInput(Model):
 
     @model_validator(mode='after')
     def nonblank_note(self):
-        self.note = self.note.strip()
-        if not self.note:
+        if self.note is not None:
+            self.note = self.note.strip()
+        if self.note == '' or (self.decision == 'accept' and self.note is None):
             raise ValueError('A review note is required')
         if self.decision == 'accept' and not all((self.event_id, self.expected_version, self.current_status and self.current_status.strip(), self.fact and self.fact.strip())):
             raise ValueError('Accept requires event_id, expected_version, current_status and fact')
@@ -185,11 +276,29 @@ class ModelDiscoveryInput(Model):
 class RunInput(Model):
     fixture_batch_id: str = Field(default='1', min_length=1, max_length=100)
     provider: Literal['mock', 'qwen'] | None = None
+    agent_mode: bool = False
     as_of: AwareDatetime | None = None
     prefilter_enabled: bool = False
     near_duplicate_enabled: bool = True
     manual_items: list[ManualEvidenceItem] = Field(default_factory=list)
     source_ids: list[str] | None = Field(default=None, min_length=1)
+
+
+class ScheduleInput(Model):
+    mode: Literal['dates', 'interval']
+    times: list[AwareDatetime] = Field(default_factory=list, max_length=3)
+    interval_minutes: int | None = Field(default=None, ge=1, le=43200)
+    starts_at: AwareDatetime | None = None
+    agent_mode: bool = False
+
+    @model_validator(mode='after')
+    def check_mode(self):
+        if self.mode == 'dates':
+            if not self.times or len(set(self.times)) != len(self.times) or self.interval_minutes is not None or self.starts_at is not None:
+                raise ValueError('Provide one to three distinct timestamps for a date schedule.')
+        elif self.times or self.interval_minutes is None:
+            raise ValueError('Provide an interval for a repeating schedule.')
+        return self
 
 
 RunStatus = Literal['pending', 'running', 'completed', 'completed_with_errors', 'failed', 'cancelled']
@@ -199,8 +308,8 @@ StepStatus = Literal['pending', 'running', 'completed', 'skipped', 'failed']
 class TopicEvidence(Model):
     topic_id: str
     evidence_id: str
-    status: Literal['pending', 'completed', 'review', 'failed']
-    assessment: Assessment | None = None
+    status: Literal['pending', 'completed', 'review', 'failed', 'failed_retryable']
+    assessment: EvidenceAssessment | Assessment | None = None
     error: dict | None = None
 
 
@@ -229,7 +338,7 @@ class Notification(Model):
 class Run(Model):
     run_id: str
     topic_id: str
-    trigger_type: Literal['manual', 'human_review'] = 'manual'
+    trigger_type: Literal['manual', 'resume', 'human_review', 'scheduled'] = 'manual'
     status: RunStatus
     provider: Literal['mock', 'qwen', 'human']
     fixture_batch_id: str
@@ -237,6 +346,7 @@ class Run(Model):
     prompt_version: str = 'assessment-v1'
     started_at: AwareDatetime | None = None
     completed_at: AwareDatetime | None = None
+    scheduled_for: AwareDatetime | None = None
     counts: dict[str, int] = Field(default_factory=dict)
     error: dict | None = None
     snapshot: dict

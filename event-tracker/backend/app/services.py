@@ -1,7 +1,8 @@
 import hashlib
 from datetime import datetime
+from uuid import NAMESPACE_URL, uuid5
 from .core import AppError
-from .domain import StateUpdateProposal, Fact, uid, now
+from .domain import StateUpdateProposal, Fact, assessment_items, uid, now
 from .notification_policy import decide_notification
 
 
@@ -62,32 +63,43 @@ class StateManager:
                       'notification_action':action},error=None,started_at=stamp,completed_at=stamp)
         return self.repo.commit_review(event,transition,notification,run,step,resolution,body.expected_version,self.commit_fault)
 
-    def apply(self, topic, run_id, evidence, assessment):
-        a = assessment
-        if a.evidence_id != evidence['evidence_id']:
+    def apply(self, topic, run_id, evidence, assessment, position, attempts):
+        if assessment.evidence_id != evidence['evidence_id']:
             raise AppError('INVALID_EVIDENCE', 'Assessment evidence ID does not match input.', 422)
+        decisions = assessment_items(assessment)
+        events = {event['event_id']: event for event in self.repo.events(topic['topic_id'])}
+        available = self.repo.available_evidence(topic['topic_id'])
+        approved = {s['source_id'] for s in self.repo.get('runs', run_id)['snapshot']['sources']}
+        if evidence['evidence_id'] not in available or evidence['source_id'] not in approved:
+            raise AppError('UNAPPROVED_SOURCE', 'Input evidence must belong to the topic and an approved source.', 422)
+        changes = [self.prepare_decision(topic, run_id, evidence, item, events, available) for item in decisions]
+        return self.repo.commit_assessment(topic['topic_id'], evidence['evidence_id'], assessment.model_dump(mode='json'),
+                                           changes, run_id, position, attempts, self.commit_fault)
+
+    def prepare_decision(self, topic, run_id, evidence, a, events, available):
         existing = None
         if a.association.type == 'existing_event':
-            existing = self.repo.get('events', a.association.event_id)
-            if existing['topic_id'] != topic['topic_id']:
+            existing = events.get(a.association.event_id)
+            if existing is None:
+                self.repo.get('events', a.association.event_id)
                 raise AppError('CROSS_TOPIC_EVENT', 'Event belongs to a different topic.', 422)
+        event_id = existing['event_id'] if existing else None
+        if a.novelty in ('no_change', 'confirmation') and (a.proposed_state or a.update_kind or a.supported_claims):
+            raise AppError('INVALID_PROPOSAL', 'Confirmation and no_change cannot carry a state update or new claims.', 422)
+        if a.novelty == 'new_fact':
+            if not a.proposed_state or not a.proposed_state.current_status.strip() or not a.update_kind:
+                raise AppError('INVALID_PROPOSAL', 'A new fact needs an update kind and an explicit status.', 422)
+            if not a.supported_claims or any(not claim.fact.strip() for claim in a.supported_claims):
+                raise AppError('UNGROUNDED_UPDATE', 'A new fact needs nonempty supported claims.', 422)
         if not a.is_relevant or a.requires_review or a.conflicts or a.novelty == 'conflict' or a.association.type == 'unresolved':
             review = a.is_relevant and (a.requires_review or bool(a.conflicts) or a.novelty == 'conflict' or a.association.type == 'unresolved')
-            self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'review' if review else 'completed',
-                                      a.model_dump(mode='json'), event_id=existing['event_id'] if existing and review else None,
-                                      relation='conflicting' if review else None)
-            return 'review' if review else 'irrelevant'
+            return dict(outcome='review' if review else 'irrelevant', event_id=event_id,
+                        relation='conflicting' if review else None)
         if a.novelty in ('no_change', 'confirmation'):
-            self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed', a.model_dump(mode='json'),
-                                      event_id=existing['event_id'] if existing else None, relation='supporting')
-            return 'no_change'
-        if not a.proposed_state or not a.update_kind:
-            raise AppError('INVALID_PROPOSAL', 'A state update requires a complete proposal.', 422)
+            return dict(outcome='no_change', event_id=event_id, relation='supporting')
         proposal = StateUpdateProposal(association=a.association, expected_version=a.expected_version,
                                        update_kind=a.update_kind, state=a.proposed_state, evidence_ids=[evidence['evidence_id']])
         state = proposal.state.model_dump(mode='json')
-        available = self.repo.available_evidence(topic['topic_id'])
-        approved = {s['source_id'] for s in self.repo.get('runs', run_id)['snapshot']['sources']}
         prior_ids = set(existing['state']['sources']) if existing else set()
         allowed = prior_ids | {evidence['evidence_id']}
         refs = set(state['sources'])
@@ -97,8 +109,6 @@ class StateManager:
                 raise AppError('INVALID_REFERENCE', 'Claim references must appear in state sources.', 422)
         if not refs <= allowed or not refs <= available.keys() or evidence['evidence_id'] not in state['sources']:
             raise AppError('INVALID_REFERENCE', 'Proposal contains unavailable evidence references.', 422)
-        if available[evidence['evidence_id']]['source_id'] not in approved:
-            raise AppError('UNAPPROVED_SOURCE', 'Input source was not approved in this run.', 422)
         for item in state['timeline']:
             if datetime.fromisoformat(item['occurred_at'].replace('Z', '+00:00')) not in {
                     datetime.fromisoformat(available[i]['published_at'].replace('Z', '+00:00')) for i in item['evidence_ids']}:
@@ -108,8 +118,7 @@ class StateManager:
             if proposal.expected_version != existing['version']:
                 raise AppError('VERSION_CONFLICT', 'Proposal version does not match the current event.')
             if state == existing['state']:
-                self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed', a.model_dump(mode='json'))
-                return 'no_change'
+                return dict(outcome='no_change', event_id=event_id, relation='supporting')
             for field in ('key_facts', 'timeline', 'sources'):
                 if any(item not in state[field] for item in existing['state'][field]):
                     raise AppError('SILENT_OVERWRITE', 'Existing facts, timeline and references must be preserved.', 422)
@@ -129,20 +138,47 @@ class StateManager:
         if proposal.update_kind == 'major_milestone' and state['current_status'] == existing['state']['current_status']:
             raise AppError('INVALID_MILESTONE', 'A major milestone must materially change current_status.', 422)
         stamp = now()
-        event = dict(event_id=existing['event_id'] if existing else uid(), topic_id=topic['topic_id'],
-                     title=existing['title'] if existing else a.association.title, state=state,
-                     version=existing['version'] + 1 if existing else 1,
-                     created_at=existing['created_at'] if existing else stamp, updated_at=stamp)
-        key = hashlib.sha256(f"{topic['topic_id']}:{evidence['canonical_evidence_id']}:policy-v1".encode()).hexdigest()
+        key_prefix = f"{topic['topic_id']}:{evidence['canonical_evidence_id']}"
+        if event_id is None:
+            title_key = ' '.join(a.association.title.casefold().split())
+            event_id = str(uuid5(NAMESPACE_URL, f"traceradar:{key_prefix}:{title_key}"))
+        title_locked = bool(existing.get('title_locked')) if existing else False
+        before_title = existing['title'] if existing else None
+        raw_proposed_title = a.proposed_title.strip() if (a.proposed_title and a.proposed_title.strip()) else None
+        evolved_title = (
+            raw_proposed_title
+            if existing
+            and not title_locked
+            and raw_proposed_title
+            and raw_proposed_title != existing['title']
+            and proposal.update_kind in ('major_milestone', 'fact_added')
+            else None
+        )
+        final_title = evolved_title or (existing['title'] if existing else a.association.title)
+        event = dict(
+            event_id=event_id,
+            topic_id=topic['topic_id'],
+            title=final_title,
+            state=state,
+            version=existing['version'] + 1 if existing else 1,
+            created_at=existing['created_at'] if existing else stamp,
+            updated_at=stamp,
+            **({'title_locked': True} if title_locked else {}),
+        )
+        key = hashlib.sha256(f"{key_prefix}:{event_id}:policy-v2".encode()).hexdigest()
+        legacy_key = hashlib.sha256(f"{key_prefix}:policy-v1".encode()).hexdigest()
         transition = dict(transition_id=uid(), event_id=event['event_id'], run_id=run_id,
                           before_state=existing['state'] if existing else None, after_state=state,
                           evidence_ids=[evidence['evidence_id']], idempotency_key=key, committed_at=stamp)
+        if evolved_title and before_title:
+            transition['before_title'] = before_title
+            transition['after_title'] = evolved_title
+        if a.impact_reason and a.impact_reason.strip():
+            transition['impact_reason'] = a.impact_reason.strip()
         priority, action, reasons = decide_notification(proposal.update_kind, topic['notification_preferences'])
         notification = dict(notification_id=uid(), topic_id=topic['topic_id'], event_id=event['event_id'],
                             transition_id=transition['transition_id'], priority=priority, action=action,
                             reason_codes=reasons, created_at=stamp)
-        committed = self.repo.commit_state(event, transition, notification, a.model_dump(mode='json'), evidence,
-                                           proposal.expected_version, self.commit_fault)
-        if not committed:
-            self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed', a.model_dump(mode='json'))
-        return 'committed' if committed else 'duplicate'
+        return dict(outcome='committed', event_id=event_id, relation='supporting',
+                    event=event, transition=transition, notification=notification,
+                    expected_version=proposal.expected_version, legacy_key=legacy_key)

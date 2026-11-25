@@ -1,0 +1,7 @@
+{
+  "schema_version":"1.0","case_id":"mcd_hk_campaigns_v1","kind":"real_multi_event_development",
+  "topic":{"title":"香港麥當勞限時活動追蹤","description":"持續追蹤香港麥當勞公布的限時優惠及活動；分開記錄不同活動的開始、條件和截止日期，過期活動不可繼續描述為有效。","notification_preferences":"standard"},
+  "runtime_source":{"source_id":"benchmark_mcd_hk","name":"HK McDonald's curated press replay","type":"replay","endpoint":"replay://mcd_hk_campaigns_v1/all.json","config":{"corpus_path":"mcd_hk_campaigns_v1/all.json"}},
+  "fixture":"fixtures/mcd_hk_campaigns_v1/all.json","timezone":"Asia/Hong_Kong",
+  "stages":[{"stage_id":"s1_weekly","as_of":"2026-09-10T15:59:59Z"},{"stage_id":"s2_trial","as_of":"2026-09-16T15:59:59Z"},{"stage_id":"s3_vouchers","as_of":"2026-09-28T15:59:59Z"},{"stage_id":"s4_expired","as_of":"2026-10-03T15:59:59Z"}]
+}

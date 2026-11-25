@@ -1,5 +1,7 @@
 // API responses are defined by backend/app/domain.py. Keep these projections aligned.
 export type Topic = {
+  tags?: string[];
+  exclusions?: string[];
   topic_id: string;
   title: string;
   description: string;
@@ -11,10 +13,16 @@ export type Topic = {
 export type Source = {
   source_id: string;
   name: string;
-  type: "fixture" | "replay" | "rss" | "manual";
+  type: "fixture" | "replay" | "rss" | "manual" | "web_search" | "webpage";
   endpoint: string;
   config: Record<string, unknown>;
   reason?: string;
+  fact_evidence?: string;
+  role?: "anchor" | "branch" | "channel";
+  health_status?: string;
+  retirement_recommended?: boolean;
+  ai_verdict?: "approve" | "optional" | "skip" | null;
+  registered?: boolean;
 };
 export type Fact = { fact: string; evidence_ids: string[] };
 export type TimelineItem = {
@@ -32,10 +40,19 @@ export type Event = {
   event_id: string;
   topic_id: string;
   title: string;
+  title_locked?: boolean;
   state: EventState;
   version: number;
   created_at: string;
   updated_at: string;
+};
+export type EventSuggestion = {
+  action: "dismiss" | "merge";
+  event_id: string;
+  event_title: string;
+  target_event_id?: string | null;
+  target_event_title?: string | null;
+  reason: string;
 };
 export type Evidence = {
   evidence_id: string;
@@ -68,15 +85,24 @@ export type Assessment = {
   update_kind: string | null;
   expected_version: number | null;
 };
-export type Review = { evidence: Evidence; assessment: Assessment };
+export type EvidenceAssessment = {
+  evidence_id: string;
+  is_relevant: boolean;
+  event_decisions: Omit<Assessment, "evidence_id" | "is_relevant">[];
+};
+export type Review = {
+  evidence: Evidence;
+  assessment: Assessment;
+  event_decisions?: EvidenceAssessment["event_decisions"];
+};
 export type ReviewResolution = {
   resolution_id: string;
   evidence_id: string;
   decision: "dismiss" | "accept";
-  note: string;
+  note: string | null;
   actor: string;
   resolved_at: string;
-  original_assessment: Assessment;
+  original_assessment: Assessment | EvidenceAssessment;
   event_id?: string;
   run_id?: string;
   superseded_facts?: Fact[];
@@ -92,14 +118,15 @@ export type Run = {
     | "failed"
     | "cancelled";
   provider: "mock" | "qwen" | "human";
-  trigger_type: "manual" | "human_review";
+  trigger_type: "manual" | "resume" | "human_review" | "human_edit" | "human_merge" | "scheduled";
+  scheduled_for?: string;
   fixture_batch_id: string;
   model?: string;
   started_at: string | null;
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string } };
+  snapshot: { options?: { as_of?: string; agent_mode?: boolean }; resume_of?: string; sources?: Source[] };
 };
 export type Step = {
   step_id: string;
@@ -110,14 +137,24 @@ export type Step = {
   attempt: number;
   input_refs: string[];
   output_refs: string[];
-  decision: unknown;
+  decision: { agent?: { model_calls: number; calls: { name: string; status: string }[] } } & Record<string, unknown>;
   error: unknown;
   started_at: string;
   completed_at: string | null;
 };
-export type RunDetail = { run: Run; steps: Step[] };
+export type RunEvidence = {
+  source_id: string;
+  external_id: string;
+  evidence_id: string;
+  title: string;
+  status: string;
+  attempts: number;
+  error: { code: string; message: string } | null;
+};
+export type RunDetail = { run: Run; steps: Step[]; evidence: RunEvidence[] };
 export type Notification = {
   notification_id: string;
+  topic_id: string;
   event_id: string;
   transition_id: string;
   action: "immediate" | "digest" | "record_only";
@@ -125,18 +162,45 @@ export type Notification = {
   reason_codes: string[];
   created_at: string;
 };
+export type InboxItem = Notification & {
+  action: "immediate" | "digest";
+  read_at: string | null;
+  topic_title: string;
+  event_title: string;
+  summary: string | null;
+};
+export type Inbox = { items: InboxItem[]; unread: number; latest_immediate_id: string | null };
+export type Schedule = {
+  topic_id: string;
+  mode: "dates" | "interval";
+  times: string[];
+  interval_minutes: number | null;
+  starts_at: string | null;
+  agent_mode: boolean;
+  next_at: string | null;
+  last_run_id: string | null;
+  last_run_status: Run["status"] | null;
+  error: string | null;
+};
 export type Transition = {
   transition_id: string;
+  run_id?: string;
   before_state: EventState | null;
   after_state: EventState;
   evidence_ids: string[];
   committed_at: string;
+  impact_reason?: string;
+  before_title?: string;
+  after_title?: string;
+  merged_from_event_id?: string;
+  merged_from_title?: string;
 };
 export type EventDetail = {
   event: Event;
   evidence: Evidence[];
   history: Transition[];
   reviews: Review[];
+  updates?: Array<Notification & { provider: Run["provider"] }>;
 };
 export type Dashboard = {
   topic: Topic;
@@ -150,8 +214,9 @@ export type Dashboard = {
 export type EvidenceDecision = {
   evidence: Evidence;
   status: string;
-  assessment: Assessment | null;
+  assessment: Assessment | EvidenceAssessment | null;
   error: unknown;
+  prefilter_excluded?: boolean;
 };
 export type ModelStatus = {
   configured: boolean;
@@ -160,11 +225,22 @@ export type ModelStatus = {
   key_configured: boolean;
   missing: string[];
 };
+export type SearchStatus = {
+  provider: "auto" | "bocha" | "tavily" | "free";
+  active_provider: "bocha" | "tavily" | "free";
+  active_label: string;
+  bocha_configured: boolean;
+  tavily_configured: boolean;
+  jina_configured: boolean;
+  web_fetch_jina_fallback: boolean;
+};
 export type Corpus = {
-  corpus_id: "lbj" | "nba";
+  corpus_id: string;
   name: string;
   corpus_path: string;
   records: number;
   cutoffs: string[];
+  default_goal?: string;
+  anchor_terms?: string[];
   provenance: string;
 };

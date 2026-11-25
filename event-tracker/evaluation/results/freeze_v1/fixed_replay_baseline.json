@@ -1,0 +1,167 @@
+[
+  {
+    "case_id": "cedar_patch_v1",
+    "policy": "every input article is relevant; one Event and one digest per article; no updates or deduplication",
+    "relevance_tp": 8,
+    "relevance_fp": 1,
+    "stages": [
+      {
+        "stage_id": "s1_initial",
+        "expected_event_count": 1,
+        "baseline_event_count": 3,
+        "event_count_absolute_error": 2,
+        "baseline_event_ids": [
+          "CP-01",
+          "CP-02",
+          "CP-03"
+        ]
+      },
+      {
+        "stage_id": "s2_confirmed",
+        "expected_event_count": 1,
+        "baseline_event_count": 7,
+        "event_count_absolute_error": 6,
+        "baseline_event_ids": [
+          "CP-01",
+          "CP-02",
+          "CP-03",
+          "CP-04",
+          "CP-05",
+          "CP-06",
+          "CP-07"
+        ]
+      },
+      {
+        "stage_id": "s3_patched",
+        "expected_event_count": 1,
+        "baseline_event_count": 9,
+        "event_count_absolute_error": 8,
+        "baseline_event_ids": [
+          "CP-01",
+          "CP-02",
+          "CP-03",
+          "CP-04",
+          "CP-05",
+          "CP-06",
+          "CP-07",
+          "CP-08",
+          "CP-09"
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": "mcd_hk_campaigns_v1",
+    "policy": "every input article is relevant; one Event and one digest per article; no updates or deduplication",
+    "relevance_tp": 4,
+    "relevance_fp": 0,
+    "stages": [
+      {
+        "stage_id": "s1_weekly",
+        "expected_event_count": 1,
+        "baseline_event_count": 1,
+        "event_count_absolute_error": 0,
+        "baseline_event_ids": [
+          "MCD-01"
+        ]
+      },
+      {
+        "stage_id": "s2_trial",
+        "expected_event_count": 2,
+        "baseline_event_count": 2,
+        "event_count_absolute_error": 0,
+        "baseline_event_ids": [
+          "MCD-01",
+          "MCD-02"
+        ]
+      },
+      {
+        "stage_id": "s3_vouchers",
+        "expected_event_count": 5,
+        "baseline_event_count": 4,
+        "event_count_absolute_error": 1,
+        "baseline_event_ids": [
+          "MCD-01",
+          "MCD-02",
+          "MCD-03",
+          "MCD-04"
+        ]
+      },
+      {
+        "stage_id": "s4_expired",
+        "expected_event_count": 5,
+        "baseline_event_count": 4,
+        "event_count_absolute_error": 1,
+        "baseline_event_ids": [
+          "MCD-01",
+          "MCD-02",
+          "MCD-03",
+          "MCD-04"
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": "dual_route_notice_v1",
+    "policy": "every input article is relevant; one Event and one digest per article; no updates or deduplication",
+    "relevance_tp": 2,
+    "relevance_fp": 0,
+    "stages": [
+      {
+        "stage_id": "s1_two_routes",
+        "expected_event_count": 2,
+        "baseline_event_count": 1,
+        "event_count_absolute_error": 1,
+        "baseline_event_ids": [
+          "DR-01"
+        ]
+      },
+      {
+        "stage_id": "s2_route12_restored",
+        "expected_event_count": 2,
+        "baseline_event_count": 2,
+        "event_count_absolute_error": 0,
+        "baseline_event_ids": [
+          "DR-01",
+          "DR-02"
+        ]
+      }
+    ]
+  },
+  {
+    "case_id": "returning_offer_v1",
+    "policy": "every input article is relevant; one Event and one digest per article; no updates or deduplication",
+    "relevance_tp": 2,
+    "relevance_fp": 0,
+    "stages": [
+      {
+        "stage_id": "s1_first_offer",
+        "expected_event_count": 1,
+        "baseline_event_count": 1,
+        "event_count_absolute_error": 0,
+        "baseline_event_ids": [
+          "RO-01"
+        ]
+      },
+      {
+        "stage_id": "s2_expired",
+        "expected_event_count": 1,
+        "baseline_event_count": 1,
+        "event_count_absolute_error": 0,
+        "baseline_event_ids": [
+          "RO-01"
+        ]
+      },
+      {
+        "stage_id": "s3_new_round",
+        "expected_event_count": 1,
+        "baseline_event_count": 2,
+        "event_count_absolute_error": 1,
+        "baseline_event_ids": [
+          "RO-01",
+          "RO-02"
+        ]
+      }
+    ]
+  }
+]

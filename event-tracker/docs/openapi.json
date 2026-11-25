@@ -539,6 +539,60 @@
         }
       }
     },
+    "/api/runs/{identity}/resume": {
+      "post": {
+        "summary": "Resume",
+        "operationId": "resume_api_runs__identity__resume_post",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/topics/{identity}/dashboard": {
       "get": {
         "summary": "Dashboard",
@@ -1040,6 +1094,11 @@
               }
             ],
             "title": "Provider"
+          },
+          "agent_mode": {
+            "type": "boolean",
+            "title": "Agent Mode",
+            "default": false
           },
           "as_of": {
             "anyOf": [

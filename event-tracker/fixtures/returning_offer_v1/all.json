@@ -1,0 +1,18 @@
+[
+  {
+    "source_id": "eastbank_cafe",
+    "external_id": "RO-01",
+    "url": "https://cafe.example/offers/morning-bundle-september",
+    "title": "早晨组合首轮优惠",
+    "content": "东岸咖啡宣布「早晨组合」9月1日至9月5日每天早餐时段售价20元，含一杯中杯咖啡和一份三明治。该价格仅适用于首轮活动。",
+    "published_at": "2026-08-31T08:00:00Z"
+  },
+  {
+    "source_id": "eastbank_cafe",
+    "external_id": "RO-02",
+    "url": "https://cafe.example/offers/morning-bundle-return",
+    "title": "早晨组合新一轮优惠",
+    "content": "东岸咖啡宣布同一「早晨组合」系列于9月10日至9月20日再次推出，早餐时段售价22元，仍含中杯咖啡和三明治。9月1日至5日的20元价格不适用于本轮。",
+    "published_at": "2026-09-09T08:00:00Z"
+  }
+]

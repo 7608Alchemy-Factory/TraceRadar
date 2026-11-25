@@ -1,0 +1,11 @@
+{
+  "case_id": "cedar_patch_v1",
+  "frozen_on": "2026-11-25",
+  "status": "frozen",
+  "case_sha256": "421ad12a5ea3fbc41fa9849027165eb06017df506ebaac48f2da05fdf64db33e",
+  "fixture_sha256": "c46c4a5f5fc882c580e67fe2c48441baaf9fb19c0eb948ac8a85eaf88daa70fa",
+  "ground_truth_sha256": "9992011a7b27209b9421b4a116158cf7c27e576379a9838eaea5a7e3829eacef",
+  "hash_rule": "SHA-256 after normalizing CRLF to LF, so Git checkout line endings do not change the freeze identity",
+  "review_basis": "Project owner requested formal freeze of the synthetic CedarDesk case on 2026-11-25 after reviewing the current benchmark structure.",
+  "review_limit": "The product, notices and source URLs are synthetic. A second independent annotator sign-off and disagreement record are not available."
+}

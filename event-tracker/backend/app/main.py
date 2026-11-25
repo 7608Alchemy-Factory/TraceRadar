@@ -1,23 +1,45 @@
 import logging
 from threading import RLock
 from dataclasses import replace
-from urllib.parse import urlsplit
+from datetime import datetime, timezone
+from urllib.parse import quote_plus, urlsplit
 from contextlib import asynccontextmanager
 from typing import Literal
-from fastapi import FastAPI, Header, Request
+from fastapi import Body, FastAPI, Header, Request
+from pydantic import Field
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException
 from .core import Settings, AppError
-from .domain import TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, RunInput, ReviewResolutionInput, ModelSettingsInput, ModelDiscoveryInput, uid, now
+from .domain import (
+    Model, TopicInput, TopicPatch, Topic, Source, SourceApproval, SourceRegisterInput, SourcePatchInput,
+    EventPatch, EventDismissInput, EventMergeInput, RunInput, ReviewResolutionInput,
+    ModelSettingsInput, ModelDiscoveryInput, ScheduleInput, uid, now,
+)
 from .repositories import Repository
-from .connectors import SOURCES, recommend_sources, validate_source_definition
+from .connectors import SOURCES, ConnectorRouter, recommend_sources, validate_source_definition
 from .llm import get_provider
 from .orchestration import RunManager
+from .scheduler import Scheduler
 from .model_settings import model_status, save_model_settings,discover_models
 from .replay_catalog import replay_catalog
+from .translation import TranslationInput, translate
+from .web_connectors import save_search_settings, search_settings_status
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
+
+
+class SourceRecommendationInput(Model):
+    llm_summary: bool | None = None
+    search_languages: list[Literal['zh-CN', 'zh-HK', 'en-US', 'ko', 'ja']] | None = Field(default=None, max_length=5)
+
+
+class SearchSettingsInput(Model):
+    provider: Literal['auto', 'bocha', 'tavily', 'free'] | None = None
+    bocha_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    tavily_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    jina_api_key: str | None = Field(default=None, max_length=300, repr=False)
+    web_fetch_jina_fallback: bool | None = None
 
 
 def create_app(settings=None):
@@ -25,13 +47,18 @@ def create_app(settings=None):
     repo = Repository(config.database_path)
     manager = RunManager(repo, config)
     config_lock = RLock()
+    scheduler = Scheduler(repo, manager, config, config_lock)
 
     @asynccontextmanager
     async def lifespan(app):
         repo.initialize(SOURCES)
         manager.start()
-        yield
-        manager.stop()
+        scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler.stop()
+            manager.stop()
 
     app = FastAPI(title='TraceRadar local tracker', lifespan=lifespan)
     app.state.repo, app.state.manager = repo, manager
@@ -39,7 +66,8 @@ def create_app(settings=None):
     @app.middleware('http')
     async def local_model_configuration(request: Request, call_next):
         origin=request.headers.get('origin')
-        if origin and request.url.path.startswith('/api/settings/model') and request.method in ('POST','PUT'):
+        provider_route = request.url.path.startswith(('/api/settings/model', '/api/settings/search')) or request.url.path == '/api/translation'
+        if origin and provider_route and request.method in ('POST','PUT'):
             try:
                 host=urlsplit(origin).hostname
             except ValueError:
@@ -100,9 +128,61 @@ def create_app(settings=None):
                 raise AppError('PROVIDER_SCHEMA','The model returned an incorrect evidence reference.',502)
             return {'status':'ok','model':config.model,'attempts':provider.attempt}
 
+    @app.get('/api/settings/search')
+    def read_search_settings():
+        with config_lock:
+            return search_settings_status(config)
+
+    @app.put('/api/settings/search')
+    def update_search_settings(body: SearchSettingsInput):
+        with config_lock:
+            if repo.active_runs():
+                raise AppError('RUN_ACTIVE', 'Wait for all runs to finish before changing search settings.')
+            return save_search_settings(config, body)
+
+    @app.post('/api/settings/search/check')
+    def check_search():
+        with config_lock:
+            snap = replace(config)
+        status = search_settings_status(snap)
+        router = ConnectorRouter(snap.fixture_path, snap.corpus_root, settings=snap)
+        items = router.fetch(
+            {
+                'source_id': 'search_check',
+                'name': 'Search Check',
+                'type': 'web_search',
+                'endpoint': 'search://check',
+                'config': {
+                    'query': '人工智能 最新进展' if status['active_provider'] == 'bocha' else 'OpenAI',
+                    'search_provider': status['active_provider'],
+                    'max_items': 2,
+                    'fetch_full_text': False,
+                    'fallback_to_free': False,
+                },
+            },
+            'live',
+        )
+        return {
+            'status': 'ok',
+            'active_provider': status['active_provider'],
+            'active_label': status['active_label'],
+            'provider_used': router.last_fetch_stats.get('provider_used'),
+            'items': len(items),
+        }
+
     @app.get('/api/replay/corpora')
     def corpora():
         return replay_catalog(config)
+
+    @app.post('/api/translation')
+    def reference_translation(body: TranslationInput):
+        with config_lock:
+            settings = replace(config)
+        return translate(settings, body)
+
+    @app.get('/api/radar')
+    def radar():
+        return repo.radar()
 
     @app.post('/api/topics', status_code=201, response_model=Topic)
     def create_topic(body: TopicInput):
@@ -121,15 +201,41 @@ def create_app(settings=None):
     def patch_topic(identity: str, body: TopicPatch):
         return repo.patch_topic(identity, body.model_dump(exclude_none=True))
 
+    @app.delete('/api/topics/{identity}')
+    def delete_topic(identity: str):
+        repo.delete_topic(identity)
+        return {'topic_id': identity}
+
     @app.post('/api/topics/{identity}/source-recommendations')
-    def recommendations(identity: str):
+    def recommendations(
+        identity: str,
+        llm_summary: bool = False,
+        body: SourceRecommendationInput | None = Body(default=None),
+    ):
         item = repo.get('topics', identity)
-        result = recommend_sources(item, repo.sources())
+        want_llm = body.llm_summary if (body is not None and body.llm_summary is not None) else llm_summary
+        search_languages = body.search_languages if body is not None else None
+        approved_ids = {s['source_id'] for s in repo.sources(identity)}
+        with config_lock:
+            settings_snapshot = replace(config)
+        result = recommend_sources(
+            item,
+            repo.sources(),
+            current_events=repo.events(identity),
+            evidence_decisions=repo.evidence_decisions(identity),
+            notifications=repo.notifications(identity),
+            corpus_root=settings_snapshot.corpus_root,
+            approved_source_ids=approved_ids,
+            llm_summary=want_llm,
+            settings=settings_snapshot,
+            search_languages=search_languages,
+        )
         persisted = []
         for src in result['sources']:
-            if not src.get('registered'):
+            # Persist anchors/channels so direct approval keeps working, but never pre-persist unapproved branch candidates.
+            if not src.get('registered') and src.get('role') != 'branch':
                 clean_src = {k: src[k] for k in ('source_id', 'name', 'type', 'endpoint', 'config')}
-                validated = validate_source_definition(clean_src, config.corpus_root)
+                validated = validate_source_definition(clean_src, settings_snapshot.corpus_root)
                 repo.register_source(validated)
                 src = dict(src, registered=True)
             persisted.append(src)
@@ -139,6 +245,27 @@ def create_app(settings=None):
     @app.post('/api/sources', status_code=201, response_model=Source)
     def register_source(body: SourceRegisterInput):
         validated = validate_source_definition(body.model_dump(mode='json'), config.corpus_root)
+        return repo.register_source(validated)
+
+    @app.patch('/api/sources/{source_id}', response_model=Source)
+    def patch_source(source_id: str, body: SourcePatchInput):
+        if repo.active_runs():
+            raise AppError('RUN_ACTIVE', 'Wait for active runs to finish before editing sources.')
+        existing = repo.get('sources', source_id)
+        merged = dict(existing)
+        if body.name is not None:
+            merged['name'] = body.name.strip()
+        if body.config is not None:
+            cfg = dict(existing.get('config') or {})
+            cfg.update(body.config)
+            merged['config'] = cfg
+        if body.endpoint is not None:
+            merged['endpoint'] = body.endpoint.strip()
+        elif merged.get('type') == 'web_search' and isinstance((merged.get('config') or {}).get('query'), str):
+            q = merged['config']['query'].strip()
+            if q:
+                merged['endpoint'] = f"search://{quote_plus(q)}"[:900]
+        validated = validate_source_definition(merged, config.corpus_root)
         return repo.register_source(validated)
 
     @app.put('/api/topics/{identity}/sources')
@@ -151,6 +278,10 @@ def create_app(settings=None):
         provider = body.provider or config.provider
         request = dict(fixture_batch_id=body.fixture_batch_id, provider=provider)
         options = {}
+        if body.agent_mode:
+            if provider != 'qwen':
+                raise AppError('AGENT_REQUIRES_MODEL', 'Agent mode requires a configured model.', 422)
+            options['agent_mode'] = True
         if body.source_ids is not None:
             options['source_ids']=body.source_ids
         if body.as_of is not None:
@@ -173,9 +304,56 @@ def create_app(settings=None):
         repo.get('topics', identity)
         return repo.runs(identity)
 
+    @app.get('/api/schedules')
+    def schedules():
+        return repo.schedules()
+
+    @app.put('/api/topics/{identity}/schedule')
+    def save_schedule(identity: str, body: ScheduleInput):
+        with config_lock:
+            get_provider('qwen', config)
+            repo.save_schedule(identity, body, datetime.now(timezone.utc))
+            return next(plan for plan in repo.schedules() if plan['topic_id'] == identity)
+
+    @app.delete('/api/topics/{identity}/schedule', status_code=204)
+    def clear_schedule(identity: str):
+        with config_lock:
+            repo.clear_schedule(identity)
+
     @app.get('/api/runs/{identity}')
     def run_detail(identity: str):
-        return dict(run=repo.get('runs', identity), steps=repo.steps(identity))
+        run = repo.get('runs', identity)
+        steps = repo.steps(identity)
+        run_error = run.get('error') or {}
+        blocking_error = run_error.get('blocking_error')
+        if run_error.get('code') in ('interrupted', 'WORKFLOW_ERROR'):
+            blocking_error = run_error
+        attempts = {step['evidence_id']: step['attempt'] for step in steps if step['step_name'] == 'assess_evidence'}
+        evidence = []
+        for _, raw, outcome in repo.run_inputs(identity):
+            if outcome is None:
+                evidence_id = raw['evidence_id']
+                attempted = attempts.get(evidence_id, 0)
+                status = 'not_attempted'
+                if attempted:
+                    status = 'processing' if run['status'] == 'running' else 'failed'
+                outcome = dict(status=status, attempts=attempted, error=blocking_error,
+                               evidence_id=evidence_id, event_outcomes=[])
+            evidence.append(dict(source_id=raw['source_id'], external_id=raw['external_id'], title=raw['title'], **outcome))
+        return dict(run=run, steps=steps, evidence=evidence)
+
+    @app.post('/api/runs/{identity}/resume', status_code=202)
+    def resume(identity: str, idempotency_key: str | None = Header(default=None, max_length=200)):
+        original = repo.get('runs', identity)
+        if original['status'] not in ('failed', 'completed_with_errors'):
+            raise AppError('RUN_NOT_RESUMABLE', 'Only a finished run with errors can be resumed.')
+        provider = original['provider']
+        with config_lock:
+            get_provider(provider, config)
+            record, created = repo.resume_run(original, config.model if provider == 'qwen' else None, idempotency_key)
+        if created:
+            manager.submit(record['run_id'])
+        return {'run_id': record['run_id'], 'status': record['status']}
 
     @app.get('/api/topics/{identity}/dashboard')
     def dashboard(identity: str):
@@ -186,6 +364,33 @@ def create_app(settings=None):
     @app.get('/api/events/{identity}')
     def event(identity: str):
         return repo.event_detail(identity)
+
+    @app.patch('/api/events/{identity}')
+    def patch_event(identity: str, body: EventPatch):
+        return repo.patch_event(identity, body.model_dump(exclude_none=True))
+
+    @app.delete('/api/events/{identity}')
+    def delete_event(identity: str):
+        repo.delete_event(identity)
+        return {'event_id': identity}
+
+    @app.post('/api/events/{identity}/dismiss')
+    def dismiss_event(identity: str, body: EventDismissInput):
+        return repo.dismiss_event(
+            identity,
+            disposition=body.disposition,
+            reason=body.reason,
+            add_exclusion=body.add_exclusion,
+        )
+
+    @app.post('/api/events/{identity}/merge')
+    def merge_event(identity: str, body: EventMergeInput):
+        return repo.merge_event(
+            identity,
+            body.target_event_id,
+            new_title=body.new_title,
+            reason=body.reason,
+        )
 
     @app.get('/api/topics/{identity}/evidence')
     def evidence_decisions(identity: str):
@@ -200,6 +405,25 @@ def create_app(settings=None):
     def notifications(identity: str, action: Literal['immediate', 'digest', 'record_only'] | None = None):
         repo.get('topics', identity)
         return repo.notifications(identity, action)
+
+    @app.get('/api/inbox')
+    def inbox(topic_id: str | None = None):
+        return repo.inbox(topic_id)
+
+    @app.get('/api/workspace-updates')
+    def workspace_updates(topic_id: str | None = None):
+        return dict(schedules=repo.schedules(), inbox=repo.inbox(),
+                    topic_inbox=repo.inbox(topic_id, limit=12) if topic_id else None)
+
+    @app.post('/api/inbox/read-all')
+    def read_all_notices():
+        repo.read_inbox()
+        return repo.inbox()
+
+    @app.post('/api/inbox/{notification_id}/read')
+    def read_notice(notification_id: str):
+        repo.read_inbox(notification_id)
+        return repo.inbox()
 
     return app
 

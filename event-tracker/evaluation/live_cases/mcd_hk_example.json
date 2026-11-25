@@ -1,0 +1,21 @@
+{
+  "case_id": "mcd_hk_live_example",
+  "topic": {
+    "title": "香港麥當勞優惠追蹤",
+    "description": "追蹤香港麥當勞官方公布的限時優惠、活動開始及截止日期、適用條件和優惠失效更新。不同截止日或互不關聯的優惠應分別追蹤。",
+    "notification_preferences": "standard"
+  },
+  "approved_sources": [
+    {
+      "source_id": "mcd_hk_news_rss",
+      "name": "Google News RSS 香港麥當勞優惠檢索",
+      "type": "rss",
+      "endpoint": "https://news.google.com/rss/search?q=%E9%A6%99%E6%B8%AF%E9%BA%A5%E7%95%B6%E5%8B%9E+%E5%84%AA%E6%83%A0&hl=zh-HK&gl=HK&ceid=HK:zh-Hant",
+      "config": {"tier": "aggregator", "max_items": 20}
+    }
+  ],
+  "window": {
+    "start": "2026-11-01T00:00:00+08:00",
+    "end": "2026-11-23T23:59:59+08:00"
+  }
+}

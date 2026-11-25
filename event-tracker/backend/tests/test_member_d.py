@@ -78,6 +78,14 @@ def test_domain_independent_lifecycle(client, monkeypatch, subject, start, finis
     milestone=next(n for n in notices if 'major_milestone' in n['reason_codes'])
     assert milestone['action']==expected_action
     assert milestone['transition_id'] in {h['transition_id'] for h in detail['history']}
+    inbox = client.get('/api/inbox', params={'topic_id': identity}).json()
+    assert inbox['unread'] == 2
+    assert inbox['items'][0]['summary'] == finish
+    assert inbox['latest_immediate_id'] == (milestone['notification_id'] if preference == 'standard' else None)
+    read = client.post(f"/api/inbox/{milestone['notification_id']}/read").json()
+    assert read['unread'] == 1 and read['items'][0]['read_at']
+    assert client.post('/api/inbox/read-all').json()['unread'] == 0
+    assert client.get('/api/inbox').json()['unread'] == 0
 
 
 def test_review_closure_audit_replay_and_topic_scope(client):
@@ -118,6 +126,21 @@ def test_goal_edit_and_review_lock_preserve_run_snapshot(client):
     assert repo.get('runs',pending['run_id'])['snapshot']['topic']['title']=='ExampleSoft security'
 
 
+def test_keep_state_can_close_without_note(client):
+    identity = topic(client)
+    for batch in ('1', '2', '3'):
+        run(client, identity, batch)
+    dashboard = f'/api/topics/{identity}/dashboard'
+    before = client.get(dashboard).json()
+    review_id = before['reviews'][0]['evidence']['evidence_id']
+    path = f'/api/topics/{identity}/reviews/{review_id}/resolve'
+    result = client.post(path, json={'decision': 'dismiss'})
+    assert result.status_code == 200
+    assert result.json()['note'] is None
+    assert client.post(path, json={'decision': 'dismiss'}).json() == result.json()
+    assert client.get(dashboard).json()['events'] == before['events']
+
+
 def test_generic_prompt_and_wire_contract():
     settings=Settings(api_key='test',base_url='https://provider.invalid/v1',model='test')
     reply=Assessment(evidence_id='current-evidence',is_relevant=False,association=Association(type='unresolved',reason='Off topic'),novelty='no_change',reason_codes=['irrelevant'])
@@ -132,7 +155,11 @@ def test_generic_prompt_and_wire_contract():
     assert 'ExampleSoft' not in prompt
     assert 'untrusted data' in prompt and 'Conflicting evidence' in prompt
     assert captured[0]['response_format']=={'type':'json_object'}
-    assert PROMPT_VERSION=='assessment-v4'
+    assert 'event_decisions' in prompt
+    assert 'impact_reason' in prompt
+    assert 'proposed_title' in prompt
+    assert 'exclusions' in prompt
+    assert PROMPT_VERSION=='assessment-v14'
 
 
 @pytest.mark.parametrize('corrupt,code', [('claims','UNGROUNDED_UPDATE'),('timeline','INVALID_TIMELINE'),
@@ -162,7 +189,7 @@ def test_unsupported_updates_preserve_confirmed_state(client,monkeypatch,corrupt
                                                ('minor_update','low','record_only'),('major_milestone','breaking','immediate')])
 @pytest.mark.parametrize('preference',['standard','digest_only'])
 def test_notification_policy(kind,priority,action,preference):
-    expected='digest' if preference=='digest_only' and action=='immediate' else action
+    expected='digest' if preference=='digest_only' else action
     p,a,reasons=decide_notification(kind,preference)
     assert (p,a)==(priority,expected)
     assert kind in reasons

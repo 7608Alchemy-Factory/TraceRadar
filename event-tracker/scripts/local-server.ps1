@@ -1,15 +1,24 @@
 param(
     [ValidateSet('start', 'stop', 'status')]
     [string]$Action = 'start',
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 5173,
+    [string]$DatabasePath
 )
 
 $ErrorActionPreference = 'Stop'
 $workspaceRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $runnerPath = Join-Path $PSScriptRoot 'local_workspace.py'
 $pythonPath = Join-Path $workspaceRoot 'backend\.venv\Scripts\python.exe'
-$processFile = Join-Path $workspaceRoot 'data\local-workspace.process.json'
-$entryUrl = 'http://127.0.0.1:5173'
+$instanceName = if ($Port -eq 5173) { 'local-workspace' } else { "local-workspace-$Port" }
+$dataFolder = Join-Path $workspaceRoot 'data'
+$processFile = Join-Path $dataFolder "$instanceName.process.json"
+$entryUrl = "http://127.0.0.1:$Port"
+$requestedDatabase = if ($DatabasePath) {
+    if ([IO.Path]::IsPathRooted($DatabasePath)) { [IO.Path]::GetFullPath($DatabasePath) }
+    else { [IO.Path]::GetFullPath((Join-Path $workspaceRoot $DatabasePath)) }
+}
 
 function Get-LocalWorkspace {
     $response = $null
@@ -70,13 +79,20 @@ try {
         exit 0
     }
 
+    if ((Test-WorkspaceOwner $status) -and $requestedDatabase -and $status.database_path -ne $requestedDatabase) {
+        throw "TraceRadar on port $Port is serving a different database. Stop that instance before switching databases."
+    }
     if (!(Test-WorkspaceOwner $status)) {
-        if (Get-NetTCPConnection -State Listen -LocalPort 5173 -ErrorAction SilentlyContinue) {
-            throw 'Port 5173 is occupied by another service. Close that service first; no process was stopped.'
+        if (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue) {
+            throw "Port $Port is occupied by another service. No process was stopped."
         }
         if (!(Test-Path -LiteralPath $pythonPath)) {
-            throw "Backend environment is missing: $pythonPath. Follow the dependency setup in README.md."
+            $python = Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (!$python) { throw 'Python was not found. Follow the backend setup in README.md.' }
+            $pythonPath = $python.Source
         }
+        & $pythonPath -c 'import fastapi, httpx, uvicorn, dotenv, cryptography'
+        if ($LASTEXITCODE -ne 0) { throw "Backend dependencies are missing for $pythonPath. Follow README.md." }
         if (!(Test-Path -LiteralPath (Join-Path $workspaceRoot 'frontend\dist\index.html'))) {
             throw 'The frontend build is missing. Run npm ci and npm run build in frontend first.'
         }
@@ -84,8 +100,10 @@ try {
         # WMI owns this hidden process, so it is independent of the chat's temporary terminal/job.
         # This creates no scheduled task, login entry, or system service.
         $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow = [uint16]0; CreateFlags = [uint32]8}
+        $commandLine = "`"$pythonPath`" `"$runnerPath`" --port $Port"
+        if ($requestedDatabase) { $commandLine += " --database-path `"$requestedDatabase`"" }
         $result = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
-            CommandLine = "`"$pythonPath`" `"$runnerPath`""
+            CommandLine = $commandLine
             CurrentDirectory = $workspaceRoot
             ProcessStartupInformation = $startup
         }
@@ -98,10 +116,11 @@ try {
             if (Test-WorkspaceOwner $status) { break }
         }
         if (!(Test-WorkspaceOwner $status)) {
-            throw "TraceRadar did not become ready. See $(Join-Path $workspaceRoot 'data\local-workspace.log')."
+            throw "TraceRadar did not become ready. See $(Join-Path $dataFolder "$instanceName.log")."
         }
     }
 
+    New-Item -ItemType Directory -Path $dataFolder -Force | Out-Null
     @{process_id = $status.process_id; runner = $runnerPath} | ConvertTo-Json | Set-Content -LiteralPath $processFile -Encoding UTF8
     Write-Host "TraceRadar is ready: $entryUrl"
     Write-Host "API documentation: $entryUrl/docs"

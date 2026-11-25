@@ -1,0 +1,7 @@
+{
+  "schema_version":"1.0","case_id":"cve_2024_3400_v1","kind":"curated_retrospective_development",
+  "formal_scoring_allowed":false,
+  "topic":{"title":"CVE-2024-3400 进展追踪","description":"追踪 Palo Alto Networks PAN-OS GlobalProtect 漏洞 CVE-2024-3400 的披露、实际利用、修复和后续调查；区分厂商公告与独立研究，并保留各阶段当时可见的信息。","notification_preferences":"standard"},
+  "runtime_source":{"source_id":"benchmark_cve3400","name":"CVE-2024-3400 curated multi-source replay","type":"replay","endpoint":"replay://cve_2024_3400_v1/all.json","config":{"corpus_path":"cve_2024_3400_v1/all.json"}},
+  "fixture":"fixtures/cve_2024_3400_v1/all.json","uncertain_source_ids":["CVE3400-06"],"stages":[{"stage_id":"s1_disclosed","as_of":"2024-04-12T23:59:59Z"},{"stage_id":"s2_fixes","as_of":"2024-04-16T23:59:59Z"},{"stage_id":"s3_followup","as_of":"2024-05-15T23:59:59Z"}]
+}

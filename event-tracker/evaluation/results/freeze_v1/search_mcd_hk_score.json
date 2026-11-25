@@ -1,0 +1,71 @@
+{
+  "case_id": "mcd_hk_nov2026_search_v1",
+  "reviewer": "AI assistant initial labels; evaluation author confirmed the judgments",
+  "human_review": {
+    "status": "accepted_initial_labels",
+    "reviewed_at": "2026-11-25",
+    "source": "User confirmation in project conversation",
+    "scope": "All 64 candidate relevance judgments and known-development matches",
+    "method_detail": "The evaluation author reviewed and accepted the initial judgments."
+  },
+  "rubric": "Relevant = in-window new Hong Kong McDonald's offer, limited food, or membership activity. Old/recurring offer roundups and unrelated topics are irrelevant. Matching a known development does not require the official URL.",
+  "results": {
+    "baseline_web_search": {
+      "queries": 1,
+      "returned": 20,
+      "relevant": 17,
+      "irrelevant": 3,
+      "uncertain": 0,
+      "candidate_pool_precision": 0.85,
+      "known_development_ids": [
+        "K1",
+        "K2",
+        "K3"
+      ],
+      "unique_urls": 20,
+      "fulltext_fetched": 4,
+      "fulltext_attempted": 4,
+      "content_under_180_chars": 16
+    },
+    "ai_queries_web_search": {
+      "queries": 3,
+      "returned": 24,
+      "relevant": 19,
+      "irrelevant": 5,
+      "uncertain": 0,
+      "candidate_pool_precision": 0.7916666666666666,
+      "known_development_ids": [
+        "K1",
+        "K2",
+        "K3"
+      ],
+      "unique_urls": 22,
+      "fulltext_fetched": 4,
+      "fulltext_attempted": 4,
+      "content_under_180_chars": 20
+    },
+    "rss": {
+      "queries": 1,
+      "returned": 20,
+      "relevant": 16,
+      "irrelevant": 4,
+      "uncertain": 0,
+      "candidate_pool_precision": 0.8,
+      "known_development_ids": [
+        "K1",
+        "K2",
+        "K3"
+      ],
+      "unique_urls": 20,
+      "fulltext_fetched": 0,
+      "fulltext_attempted": 0,
+      "content_under_180_chars": 20
+    }
+  },
+  "limits": [
+    "Candidate pool precision is not Precision@K: connector sorts by publication date.",
+    "Known-development coverage is not whole-web recall.",
+    "Most Google News redirect entries supplied only headlines.",
+    "The evaluation author reviewed and accepted the initial labels."
+  ]
+}

@@ -1,0 +1,18 @@
+[
+  {
+    "source_id": "harbor_transit",
+    "external_id": "DR-01",
+    "url": "https://transit.example/notices/2026-06-07",
+    "title": "12路与27路临时调整公告",
+    "content": "海湾公交公布两项独立调整：12路因站点施工自6月8日零时至6月9日中午12时不停靠中央广场站；27路因道路工程自6月8日零时至6月15日末班车绕行滨海路。两线的原因、受影响路段和预计结束日期不同。",
+    "published_at": "2026-06-07T08:00:00Z"
+  },
+  {
+    "source_id": "harbor_transit",
+    "external_id": "DR-02",
+    "url": "https://transit.example/notices/2026-06-09",
+    "title": "12路恢复中央广场站停靠",
+    "content": "海湾公交确认12路已于6月9日中午12时恢复中央广场站停靠。27路的滨海路绕行安排不变，预计仍持续至6月15日末班车。",
+    "published_at": "2026-06-09T05:00:00Z"
+  }
+]

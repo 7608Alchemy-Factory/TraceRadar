@@ -2,13 +2,17 @@ import logging
 import queue
 import threading
 from .core import AppError
-from .domain import Assessment, uid, now
+from .domain import Assessment, EvidenceAssessment, uid, now
 from .connectors import ConnectorRouter
 from .evidence_processing import find_duplicate_match, score_relevance
-from .llm import get_provider
+from .llm import RETRYABLE_PROVIDER_ERRORS, EvidenceAssessmentAgent, get_provider
 from .services import StateManager
 
 logger = logging.getLogger(__name__)
+
+PROVIDER_ERRORS_THAT_STOP_RUN = {
+    'PROVIDER_AUTH', 'PROVIDER_MODEL', 'PROVIDER_BALANCE', 'PROVIDER_REQUEST',
+}
 
 
 def public_error(exc):
@@ -20,7 +24,7 @@ def public_error(exc):
 class RunManager:
     def __init__(self, repo, settings):
         self.repo, self.settings = repo, settings
-        self.connector = ConnectorRouter(settings.fixture_path, settings.corpus_root)
+        self.connector = ConnectorRouter(settings.fixture_path, settings.corpus_root, settings=settings)
         self.state_manager = StateManager(repo)
         self.queue = queue.Queue()
         self.thread = threading.Thread(target=self.worker, name='topic-worker', daemon=True)
@@ -54,7 +58,8 @@ class RunManager:
         self.repo.update_run(identity, status='running', started_at=now())
         topic = run['snapshot']['topic']
         sequence = 0
-        counts = {'fetched': 0, 'committed': 0, 'skipped': 0, 'review': 0, 'irrelevant': 0, 'no_change': 0, 'errors': 0}
+        counts = {'fetched': 0, 'committed': 0, 'skipped': 0, 'review': 0, 'irrelevant': 0, 'no_change': 0,
+                  'errors': 0, 'unprocessed': 0}
         errors, usable = [], 0
 
         def step(name, evidence_id=None):
@@ -74,7 +79,22 @@ class RunManager:
         provider = get_provider(run['provider'], self.settings)
         options = run['snapshot'].get('options', {})
         inputs = []
-        for source in run['snapshot']['sources']:
+        sources = [] if run['trigger_type'] == 'resume' else run['snapshot']['sources']
+        source_types = {s['source_id']: s.get('type') for s in run['snapshot']['sources']}
+        needs_web_ctx = any(s.get('type') in ('web_search', 'webpage', 'rss') for s in sources)
+        existing_for_fetch = self.repo.topic_evidence_items(topic['topic_id']) if needs_web_ctx else None
+        committed_ext_ids = (
+            {
+                (row['evidence']['source_id'], row['evidence']['external_id'])
+                for row in self.repo.evidence_decisions(topic['topic_id'])
+                if row.get('status') in ('completed', 'review')
+            }
+            if any(s.get('type') == 'webpage' for s in sources)
+            else None
+        )
+        in_run_urls: set[str] = set()
+        unavailable_rss_hosts: set[str] = set()
+        for source in sources:
             trace = step('fetch_source')
             trace['input_refs'] = [source['source_id']]
             try:
@@ -83,9 +103,16 @@ class RunManager:
                     fetch_kwargs['as_of'] = options['as_of']
                 if options.get('manual_items'):
                     fetch_kwargs['manual_items'] = options['manual_items']
+                if source.get('type') in ('web_search', 'webpage', 'rss'):
+                    fetch_kwargs['existing_items'] = existing_for_fetch
+                    fetch_kwargs['in_run_urls'] = in_run_urls
+                    fetch_kwargs['topic_id'] = topic['topic_id']
+                if source.get('type') == 'webpage':
+                    fetch_kwargs['committed_ext_ids'] = committed_ext_ids
+                if source.get('type') == 'rss':
+                    fetch_kwargs['unavailable_rss_hosts'] = unavailable_rss_hosts
                 batch = self.connector.fetch(source, run['fixture_batch_id'], **fetch_kwargs) if fetch_kwargs else self.connector.fetch(source, run['fixture_batch_id'])
                 inputs.extend(batch)
-                counts['fetched'] += len(batch)
                 decision = {'source_id': source['source_id'], 'items': len(batch)}
                 fetch_stats = getattr(self.connector, 'last_fetch_stats', None)
                 if fetch_stats:
@@ -93,13 +120,26 @@ class RunManager:
                 end(trace, decision=decision)
                 usable += 1
             except Exception as exc:
-                error = dict(public_error(exc), code='source_error')
+                cause = public_error(exc)
+                error = dict(code='source_error', cause_code=cause['code'], message=cause['message'], source_id=source['source_id'])
                 errors.append(error)
                 counts['errors'] += 1
                 end(trace, 'failed', error=error)
-        for position,raw in enumerate(sorted(inputs, key=lambda e: (e['published_at'], e['external_id'], e['source_id']))):
+        if run['trigger_type'] != 'resume':
+            self.repo.save_run_inputs(identity, sorted(inputs, key=lambda e: (e['published_at'], e['external_id'], e['source_id'])))
+        work = self.repo.run_inputs(identity)
+        counts['fetched'] = len(work)
+        blocking_error = None
+        for index, (position, raw, _) in enumerate(work):
             evidence = None
+            attempts = 0
             trace = step('normalize_and_deduplicate', raw['evidence_id'])
+
+            def record(status, error=None):
+                self.repo.record_run_input(identity, position, dict(
+                    status=status, attempts=attempts, error=error,
+                    evidence_id=(evidence or raw)['evidence_id'], event_outcomes=[]))
+
             try:
                 existing_items = self.repo.topic_evidence_items(topic['topic_id'])
                 same_external = any(
@@ -111,7 +151,7 @@ class RunManager:
                     dup_match = find_duplicate_match(
                         raw,
                         existing_items,
-                        enable_near_duplicate=options.get('near_duplicate_enabled', True),
+                        enable_near_duplicate=options.get('near_duplicate_enabled', True) and source_types.get(raw['source_id']) != 'webpage',
                     )
                 evidence = self.repo.ingest(
                     topic['topic_id'],
@@ -125,14 +165,15 @@ class RunManager:
                 canonical_done = self.repo.processing(topic['topic_id'], canonical) in ('completed', 'review')
                 if status in ('completed', 'review') or (canonical != evidence['evidence_id'] and canonical_done):
                     if status not in ('completed', 'review'):
-                        event_id = next((e['event_id'] for e in self.repo.events(topic['topic_id']) if canonical in e['state']['sources']), None)
+                        links = [(event_id, 'duplicate') for event_id in self.repo.linked_events(topic['topic_id'], canonical)]
                         self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'completed',
-                                                  event_id=event_id, relation='duplicate')
+                                                  links=links)
                     counts['skipped'] += 1
                     dedup_decision = {'reason': dup_match['reason'] if dup_match else 'already_processed_or_exact_duplicate', 'canonical_evidence_id': canonical}
                     if dup_match and 'similarity' in dup_match:
                         dedup_decision['similarity'] = dup_match['similarity']
                     end(trace, 'skipped', dedup_decision)
+                    record('skipped')
                     continue
                 end(trace, decision={'canonical_evidence_id': canonical})
                 if options.get('prefilter_enabled', False):
@@ -143,30 +184,62 @@ class RunManager:
                         counts['irrelevant'] += 1
                         usable += 1
                         end(trace, 'skipped', {'reason': 'prefilter_low_relevance', **prefilter})
+                        record('irrelevant')
                         continue
                 trace = step('assess_evidence', evidence['evidence_id'])
-                assessment = Assessment.model_validate(provider.assess(topic, self.repo.events(topic['topic_id']), evidence, run['snapshot']['sources']))
-                trace['attempt'] = getattr(provider, 'attempt', 1)
-                end(trace, decision={'assessment': assessment.model_dump(mode='json'), 'usage': getattr(provider, 'usage', None),'state_assembly':getattr(provider,'state_assembly',None)})
+                agent = None
+                try:
+                    assessor_options = {}
+                    if options.get('agent_mode'):
+                        agent = EvidenceAssessmentAgent(
+                            lambda event_id: self.repo.event_evidence_as_of(topic['topic_id'], event_id, evidence['published_at']),
+                            lambda event_id, keyword: self.repo.get_event_history(
+                                topic['topic_id'], event_id, evidence['published_at'], keyword,
+                            ),
+                        )
+                        assessor_options['agent'] = agent
+                    assessment = provider.assess(topic, self.repo.events(topic['topic_id']), evidence,
+                                                 run['snapshot']['sources'], **assessor_options)
+                finally:
+                    attempts = getattr(provider, 'attempt', 1)
+                    trace['attempt'] = attempts
+                    if agent is not None:
+                        trace['decision']['agent'] = agent.trace
+                if not isinstance(assessment, (EvidenceAssessment, Assessment)):
+                    schema = EvidenceAssessment if isinstance(assessment, dict) and 'event_decisions' in assessment else Assessment
+                    assessment = schema.model_validate(assessment)
+                end(trace, decision={**trace['decision'], 'assessment': assessment.model_dump(mode='json'),
+                                     'usage': getattr(provider, 'usage', None),
+                                     'state_assembly': getattr(provider, 'state_assembly', None)})
                 trace = step('validate_and_commit', evidence['evidence_id'])
-                outcome = self.state_manager.apply(topic, identity, evidence, assessment)
-                counts[outcome if outcome in counts else 'skipped'] += 1
+                report = self.state_manager.apply(topic, identity, evidence, assessment, position, attempts)
+                outcome, results = report['status'], report['event_outcomes']
+                if outcome != 'committed':
+                    counts['skipped' if outcome == 'duplicate' else outcome] += 1
+                counts['committed'] += sum(item['outcome'] == 'committed' for item in results)
                 usable += 1
-                end(trace, decision={'outcome': outcome})
+                trace['output_refs'] = [item['transition_id'] for item in results if 'transition_id' in item]
+                end(trace, decision={'outcome': outcome, 'event_outcomes': results})
             except Exception as exc:
                 logger.warning('Evidence processing failed: %s', type(exc).__name__)
                 error = public_error(exc)
                 errors.append(error)
                 counts['errors'] += 1
-                trace['attempt'] = getattr(provider, 'attempt', 1)
+                retryable = error['code'] in RETRYABLE_PROVIDER_ERRORS
+                failure = 'failed_retryable' if retryable else 'failed'
                 if evidence and self.repo.processing(topic['topic_id'], evidence['evidence_id']) not in ('completed', 'review'):
-                    self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], 'failed', error=error)
-                end(trace, 'failed', error=error)
-                if error['code'] in {'PROVIDER_AUTH','PROVIDER_MODEL','PROVIDER_BALANCE','PROVIDER_REQUEST','PROVIDER_UNAVAILABLE'}:
-                    counts['unprocessed']=len(inputs)-position-1
+                    self.repo.finish_evidence(topic['topic_id'], evidence['evidence_id'], failure, error=error)
+                end(trace, 'failed', decision=trace['decision'], error=error)
+                record(failure, error)
+                if error['code'] in PROVIDER_ERRORS_THAT_STOP_RUN:
+                    blocking_error = error
+                    counts['unprocessed'] = len(work) - index - 1
                     break
         # Successful fetches alone do not make a completely failed processing run partial success.
         outcomes = sum(counts[k] for k in ('committed', 'skipped', 'review', 'irrelevant', 'no_change'))
-        status = ('completed_with_errors' if outcomes or (not inputs and usable) else 'failed') if errors else 'completed'
+        status = ('completed_with_errors' if outcomes or (not work and usable) else 'failed') if errors else 'completed'
+        error = {'code': 'RUN_ERRORS', 'message': 'One or more steps failed.', 'details': errors} if errors else None
+        if blocking_error:
+            error['blocking_error'] = blocking_error
         self.repo.update_run(identity, status=status, completed_at=now(), counts=counts,
-                             error={'code': 'RUN_ERRORS', 'message': 'One or more steps failed.', 'details': errors} if errors else None)
+                             error=error)

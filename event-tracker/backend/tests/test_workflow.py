@@ -151,7 +151,7 @@ def test_digest_only_and_low_update(client, monkeypatch):
         return data
     monkeypatch.setattr(manager.connector,'fetch',extra)
     assert run(client,identity,'empty')['run']['status']=='completed'
-    assert business_counts(client,identity)[2]['record_only']==1
+    assert business_counts(client,identity)[2] == {'immediate':0,'digest':5,'record_only':0}
 
 
 @pytest.mark.parametrize('corrupt', ['evidence', 'cross_topic', 'reference', 'version'])
@@ -219,5 +219,6 @@ def test_qwen_bounded_repair_auth_and_timeout(settings):
         calls.append(request)
         raise httpx.ReadTimeout('test')
     with httpx.Client(transport=httpx.MockTransport(timeout)) as client:
-        with pytest.raises(AppError, match='timed out'): QwenProvider(settings,client).assess({},[],{},[])
+        with pytest.raises(AppError) as caught: QwenProvider(settings,client).assess({},[],{},[])
+        assert caught.value.code == 'PROVIDER_TIMEOUT'
         assert len(calls)==2

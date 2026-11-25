@@ -1,0 +1,5 @@
+Tool: OpenAI Codex (GPT-6 family)
+Date: 25 November 2026
+Record: Follow-up user request in Chinese.
+
+现在我队友已经推到main分支了 你就是代码不要用tot-1125用main就好了 然后readme也好 解释性 源代码、提示/配置、README文件、所需的示例数据或访问说明、评估材料、提供代码库链接，也请务必包含源代码快照 这些个也更新一下

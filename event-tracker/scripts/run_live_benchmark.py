@@ -7,7 +7,6 @@ score_live_benchmark.py later with independently prepared annotations.
 import argparse
 import hashlib
 import json
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -15,11 +14,12 @@ from pathlib import Path
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'backend'))
+sys.path[:0] = [str(ROOT / 'scripts'), str(ROOT / 'backend')]
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.core import Settings  # noqa: E402
 from app.main import create_app  # noqa: E402
+from revision import source_revision  # noqa: E402
 
 
 def read_json(path):
@@ -71,10 +71,6 @@ def wait_run(client, run_id, timeout):
     return require(client.get(f'/api/runs/{run_id}'), 'poll timed-out run')
 
 
-def git_value(*args):
-    return subprocess.run(['git', *args], cwd=ROOT.parent, capture_output=True, text=True, check=True).stdout.strip()
-
-
 def capture_once(case, case_path, provider, timeout, run_dir, rss_client=None):
     start, end = validate_case(case)
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -112,8 +108,7 @@ def capture_once(case, case_path, provider, timeout, run_dir, rss_client=None):
     manifest = {
         'case_id': case['case_id'], 'capture_id': run_dir.name,
         'captured_at': datetime.now(timezone.utc).isoformat(),
-        'commit': git_value('rev-parse', 'HEAD'),
-        'working_tree_dirty': bool(git_value('status', '--porcelain')),
+        **source_revision(ROOT.parent),
         'case_sha256': hashlib.sha256(case_path.read_bytes().replace(b'\r\n', b'\n')).hexdigest(),
         'provider': provider, 'model_id': settings.model if provider == 'qwen' else None,
         'prompt_version': detail['run'].get('prompt_version'),

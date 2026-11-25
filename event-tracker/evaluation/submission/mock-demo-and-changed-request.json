@@ -1,0 +1,65 @@
+{
+  "case": "ExampleSoft synthetic demo",
+  "provider": "mock",
+  "runs_in_order": [
+    {
+      "batch": "1",
+      "status": "completed",
+      "fetched": 2,
+      "committed": 1
+    },
+    {
+      "batch": "2",
+      "status": "completed",
+      "fetched": 3,
+      "committed": 2
+    },
+    {
+      "batch": "3",
+      "status": "completed",
+      "fetched": 3,
+      "committed": 1
+    },
+    {
+      "batch": "1",
+      "status": "completed",
+      "fetched": 2,
+      "committed": 0
+    },
+    {
+      "batch": "2",
+      "status": "completed",
+      "fetched": 3,
+      "committed": 0
+    },
+    {
+      "batch": "3",
+      "status": "completed",
+      "fetched": 3,
+      "committed": 0
+    }
+  ],
+  "final": {
+    "events": 2,
+    "transitions": 4,
+    "notifications": {
+      "immediate": 1,
+      "digest": 3,
+      "record_only": 0
+    }
+  },
+  "changed_request": {
+    "before": {
+      "description": "Track ExampleSoft vulnerabilities, versions and patches.",
+      "exclusions": []
+    },
+    "after": {
+      "description": "Track confirmed ExampleSoft patches and affected releases.",
+      "exclusions": [
+        "unverified rumors"
+      ]
+    },
+    "persisted": true,
+    "model_assessment": "not exercised with Mock"
+  }
+}

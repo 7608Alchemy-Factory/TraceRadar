@@ -6,7 +6,6 @@ not these benchmark topics. Ground truth is loaded only after all runs finish.
 import argparse
 import hashlib
 import json
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -21,6 +20,7 @@ from app.core import Settings  # noqa: E402
 from app.llm import PROMPT_VERSION  # noqa: E402
 from app.main import create_app  # noqa: E402
 from build_review_sheet import build as build_review_sheet  # noqa: E402
+from revision import source_revision  # noqa: E402
 from score_replay_state import (score as score_replay_state, markdown as state_score_markdown,
                                 review_template as state_review_template)  # noqa: E402
 
@@ -167,11 +167,7 @@ def main():
         gold = load(gold_path)
         validate_gold(case, gold)
         verify_freeze(case, gold, gold_path)
-        commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=ROOT.parent,
-                                capture_output=True, text=True, check=True).stdout.strip()
-        dirty = subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT.parent,
-                               capture_output=True, text=True, check=True).stdout
-        report = {'experiment': {'commit': commit, 'working_tree_dirty': bool(dirty), 'provider': args.provider,
+        report = {'experiment': {**source_revision(ROOT.parent), 'provider': args.provider,
                                  'model_id': settings.model if args.provider == 'qwen' else None,
                                  'model_base_url': settings.base_url if args.provider == 'qwen' else None,
                                  'prompt_version': PROMPT_VERSION if args.provider == 'qwen' else None,

@@ -1,0 +1,125 @@
+{
+  "case": "mcd_hk_campaigns_v1",
+  "transport": "HTTPX MockTransport",
+  "runs": [
+    {
+      "injected_http_status": 401,
+      "failed_item": "MCD-04",
+      "original": {
+        "status": "completed_with_errors",
+        "provider_calls": [
+          "MCD-01",
+          "MCD-02",
+          "MCD-04"
+        ],
+        "evidence": [
+          {
+            "item": "MCD-01",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          },
+          {
+            "item": "MCD-02",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          },
+          {
+            "item": "MCD-04",
+            "status": "failed",
+            "attempts": 1,
+            "error_code": "PROVIDER_AUTH"
+          },
+          {
+            "item": "MCD-03",
+            "status": "not_attempted",
+            "attempts": 0,
+            "error_code": "PROVIDER_AUTH"
+          }
+        ]
+      },
+      "resumed": {
+        "status": "completed",
+        "provider_calls": [
+          "MCD-04",
+          "MCD-03"
+        ],
+        "evidence": [
+          {
+            "item": "MCD-04",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          },
+          {
+            "item": "MCD-03",
+            "status": "committed",
+            "attempts": 1,
+            "error_code": null
+          }
+        ],
+        "refetched_source": false,
+        "repeat_resume_returned_same_run": true,
+        "final_notification_count": 2
+      }
+    },
+    {
+      "injected_http_status": 503,
+      "failed_item": "MCD-04",
+      "original": {
+        "status": "completed_with_errors",
+        "provider_calls": [
+          "MCD-01",
+          "MCD-02",
+          "MCD-04",
+          "MCD-04",
+          "MCD-03"
+        ],
+        "evidence": [
+          {
+            "item": "MCD-01",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          },
+          {
+            "item": "MCD-02",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          },
+          {
+            "item": "MCD-04",
+            "status": "failed_retryable",
+            "attempts": 2,
+            "error_code": "PROVIDER_SERVER_ERROR"
+          },
+          {
+            "item": "MCD-03",
+            "status": "committed",
+            "attempts": 1,
+            "error_code": null
+          }
+        ]
+      },
+      "resumed": {
+        "status": "completed",
+        "provider_calls": [
+          "MCD-04"
+        ],
+        "evidence": [
+          {
+            "item": "MCD-04",
+            "status": "irrelevant",
+            "attempts": 1,
+            "error_code": null
+          }
+        ],
+        "refetched_source": false,
+        "repeat_resume_returned_same_run": true,
+        "final_notification_count": 2
+      }
+    }
+  ]
+}

@@ -1,4 +1,5 @@
 """Run the fixed Mock demo against a running backend; no paid calls."""
+import argparse
 import json
 import time
 from pathlib import Path
@@ -6,7 +7,12 @@ import httpx
 
 
 def main():
-    with httpx.Client(base_url='http://127.0.0.1:8000', timeout=10) as client:
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--base-url', default='http://127.0.0.1:8000')
+    parser.add_argument('--output', type=Path, default=root / 'evaluation/reports/mock-demo.json')
+    args = parser.parse_args()
+    with httpx.Client(base_url=args.base_url, timeout=10, trust_env=False) as client:
         def request(method, path, **kwargs):
             response = client.request(method, '/api' + path, **kwargs)
             response.raise_for_status()
@@ -25,13 +31,13 @@ def main():
         dashboard = request('GET', f'/topics/{identity}/dashboard')
         details = [request('GET', f"/events/{e['event_id']}") for e in dashboard['events']]
         result = {'dashboard':dashboard,'events':details,'notifications':request('GET',f'/topics/{identity}/notifications')}
-        expected = json.loads((Path(__file__).resolve().parents[1]/'evaluation/expected/demo.json').read_text())
+        expected = json.loads((root / 'evaluation/expected/demo.json').read_text(encoding='utf-8'))
         assert len(details)==expected['events']
         assert sum(len(e['history']) for e in details)==expected['transitions']
         assert dashboard['notification_counts']==expected['notifications']
-        output = Path(__file__).resolve().parents[1]/'evaluation/reports/mock-demo.json'
-        output.write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
-        print(f'PASS: 2 events, 4 transitions, 4 notifications; replay unchanged. Export: {output}')
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        print(f'PASS: 2 events, 4 transitions, 4 notifications; replay unchanged. Export: {args.output}')
 
 
 if __name__=='__main__': main()

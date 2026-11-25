@@ -1,0 +1,5 @@
+Tool: OpenAI Codex (GPT-6 family)
+Date: 25 November 2026
+Record: User request in Chinese, with personal filesystem paths redacted and line breaks normalized.
+
+"[project folder]/COMP7608B_Final_Project_Student_Guideline.pdf" 仔细阅读这个里面的要求 然后帮我把我们项目最新的代码[https://github.com/7608Alchemy-Factory/TraceRadar](https://github.com/7608Alchemy-Factory/TraceRadar) 主要是codex/evaluation-results-v1和codex/evaluation-freeze-v1还没有完全整合 然后前端最终版是feat/c-live-rss-frontend-1124-v2 的branch 完整整和起来 然后按照其中的要求帮我在github 部署到新的分支tot-1125里面 然后同时我本地也部署好 把README中应包含小组编号、项目名称及成员姓名。 源代码、提示/配置、README文件、所需的示例数据或访问说明、评估材料、提供代码库链接，也请务必包含源代码快照。这些都通通保存到我本地的"[submission folder]" 按照行业专家级的素养深度思考处理这些任务！

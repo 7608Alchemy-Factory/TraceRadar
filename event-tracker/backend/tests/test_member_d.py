@@ -159,7 +159,7 @@ def test_generic_prompt_and_wire_contract():
     assert 'impact_reason' in prompt
     assert 'proposed_title' in prompt
     assert 'exclusions' in prompt
-    assert PROMPT_VERSION=='assessment-v9'
+    assert PROMPT_VERSION=='assessment-v14'
 
 
 @pytest.mark.parametrize('corrupt,code', [('claims','UNGROUNDED_UPDATE'),('timeline','INVALID_TIMELINE'),

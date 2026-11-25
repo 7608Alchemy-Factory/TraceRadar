@@ -1,0 +1,161 @@
+{
+  "schema_version": "2.0",
+  "case_id": "dual_route_notice_v1",
+  "annotation_status": "frozen",
+  "events": [
+    {
+      "event_key": "route12_stop",
+      "boundary": "12路中央广场站临时不停靠及恢复"
+    },
+    {
+      "event_key": "route27_detour",
+      "boundary": "27路滨海路绕行及其结束；与12路调整独立"
+    }
+  ],
+  "evidence_labels": [
+    {
+      "item_id": "DR-01",
+      "relevance": "relevant",
+      "event_keys": [
+        "route12_stop",
+        "route27_detour"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": []
+    },
+    {
+      "item_id": "DR-02",
+      "relevance": "relevant",
+      "event_keys": [
+        "route12_stop",
+        "route27_detour"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": []
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "DR-01-C1",
+      "event_key": "route12_stop",
+      "statement": "12路从6月8日零时至6月9日中午12时不停靠中央广场站，原因是站点施工",
+      "supporting_item_ids": [
+        "DR-01"
+      ],
+      "first_visible_stage_id": "s1_two_routes"
+    },
+    {
+      "claim_id": "DR-01-C2",
+      "event_key": "route27_detour",
+      "statement": "27路从6月8日零时至6月15日末班车因道路工程绕行滨海路",
+      "supporting_item_ids": [
+        "DR-01"
+      ],
+      "first_visible_stage_id": "s1_two_routes"
+    },
+    {
+      "claim_id": "DR-02-C1",
+      "event_key": "route12_stop",
+      "statement": "12路已于6月9日中午12时恢复中央广场站停靠",
+      "supporting_item_ids": [
+        "DR-02"
+      ],
+      "first_visible_stage_id": "s2_route12_restored"
+    }
+  ],
+  "stage_expectations": [
+    {
+      "stage_id": "s1_two_routes",
+      "events": [
+        {
+          "event_key": "route12_stop",
+          "lifecycle_status": "active",
+          "state_facets": {},
+          "required_claim_ids": [
+            "DR-01-C1"
+          ],
+          "forbidden_assertions": [
+            "12路中央广场站不停靠将持续至6月15日末班车"
+          ]
+        },
+        {
+          "event_key": "route27_detour",
+          "lifecycle_status": "active",
+          "state_facets": {},
+          "required_claim_ids": [
+            "DR-01-C2"
+          ],
+          "forbidden_assertions": [
+            "27路滨海路绕行将于6月9日中午12时结束"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s2_route12_restored",
+      "events": [
+        {
+          "event_key": "route12_stop",
+          "lifecycle_status": "resolved",
+          "state_facets": {},
+          "required_claim_ids": [
+            "DR-01-C1",
+            "DR-02-C1"
+          ],
+          "forbidden_assertions": [
+            "12路仍不停靠中央广场站"
+          ]
+        },
+        {
+          "event_key": "route27_detour",
+          "lifecycle_status": "active",
+          "state_facets": {},
+          "required_claim_ids": [
+            "DR-01-C2"
+          ],
+          "forbidden_assertions": [
+            "27路已于6月9日恢复原线"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "DR-01-route12",
+      "event_key": "route12_stop",
+      "stage_id": "s1_two_routes",
+      "supporting_item_ids": [
+        "DR-01"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "12路独立服务调整"
+    },
+    {
+      "milestone_id": "DR-01-route27",
+      "event_key": "route27_detour",
+      "stage_id": "s1_two_routes",
+      "supporting_item_ids": [
+        "DR-01"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "27路独立服务调整"
+    },
+    {
+      "milestone_id": "DR-02-route12",
+      "event_key": "route12_stop",
+      "stage_id": "s2_route12_restored",
+      "supporting_item_ids": [
+        "DR-02"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "12路已恢复，27路仍在绕行"
+    }
+  ],
+  "annotation_notes": "合成案例；两条线路各有独立范围和结束时间，公告数不能代替 Event 数。DR-02 同时提到两线，但只有12路状态改变。"
+}

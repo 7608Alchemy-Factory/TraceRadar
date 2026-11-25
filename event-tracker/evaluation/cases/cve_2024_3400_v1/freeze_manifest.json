@@ -1,0 +1,11 @@
+{
+  "case_id": "cve_2024_3400_v1",
+  "frozen_on": "2026-11-25",
+  "status": "frozen",
+  "case_sha256": "ee6086842ad5aa05262d60f7c64973d7264bbe5b4fe21e45e90a1ed44fd22fc6",
+  "fixture_sha256": "0ae24aff745bdeaeba27732321087932ed8add977808b77211053e777989c755",
+  "ground_truth_sha256": "c2e2f4fec24dd53379274eb55fca994f85a5ac2738a41c2bb85970c9e2f27d03",
+  "hash_rule": "SHA-256 after normalizing CRLF to LF, so Git checkout line endings do not change the freeze identity",
+  "review_basis": "Project owner reviewed the claim/Event distinction and requested freezing this curated retrospective development case on 2026-11-25.",
+  "review_limit": "Inputs are human-written retrospective paraphrases, not verified historical page snapshots. NVD date is a replay placeholder; source versions and exact publication times remain uncertain. A second independent annotator sign-off is not recorded. Formal historical scoring is disabled."
+}

@@ -1,0 +1,11 @@
+{
+  "case_id": "returning_offer_v1",
+  "frozen_on": "2026-11-24",
+  "status": "frozen",
+  "case_sha256": "4b34cc34a10b89daa23a576b21c6c9a28fc4aed2d3c0a23fc16afb3d98a86423",
+  "fixture_sha256": "7298dc793af240bf10c5d675e06b2cb82c1fa9f3d1b876e6cd26f14297e1df6a",
+  "ground_truth_sha256": "59d626e3780b7741af6876df1c5a4252d17d6851b0f69f5b029f97e0306f22d1",
+  "hash_rule": "SHA-256 after normalizing CRLF to LF, so Git checkout line endings do not change the freeze identity",
+  "review_basis": "Project owner confirmed that time expiry should update the Event as expired with record_only action, then requested freezing the synthetic case on 2026-11-24.",
+  "review_limit": "The evidence and source URLs are synthetic. A separate second human annotator sign-off is not recorded. Time-driven status updates are currently a runtime capability gap and must be reported separately from model judgment."
+}

@@ -21,6 +21,8 @@ from app.core import Settings  # noqa: E402
 from app.llm import PROMPT_VERSION  # noqa: E402
 from app.main import create_app  # noqa: E402
 from build_review_sheet import build as build_review_sheet  # noqa: E402
+from score_replay_state import (score as score_replay_state, markdown as state_score_markdown,
+                                review_template as state_review_template)  # noqa: E402
 
 
 def load(path):
@@ -106,7 +108,7 @@ def run_case(client, case, provider, timeout):
             'stages': stages}
 
 
-def diagnostic(result, gold, fixture):
+def diagnostic(result, gold, fixture, case):
     expected = {x['item_id']: x for x in gold['evidence_labels']}
     final = result['stages'][-1]
     stored = {row['evidence']['external_id'].rsplit(':', 1)[-1]: row for row in final['evidence']}
@@ -133,9 +135,13 @@ def diagnostic(result, gold, fixture):
         observations.append({'item_id': item_id, 'expected_relevance': label['relevance'],
                              'actual_relevance': assessment.get('is_relevant') if assessment else None,
                              'processing_status': detail['status'], 'error': detail['error']})
-    return {'evaluation_valid': result['provider'] != 'mock' and gold['annotation_status'] == 'frozen',
-            'reason': 'Mock is ExampleSoft-specific; draft labels are not formal scores.'
-                      if result['provider'] == 'mock' or gold['annotation_status'] != 'frozen' else None,
+    evaluation_valid = (result['provider'] != 'mock' and gold['annotation_status'] == 'frozen'
+                        and case.get('formal_scoring_allowed', True))
+    reason = ('Mock is ExampleSoft-specific.' if result['provider'] == 'mock' else
+              'Ground truth is not frozen.' if gold['annotation_status'] != 'frozen' else
+              'Curated retrospective input lacks verified historical snapshots; formal scoring is disabled.'
+              if not case.get('formal_scoring_allowed', True) else None)
+    return {'evaluation_valid': evaluation_valid, 'reason': reason,
             'observations': observations,
             'stage_summary': stage_summary}
 
@@ -176,12 +182,19 @@ def main():
                                  'gold_sha256': digest(gold_path),
                                  'replay_options': {'fixture_batch_id': 'all', 'prefilter_enabled': False,
                                                     'near_duplicate_enabled': True}},
-                  'result': result, 'diagnostic': diagnostic(result, gold, load(ROOT / case['fixture']))}
+                  'result': result, 'diagnostic': diagnostic(result, gold, load(ROOT / case['fixture']), case)}
         report_path = run_dir / 'report.json'
         report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
         (run_dir / 'review.md').write_text(build_review_sheet(report_path), encoding='utf-8')
+        state_score = score_replay_state(report, gold)
+        (run_dir / 'state_score.json').write_text(json.dumps(state_score, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        (run_dir / 'state_score.md').write_text(state_score_markdown(state_score), encoding='utf-8')
+        (run_dir / 'state_adjudication.template.json').write_text(
+            json.dumps(state_review_template(state_score, report['experiment']['gold_sha256']),
+                       ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
         print(json.dumps({'case_id': case_id, 'report': str(run_dir / 'report.json'),
                           'review': str(run_dir / 'review.md'),
+                          'state_score': str(run_dir / 'state_score.json'),
                           'summary': [{key: value for key, value in stage.items() if key != 'items'}
                                       for stage in report['diagnostic']['stage_summary']]}, ensure_ascii=False))
 

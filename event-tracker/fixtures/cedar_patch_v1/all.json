@@ -1,11 +1,74 @@
 [
-  {"source_id":"cedar_vendor","external_id":"CP-01","url":"https://vendor.example/cedar/notice-01","title":"CedarDesk 正在调查文件预览组件安全报告","content":"CedarDesk 安全团队收到关于文件预览组件的漏洞报告，正在核实。影响版本和可利用条件尚未确认。建议用户留意后续公告。","published_at":"2026-04-01T09:00:00Z"},
-  {"source_id":"cedar_wire","external_id":"CP-02","url":"https://wire.example/cedar/report-01","title":"CedarDesk 调查文件预览组件漏洞报告","content":"CedarDesk 表示正在调查文件预览组件的安全报告，目前尚未确认受影响版本或可利用条件。","published_at":"2026-04-01T11:00:00Z"},
-  {"source_id":"cedar_forum","external_id":"CP-03","url":"https://forum.example/cedar/post-03","title":"帖子声称 CedarDesk 所有版本均可被远程入侵","content":"一名匿名用户称 CedarDesk 所有版本均可在无需用户操作的情况下被远程入侵，但没有提供复现步骤、样本或可核查来源。厂商尚未确认这一说法。","published_at":"2026-04-02T08:00:00Z"},
-  {"source_id":"cedar_vendor","external_id":"CP-04","url":"https://vendor.example/cedar/notice-02","title":"CedarDesk 确认文件预览漏洞的影响范围","content":"CedarDesk 确认：桌面版 4.2.0 与 4.2.1 在用户打开特制文档时可能执行攻击者代码。4.1.x 和网页版本不受影响。尚未发现已确认的在野利用；补丁仍在开发。","published_at":"2026-04-03T10:00:00Z"},
-  {"source_id":"cedar_wire","external_id":"CP-05","url":"https://wire.example/other/product-05","title":"MapleMail 邮件服务发生登录故障","content":"MapleMail 称部分用户今天无法登录邮箱，正在修复身份认证服务。报道未涉及 CedarDesk 或文件预览组件。","published_at":"2026-04-03T12:00:00Z"},
-  {"source_id":"cedar_vendor","external_id":"CP-06","url":"https://vendor.example/cedar/notice-03","title":"CedarDesk 发布文件预览漏洞临时缓解措施","content":"在正式补丁发布前，CedarDesk 建议桌面版 4.2.0 与 4.2.1 用户关闭文件预览功能。该措施降低触发风险，但不是补丁；厂商仍在开发修复版本。","published_at":"2026-04-04T09:00:00Z"},
-  {"source_id":"cedar_research","external_id":"CP-07","url":"https://research.example/cedar/analysis-07","title":"研究员复现 CedarDesk 文件预览漏洞","content":"独立研究员在 CedarDesk 桌面版 4.2.1 中复现了打开特制文档后执行代码的问题；测试需要用户打开文档。研究员没有发现无需用户操作的利用路径，也未验证在野利用。","published_at":"2026-04-05T14:00:00Z"},
-  {"source_id":"cedar_vendor","external_id":"CP-08","url":"https://vendor.example/cedar/notice-04","title":"CedarDesk 4.2.2 修复文件预览漏洞","content":"CedarDesk 发布桌面版 4.2.2，修复此前公告的文件预览漏洞，并建议 4.2.0 与 4.2.1 用户升级。网页版本和 4.1.x 不受影响。","published_at":"2026-04-07T09:00:00Z"},
-  {"source_id":"cedar_wire","external_id":"CP-09","url":"https://wire.example/cedar/patch-09","title":"CedarDesk 发布 4.2.2 安全更新","content":"CedarDesk 已发布桌面版 4.2.2，修复此前确认的文件预览漏洞，建议使用 4.2.0 或 4.2.1 的用户升级。","published_at":"2026-04-07T11:00:00Z"}
+  {
+    "source_id": "cedar_vendor",
+    "external_id": "CP-01",
+    "url": "https://vendor.example/cedar/notice-01",
+    "title": "CedarDesk 正在调查文件预览组件安全报告",
+    "content": "CedarDesk 安全团队收到关于文件预览组件的漏洞报告，正在核实。影响版本和可利用条件尚未确认。建议用户留意后续公告。",
+    "published_at": "2026-04-01T09:00:00Z"
+  },
+  {
+    "source_id": "cedar_wire",
+    "external_id": "CP-02",
+    "url": "https://wire.example/cedar/report-01",
+    "title": "CedarDesk 调查文件预览组件漏洞报告",
+    "content": "CedarDesk 表示正在调查文件预览组件的安全报告，目前尚未确认受影响版本或可利用条件。",
+    "published_at": "2026-04-01T11:00:00Z"
+  },
+  {
+    "source_id": "cedar_forum",
+    "external_id": "CP-03",
+    "url": "https://forum.example/cedar/post-03",
+    "title": "帖子声称 CedarDesk 所有版本均可被远程入侵",
+    "content": "一名匿名用户称 CedarDesk 所有版本均可在无需用户操作的情况下被远程入侵，但没有提供复现步骤、样本或可核查来源。厂商尚未确认这一说法。",
+    "published_at": "2026-04-02T08:00:00Z"
+  },
+  {
+    "source_id": "cedar_vendor",
+    "external_id": "CP-04",
+    "url": "https://vendor.example/cedar/notice-02",
+    "title": "CedarDesk 确认文件预览漏洞的影响范围",
+    "content": "CedarDesk 确认：桌面版 4.2.0 与 4.2.1 在用户打开特制文档时可能执行攻击者代码。4.1.x 和网页版本不受影响。尚未发现已确认的在野利用；补丁仍在开发。",
+    "published_at": "2026-04-03T10:00:00Z"
+  },
+  {
+    "source_id": "cedar_wire",
+    "external_id": "CP-05",
+    "url": "https://wire.example/other/product-05",
+    "title": "MapleMail 邮件服务发生登录故障",
+    "content": "MapleMail 称部分用户今天无法登录邮箱，正在修复身份认证服务。报道未涉及 CedarDesk 或文件预览组件。",
+    "published_at": "2026-04-03T12:00:00Z"
+  },
+  {
+    "source_id": "cedar_vendor",
+    "external_id": "CP-06",
+    "url": "https://vendor.example/cedar/notice-03",
+    "title": "CedarDesk 发布文件预览漏洞临时缓解措施",
+    "content": "在正式补丁发布前，CedarDesk 建议桌面版 4.2.0 与 4.2.1 用户关闭文件预览功能。该措施降低触发风险，但不是补丁；厂商仍在开发修复版本。",
+    "published_at": "2026-04-04T09:00:00Z"
+  },
+  {
+    "source_id": "cedar_research",
+    "external_id": "CP-07",
+    "url": "https://research.example/cedar/analysis-07",
+    "title": "研究员复现 CedarDesk 文件预览漏洞",
+    "content": "独立研究员在 CedarDesk 桌面版 4.2.1 中复现了打开特制文档后执行代码的问题；测试需要用户打开文档。研究员没有发现无需用户操作的利用路径，也未验证在野利用。",
+    "published_at": "2026-04-05T14:00:00Z"
+  },
+  {
+    "source_id": "cedar_vendor",
+    "external_id": "CP-08",
+    "url": "https://vendor.example/cedar/notice-04",
+    "title": "CedarDesk 4.2.2 修复文件预览漏洞",
+    "content": "CedarDesk 发布桌面版 4.2.2，修复此前公告的文件预览漏洞，并建议 4.2.0 与 4.2.1 用户升级。网页版本和 4.1.x 不受影响。",
+    "published_at": "2026-04-07T09:00:00Z"
+  },
+  {
+    "source_id": "cedar_wire",
+    "external_id": "CP-09",
+    "url": "https://wire.example/cedar/patch-09",
+    "title": "CedarDesk 发布 4.2.2 安全更新",
+    "content": "CedarDesk 已发布桌面版 4.2.2，修复此前确认的文件预览漏洞，建议使用 4.2.0 或 4.2.1 的用户升级。",
+    "published_at": "2026-04-07T11:00:00Z"
+  }
 ]

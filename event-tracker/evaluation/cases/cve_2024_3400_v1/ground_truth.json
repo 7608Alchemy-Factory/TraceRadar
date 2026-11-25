@@ -1,7 +1,7 @@
 {
   "schema_version": "2.0",
   "case_id": "cve_2024_3400_v1",
-  "annotation_status": "draft",
+  "annotation_status": "frozen",
   "events": [
     {
       "event_key": "panos_cve_2024_3400",

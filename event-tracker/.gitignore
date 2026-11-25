@@ -9,5 +9,6 @@ __pycache__/
 .model-*.tmp
 evaluation/pilot/
 evaluation/reports/benchmark-local/
+evaluation/reports/live-local/
 data/
 *.db*

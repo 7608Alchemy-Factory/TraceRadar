@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "case_id": "dual_route_notice_v1",
+  "kind": "synthetic_multi_event_single_notice",
+  "topic": {
+    "title": "海湾公交线路调整追踪",
+    "description": "分别追踪海湾公交12路和27路的临时服务调整、恢复时间及后续更新；不要将两条线路合并为同一事件。",
+    "notification_preferences": "standard"
+  },
+  "runtime_source": {
+    "source_id": "benchmark_dual_route",
+    "name": "Dual route notice replay (synthetic)",
+    "type": "replay",
+    "endpoint": "replay://dual_route_notice_v1/all.json",
+    "config": {
+      "corpus_path": "dual_route_notice_v1/all.json"
+    }
+  },
+  "fixture": "fixtures/dual_route_notice_v1/all.json",
+  "timezone": "Asia/Shanghai",
+  "stages": [
+    {
+      "stage_id": "s1_two_routes",
+      "as_of": "2026-06-08T04:00:00Z"
+    },
+    {
+      "stage_id": "s2_route12_restored",
+      "as_of": "2026-06-10T04:00:00Z"
+    }
+  ]
+}

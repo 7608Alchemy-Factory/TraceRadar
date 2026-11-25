@@ -1,0 +1,141 @@
+{
+  "schema_version": "2.0",
+  "case_id": "returning_offer_v1",
+  "annotation_status": "frozen",
+  "events": [
+    {
+      "event_key": "morning_bundle",
+      "boundary": "东岸咖啡「早晨组合」系列优惠的持续追踪；两轮价格和有效期分别保存，新一轮可使同一 Event 重新有效"
+    }
+  ],
+  "evidence_labels": [
+    {
+      "item_id": "RO-01",
+      "relevance": "relevant",
+      "event_keys": [
+        "morning_bundle"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": []
+    },
+    {
+      "item_id": "RO-02",
+      "relevance": "relevant",
+      "event_keys": [
+        "morning_bundle"
+      ],
+      "duplicate_of": null,
+      "provenance_status": "verified",
+      "scoring_exclusions": []
+    }
+  ],
+  "claims": [
+    {
+      "claim_id": "RO-01-C1",
+      "event_key": "morning_bundle",
+      "statement": "首轮早晨组合9月1日至5日早餐时段售价20元，含中杯咖啡和三明治",
+      "supporting_item_ids": [
+        "RO-01"
+      ],
+      "first_visible_stage_id": "s1_first_offer"
+    },
+    {
+      "claim_id": "RO-02-C1",
+      "event_key": "morning_bundle",
+      "statement": "同系列第二轮9月10日至20日早餐时段售价22元，20元仅为首轮价格",
+      "supporting_item_ids": [
+        "RO-02"
+      ],
+      "first_visible_stage_id": "s3_new_round"
+    }
+  ],
+  "stage_expectations": [
+    {
+      "stage_id": "s1_first_offer",
+      "events": [
+        {
+          "event_key": "morning_bundle",
+          "lifecycle_status": "active",
+          "state_facets": {},
+          "required_claim_ids": [
+            "RO-01-C1"
+          ],
+          "forbidden_assertions": [
+            "首轮20元价格永久有效"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s2_expired",
+      "events": [
+        {
+          "event_key": "morning_bundle",
+          "lifecycle_status": "expired",
+          "state_facets": {},
+          "required_claim_ids": [
+            "RO-01-C1"
+          ],
+          "forbidden_assertions": [
+            "9月6日首轮20元优惠仍有效"
+          ]
+        }
+      ]
+    },
+    {
+      "stage_id": "s3_new_round",
+      "events": [
+        {
+          "event_key": "morning_bundle",
+          "lifecycle_status": "active",
+          "state_facets": {},
+          "required_claim_ids": [
+            "RO-01-C1",
+            "RO-02-C1"
+          ],
+          "forbidden_assertions": [
+            "第二轮仍是20元",
+            "第一轮从未失效"
+          ]
+        }
+      ]
+    }
+  ],
+  "milestones": [
+    {
+      "milestone_id": "RO-01-launch",
+      "event_key": "morning_bundle",
+      "stage_id": "s1_first_offer",
+      "supporting_item_ids": [
+        "RO-01"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "首轮优惠公布"
+    },
+    {
+      "milestone_id": "RO-expiry",
+      "event_key": "morning_bundle",
+      "stage_id": "s2_expired",
+      "supporting_item_ids": [
+        "RO-01"
+      ],
+      "trigger_type": "time",
+      "expected_action": "record_only",
+      "reason": "首轮优惠于9月5日结束，s2没有新增证据"
+    },
+    {
+      "milestone_id": "RO-02-return",
+      "event_key": "morning_bundle",
+      "stage_id": "s3_new_round",
+      "supporting_item_ids": [
+        "RO-02"
+      ],
+      "trigger_type": "evidence",
+      "expected_action": "digest",
+      "reason": "同系列新一轮优惠公布，价格与有效期改变"
+    }
+  ],
+  "annotation_notes": "合成案例。s2 是无新证据的时间触发检查；若系统未实现，应归为功能缺口。s3 应更新同一 Event，不把首轮20元误当现价。"
+}

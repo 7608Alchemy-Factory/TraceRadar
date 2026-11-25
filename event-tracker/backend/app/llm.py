@@ -16,7 +16,7 @@ class AssessmentProvider(Protocol):
     def assess(self, topic: dict, events: list[dict], evidence: dict, sources: list[dict]) -> EvidenceAssessment | Assessment: ...
 
 
-PROMPT_VERSION = 'assessment-v9'
+PROMPT_VERSION = 'assessment-v14'
 
 RETRYABLE_PROVIDER_ERRORS = frozenset({
     'PROVIDER_TIMEOUT', 'PROVIDER_NETWORK', 'PROVIDER_RATE_LIMIT', 'PROVIDER_SERVER_ERROR', 'PROVIDER_UNAVAILABLE',
@@ -117,7 +117,14 @@ def assessment_prompt():
             'If the tracking goal specifies a particular division, league, product line, region or scope, items about a different division/scope or matching any topic.exclusions entry MUST return is_relevant=false with an empty event_decisions list. '
             'The application attaches the input evidence_id at the top level. Return an empty event_decisions list for irrelevant evidence. '
             'For relevant evidence, return one decision for each independently tracked event supported by the article. '
+            'Default to one Event for related offers in an article, including daily deals, coupon terms and benefits under one named campaign or product; keep each component’s dates in that Event. '
+            'Split separate offers into distinct Events only when the article explicitly gives two different end or use-by calendar dates for those separate offers, so they will expire at different times. '
+            'A voucher redemption/use-by deadline counts as its own later update point even if the voucher sale end is unstated; compare it with the explicit end date of any separately announced short-term offer. '
+            'An unknown end date, different start dates, and daily deals within one named campaign do not meet this split condition. Do not infer an unstated end date. '
             'Keep each event’s facts, conditions, dates, version and state in its own decision. '
+            'For every association: existing_event must include the exact current_events event_id; '
+            'new_event must include a nonempty title and must omit event_id; '
+            'unresolved must omit event_id. Always include association.reason. '
             'Group reports about the same evolving incident/deal into one existing_event. Always copy its exact event_id '
             'from current_events, and include its expected_version when updating state. '
             'Create a new_event only for a distinct independently evolving matter; explain the boundary in association.reason. '

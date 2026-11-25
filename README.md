@@ -2,19 +2,23 @@
 
 **Autonomous Event Tracking with Persistent Evidence**
 
-**COMP7608B Final Project · Group 65 · The University of Hong Kong**
+**COMP7608B Final Project · The University of Hong Kong · Group 65**
 
 **Members** Ruiyang Chen, Qinyuan Cui, Jingjia Feng, Mangjin Qian
 
-TraceRadar helps users follow developing stories across approved sources. It decides which reports are relevant, whether they belong to existing events, and whether a change warrants an alert. It stores the evidence, event history, decisions and review requests in a local workspace.
+TraceRadar helps readers and analysts follow developing stories without rereading the same reports. Set a tracking goal and approve sources. On a manual or scheduled check, TraceRadar collects evidence, skips duplicates and decides which reports are relevant, which event each report belongs to and what has changed. It saves event updates and their evidence in SQLite. Uncertain or conflicting updates go to human review.
 
-**Submitted version** [TraceRadar on GitHub (`main`)](https://github.com/7608Alchemy-Factory/TraceRadar/tree/main). In a checkout, run `git rev-parse HEAD`. In the submitted ZIP, the exact commit from `main` is recorded in [SUBMISSION_REVISION](SUBMISSION_REVISION). The application integrates [the final V2 frontend](https://github.com/7608Alchemy-Factory/TraceRadar/tree/feat/c-live-rss-frontend-1124-v2), [the frozen evaluation code and cases](https://github.com/7608Alchemy-Factory/TraceRadar/tree/codex/evaluation-freeze-v1), and [the reviewed results](https://github.com/7608Alchemy-Factory/TraceRadar/tree/codex/evaluation-results-v1).
+**Source version** The [submitted source branch](https://github.com/7608Alchemy-Factory/TraceRadar/tree/main) is `main`. In a Git checkout, run `git rev-parse HEAD`. In a submission ZIP exported with `git archive`, [SUBMISSION_REVISION](SUBMISSION_REVISION) contains the exact commit SHA.
 
-## Install and run
+## 1. Install and run
 
-Install Python 3.11+ and Node.js 22+ with npm. Internet access is needed for the initial dependency installation. The credential-free demo uses SQLite and a browser, with no GPU, notebooks, or external APIs. Verified using Windows, Python 3.12.3, Node.js 24.22.3 and npm 10.9.4. The [Python lockfile](event-tracker/backend/requirements.lock.txt) pins FastAPI 0.115.12, Uvicorn 0.34.2 and all other Python dependencies. The [npm lockfile](event-tracker/frontend/package-lock.json) pins React 19.1.0, TypeScript 5.8.3, Vite 6.4.6 and their dependencies.
+Use Python 3.11+, Node.js 22+ with npm, and a web browser. Install dependencies from the [Python lockfile](event-tracker/backend/requirements.lock.txt) and [npm lockfile](event-tracker/frontend/package-lock.json). The Windows package check used Python 3.12.4, Node.js 24.22.1 and npm 11.19.1. Key dependency versions are FastAPI 0.115.12, Uvicorn 0.34.2, Pydantic 2.11.4, pytest 8.3.5, React 19.1.0, TypeScript 5.8.3 and Vite 6.4.6.
 
-Run from a checkout or the extracted submission folder in PowerShell.
+The initial dependency installation needs internet access. After installation, the bundled demo and offline checks run with local SQLite and included fixtures. They require no API keys, paid services, GPU, separate database server or notebook.
+
+### Windows PowerShell
+
+Run from the repository root or the root of the extracted submission ZIP.
 
 ```powershell
 python -m venv .\event-tracker\backend\.venv
@@ -26,9 +30,11 @@ Pop-Location
 .\Start-TraceRadar-Submission.cmd
 ```
 
-Open the [workspace](http://127.0.0.1:8630/) or [API docs](http://127.0.0.1:8630/docs). Use [Stop-TraceRadar-Submission.cmd](Stop-TraceRadar-Submission.cmd) to stop the service. The launcher serves the built frontend and API on loopback in a single process and uses `event-tracker/data/submission.db`. The Windows launcher leaves scheduled checks running when the browser is closed. The older V2 launcher uses port 8629 and its own database.
+Open the [workspace](http://127.0.0.1:8630/) or [API documentation](http://127.0.0.1:8630/docs). The launcher keeps the local service running after you close the browser. Run `.\Stop-TraceRadar-Submission.cmd` to stop it.
 
-On macOS/Linux, run the following from the source root after installing Python and Node.js.
+### macOS or Linux
+
+Run from the same source root. Keep the terminal open while using the workspace and press `Ctrl+C` to stop.
 
 ```sh
 python3 -m venv event-tracker/backend/.venv
@@ -37,32 +43,47 @@ event-tracker/backend/.venv/bin/python -m pip install -r event-tracker/backend/r
 event-tracker/backend/.venv/bin/python event-tracker/scripts/local_workspace.py --port 8630 --database-path data/submission.db
 ```
 
-## Sample inputs and access
+Both commands serve the built React workspace and FastAPI from one local process on port `8630`. The database is `event-tracker/data/submission.db`. Read the [workspace user guide](event-tracker/README.md) for the interface and schedule settings. Its separate V2 launcher uses port `8629`.
 
-- **Ordinary task** Run the ExampleSoft demo below. The bundled synthetic inputs reconstruct two events across three evidence batches. Replaying the same batches leaves the event history and notification counts unchanged.
-- **Changed request** In the ExampleSoft topic, open Edit title and replace the tracking goal with `Track confirmed ExampleSoft patches and affected releases.` Add the exclusion `unverified rumors`, save, and verify the new objective and exclusion on the topic. Use a configured model to judge new evidence against the revised goal. The Mock provider uses canned ExampleSoft decisions.
-- **Failure and recovery** The included Hong Kong McDonald's replay supplies the input for two tests which make a stubbed model return HTTP 401 or 503 on the same evidence item. The tests verify the bounded retry policy, linked resume and notification idempotency. Reproduce them with the fault-test command below.
-- **Further examples** Use the [15 example topic categories](event-tracker/docs/topic-examples.zh-CN.md), the [bundled replay fixtures](event-tracker/fixtures), or the [V2 user guide](event-tracker/README.md) for approval, alert and schedule workflows.
+## 2. Try the supplied tasks
 
-To process arbitrary requests or run scheduled live checks, open **Model settings** and enter your Chat Completions-compatible base URL, API key and model ID. You can also create a private `event-tracker/.env` using [.env.example](event-tracker/.env.example). The code's `qwen` provider label refers to the configurable endpoint. RSS needs a reachable feed. Bocha, Tavily and the Jina Reader fallback may need API access, and hosted models and search providers may incur fees. Hardware needs for local inference depend on the Ollama model. The application uses a single-user local workspace and in-app alerts.
+| Task | Input and expected behavior |
+| --- | --- |
+| Ordinary task | Follow ExampleSoft disclosures and patches with the included [three evidence batches](event-tracker/fixtures/cybersecurity). The demo should produce two events, four state transitions and four notifications. Repeating all three batches should add no changes. |
+| Changed request | Open **ExampleSoft security demo → Edit title** after the demo. Set the tracking goal to `Track confirmed ExampleSoft patches and affected releases.` Add `unverified rumors` as an exclusion, save it and check the updated topic. The Mock provider uses fixed rules for ExampleSoft. To test how a changed goal affects new evidence, configure a real model, approve a reachable source and run another check. |
+| Failure and recovery | The [Hong Kong McDonald's replay](event-tracker/evaluation/cases/mcd_hk_campaigns_v1/case.json) is used in two automated tests. A stubbed model returns HTTP 401 or 503. Expect the authentication error to stop after one attempt and the service error to stop after two attempts. The tests then resume unfinished evidence and check that notifications are not duplicated. |
 
-## Evaluation and traces
+See the [recorded success, changed-request and failure traces](event-tracker/evaluation/submission/README.md). The [topic examples](event-tracker/docs/topic-examples.zh-CN.md) and [replay fixtures](event-tracker/fixtures) provide more inputs.
 
-Run the following from `event-tracker` in PowerShell. Start the workspace before running the API demo. These commands use bundled data and require no credentials.
+## 3. Configure a real model and sources
+
+Open **Model settings** and enter a Chat Completions-compatible base URL, API key and model ID. The API uses `qwen` as its provider label for this configurable endpoint. For command-line runs, set `QWEN_BASE_URL`, `QWEN_API_KEY` and `QWEN_MODEL` in the process environment or in a private `event-tracker/.env` using [.env.example](event-tracker/.env.example). Keep credentials out of Git and shared archives. The model timeout defaults to 30 seconds. The assessment retry budget defaults to two attempts, including the first attempt.
+
+Approve at least one reachable live source for a scheduled check. Public RSS needs network access. Bocha, Tavily and the Jina Reader fallback may need service credentials. Hosted inference and search can consume paid quota. A local Ollama model can use a loopback endpoint, and its CPU, RAM and GPU needs depend on the model.
+
+The current assessment prompt is `assessment-v15`. In **Agent mode**, the model can load the assessment guide, look up linked evidence and prior status changes, and check an assessment draft. The backend validates the final response again before saving state. The [model adapter](event-tracker/backend/app/llm.py) defines the prompts and tools. The [API contract](event-tracker/docs/api_contracts.md) describes the request and response formats.
+
+## 4. Reproduce the evaluation
+
+Run these commands from `event-tracker` in a second PowerShell terminal. Leave the workspace running for the first command. On macOS/Linux, use `backend/.venv/bin/python` in place of `& $py`, and run the pytest commands from `backend` with `.venv/bin/python`.
 
 ```powershell
-$py = ".\backend\.venv\Scripts\python.exe"
+$py = (Resolve-Path .\backend\.venv\Scripts\python.exe).Path
 & $py scripts/demo.py --base-url http://127.0.0.1:8630 --output data/mock-demo-check.json
+
 Push-Location backend
-.\.venv\Scripts\python.exe -m pytest -q
-.\.venv\Scripts\python.exe -m pytest -v tests/test_mcd_benchmark.py -k fault_report_and_resume
+& $py -m pytest -q
+& $py -m pytest -v tests/test_mcd_benchmark.py -k fault_report_and_resume
 Pop-Location
-& $py scripts/run_benchmark.py --provider mock --cases cedar_patch_v1 cve_2024_3400_v1 dual_route_notice_v1 returning_offer_v1
+
+& $py scripts/run_benchmark.py --provider mock --cases cedar_patch_v1 cve_2024_3400_v1 dual_route_notice_v1 returning_offer_v1 --output data/mock-replay-check
 & $py scripts/score_search_benchmark.py --capture evaluation/results/freeze_v1/search_mcd_hk_capture_minimal.json --labels evaluation/search_cases/mcd_hk_nov2026_search_v1_assistant_labels.json --output data/search-score-check.json
 ```
 
-The [evaluation report](event-tracker/evaluation/FINAL_REPORT_EVALUATION_DRAFT.md) documents the human-reviewed results, baseline, judgment rules and failure cases. The [frozen results](event-tracker/evaluation/results/freeze_v1) include human adjudication, the per-article baseline, a minimal search capture and reviewed scores. The [submission verification](event-tracker/evaluation/submission/README.md) links to the credential-free success and recovery traces.
+The Mock demo exercises event updates and notifications. The four Mock benchmark replays verify fixture loading and report generation. Their reports show zero events because the Mock provider only recognizes the ExampleSoft demo. The search scoring command recomputes the published score from the archived search capture and reviewed labels. For a fresh model replay, configure the provider as above and rerun the benchmark with `--provider qwen` and a new output folder. New model responses and live search results can vary.
 
-For a new model replay, configure the provider in `event-tracker/.env` or your process environment and replace `--provider mock` with `--provider qwen` in the replay command. The reported runs used `deepseek-flash`, runtime prompt revision `assessment-v14`, a 30-second model timeout and up to two attempts including the initial call. The [model adapter](event-tracker/backend/app/llm.py) contains the prompt, tool instructions and endpoint-specific generation settings. Fresh model responses and live retrieval can vary. Mock replay verifies the pipeline; human review and saved model outputs support the published semantic scores.
+The [evaluation report](event-tracker/evaluation/FINAL_REPORT_EVALUATION_DRAFT.md) gives the reference outcomes, human review criteria, baseline and observed failures. Its published replay results used `deepseek-flash`, `assessment-v14`, a 30-second timeout and up to two request attempts. Across two reviewed runs, the system matched 44 of 46 expected event checkpoints and saved 51 of 52 required facts at the expected stage. The [frozen results](event-tracker/evaluation/results/freeze_v1/README.md) include the reviewed findings, baseline and search inputs. These figures describe the recorded `assessment-v14` runs.
 
-See the [AI-use declaration and available prompt records](submission/AI-USE.md) for project assistance and known gaps in the prompt archive.
+## AI assistance
+
+The [AI-use declaration](submission/AI-USE.md) lists tools and models, their roles, available prompt records and gaps in the archive. OpenAI Codex (GPT-6 family) also assisted with this README revision and verification. The requests for this revision were `重写main分支下最新版本的readme，按照这个文件里的要求` and `写好了推上去`.

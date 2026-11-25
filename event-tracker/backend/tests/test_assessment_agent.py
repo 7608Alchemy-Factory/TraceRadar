@@ -4,8 +4,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core import Settings
-from app.llm import QwenProvider
+from app.core import AppError, Settings
+from app.llm import EvidenceAssessmentAgent, QwenProvider
 from app.main import create_app
 from test_connectors_and_pipeline import _wait_run
 from test_workflow import topic
@@ -30,25 +30,25 @@ def test_agent_assessment_replay(tmp_path, monkeypatch, cross_topic):
         inputs = json.loads(messages[1]['content'])
         evidence = inputs['evidence']
         events = inputs['current_events']
-        agent_prompt = '"name":"load_skill"' in messages[0]['content']
-        if agent_prompt:
+        prompt = messages[0]['content']
+        assert 'Only the incoming evidence can support a new claim' in prompt
+        if '"name":"get_event_evidence"' in prompt:
             agent_requests.append(request)
-            assert events and 'Only the incoming evidence can support a new claim' not in messages[0]['content']
+            assert events
             results = [json.loads(message['content'])['tool_result'] for message in messages[2:]
                        if message['role'] == 'user' and message['content'].startswith('{"tool_result":')]
-            if not results:
-                output = {'tool_call': {'name': 'load_skill', 'argument': 'evidence-assessment'}}
-            elif len(results) == 1 or cross_topic:
-                assert 'incoming evidence' in results[0]['guidance']
+            if not results or cross_topic:
                 output = {'tool_call': {'name': 'get_event_evidence', 'argument': foreign_id or events[0]['event_id']}}
-                if len(results) > 1:
-                    assert results[1] == {'name': 'get_event_evidence', 'error': 'Event is not available in the current Topic.'}
+                if results:
+                    assert results == [{'name': 'get_event_evidence', 'error': 'Event is not available in the current Topic.'}]
             else:
-                linked, = results[1]['evidence']
+                result, = results
+                linked, = result['evidence']
                 assert linked['title'] == titles[0]
                 assert linked['evidence_id'] in events[0]['state']['sources']
                 output = None
         else:
+            assert '"name":"load_skill"' not in prompt
             assert len(messages) == 2
             output = None
 
@@ -98,12 +98,13 @@ def test_agent_assessment_replay(tmp_path, monkeypatch, cross_topic):
         assert after['run']['snapshot']['options']['agent_mode'] is True
         assessed, = [s for s in after['steps'] if s['step_name'] == 'assess_evidence']
         trace = assessed['decision']['agent']
-        assert [call['name'] for call in trace['calls']] == ['load_skill', 'get_event_evidence']
-        assert trace['model_calls'] == len(agent_requests) == (4 if cross_topic else 3)
+        call, = trace['calls']
+        assert call['name'] == 'get_event_evidence'
+        assert trace['model_calls'] == len(agent_requests) == (3 if cross_topic else 2)
         event, = client.app.state.repo.events(identity)
         if cross_topic:
             assert assessed['error']['code'] == 'PROVIDER_SCHEMA'
-            assert trace['calls'][1] == {'name': 'get_event_evidence', 'status': 'denied'}
+            assert call['status'] == 'denied'
             assert event['version'] == 1
 
             cross_topic = False
@@ -116,7 +117,7 @@ def test_agent_assessment_replay(tmp_path, monkeypatch, cross_topic):
             event, = client.app.state.repo.events(identity)
 
         assert after['run']['status'] == 'completed'
-        assert assessed['decision']['agent']['calls'][1]['evidence_count'] == 1
+        assert assessed['decision']['agent']['calls'][0]['evidence_count'] == 1
         assert event['version'] == 2
         assert assessed['decision']['assessment']['proposed_state'] == event['state']
         assert len(client.app.state.repo.event_evidence_as_of(identity, event['event_id'], dates[0])) == 1
@@ -191,3 +192,59 @@ def test_agent_reads_compressed_event_history(tmp_path, monkeypatch):
         matches = repo.get_event_history(identity, event_id, dates[-1], ' proposed ')['changes']
         assert [change['after_status'] for change in matches] == ['Proposed', 'Under review']
         assert repo.get_event_history('another-topic', event_id, dates[-1])['changes'] == []
+
+
+@pytest.mark.parametrize('draft_version, final_version, error', [
+    (3, 4, 'expected_version must equal 4. Received 3.'),
+    (4, 4, None),
+    (4, 3, None),
+    (None, 4, '[{"path": ["event_decisions"], "type": "missing"}]'),
+])
+def test_agent_loads_skill_and_validates_draft(draft_version, final_version, error):
+    evidence = dict(evidence_id='input', title='Rail line opens', published_at='2026-06-20T12:00:00Z')
+    prior = dict(event_id='rail', version=4, state=dict(current_status='Planned', key_facts=[], timeline=[], sources=[]))
+    settings = Settings(api_key='test', base_url='https://provider.example', model='test-model', max_attempts=1)
+
+    def assessment(version):
+        return dict(is_relevant=True, event_decisions=[dict(
+            association=dict(type='existing_event', event_id='rail', reason='Same project'),
+            novelty='new_fact', reason_codes=['opening'], expected_version=version, update_kind='fact_added',
+            supported_claims=[dict(fact='The line opened', evidence_ids=['input'])],
+            proposed_state=dict(current_status='Opened', key_facts=[], timeline=[], sources=['input']),
+        )])
+
+    def respond(request):
+        messages = json.loads(request.content)['messages']
+        if len(messages) == 2:
+            assert '"name":"load_skill","argument":"evidence-assessment"' in messages[0]['content']
+            assert '"name":"validate_assessment"' in messages[0]['content']
+            output = {'tool_call': {'name': 'load_skill', 'argument': 'evidence-assessment'}}
+        elif len(messages) == 4:
+            result = json.loads(messages[-1]['content'])['tool_result']
+            assert result['name'] == 'load_skill'
+            assert 'Prior articles help assess novelty and association.' in result['guidance']
+            draft = assessment(draft_version) if draft_version is not None else {'is_relevant': True}
+            output = {'tool_call': {'name': 'validate_assessment', 'argument': draft}}
+        else:
+            result = json.loads(messages[-1]['content'])['tool_result']
+            expected = {'name': 'validate_assessment', 'valid': error is None}
+            if error is not None:
+                expected['error'] = error
+            assert result == expected
+            output = assessment(final_version)
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps(output)}}]})
+
+    agent = EvidenceAssessmentAgent(None, None)
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        provider = QwenProvider(settings, client)
+        if final_version == 4:
+            result = provider.assess({}, [prior], evidence, [], agent=agent)
+            assert result.event_decisions[0].proposed_state.current_status == 'Opened'
+        else:
+            with pytest.raises(AppError, match='expected_version must equal 4') as caught:
+                provider.assess({}, [prior], evidence, [], agent=agent)
+            assert caught.value.code == 'PROVIDER_SCHEMA'
+    assert agent.trace == {'model_calls': 3, 'calls': [
+        {'name': 'load_skill', 'status': 'completed', 'skill': 'evidence-assessment'},
+        {'name': 'validate_assessment', 'status': 'completed', 'valid': error is None},
+    ]}

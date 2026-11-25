@@ -31,10 +31,14 @@ defaults to currently approved sources and can include inactive sources explicit
 
 Set `agent_mode: true` to enable tools during evidence assessment for one `qwen` run.
 It defaults to `false`. Mock requests that enable it return `AGENT_REQUIRES_MODEL` (422).
-The model may call `load_skill("evidence-assessment")`, `get_event_evidence(event_id)` and
-`get_event_history(event_id, keyword?)` once each per evidence item. Both lookup tools are scoped to the current Topic
-and the input's publication time. `get_event_evidence` returns up to five linked article excerpts. `get_event_history`
+In Agent mode, the model may call `load_skill("evidence-assessment")`, `get_event_evidence(event_id)`,
+`get_event_history(event_id, keyword?)`, and `validate_assessment(draft)` once each per evidence item.
+`load_skill` returns the built-in evidence assessment checklist. Both event lookup tools are scoped to the current
+Topic and the input's publication time. `get_event_evidence` returns up to five linked article excerpts. `get_event_history`
 returns up to three status changes with evidence IDs, optionally filtered by a status keyword.
+`validate_assessment` takes the complete draft assessment as its JSON argument and returns `valid` and an error when invalid.
+It checks the draft against the same event snapshot and input evidence as final model output validation. The final
+assessment is independently checked again, and StateManager and SQLite still validate at commit time.
 Each tool exchange adds at most one model request beyond the normal retry budget. The `assess_evidence` step records
 `decision.agent.model_calls` and `decision.agent.calls` on success or failure. A resumed run inherits the option.
 
@@ -63,7 +67,7 @@ nonempty evidence-backed `supported_claims`. A `confirmation` or `no_change` car
 fields or new claims. Every `existing_event` decision must reference an Event supplied to the
 model. State updates also require its exact version.
 StateManager independently checks the complete assembled proposal before it is stored. Trace records
-state_assembly=evidence_delta_v1. Current prompt version is `assessment-v7`.
+state_assembly=evidence_delta_v1. Current prompt version is `assessment-v15`.
 An assessment may include multiple `event_decisions` under one `evidence_id`. The legacy
 single-decision response is still accepted. `counts.committed` counts state transitions.
 | GET | /api/events/{id} | event, history, evidence with relation, reviews |

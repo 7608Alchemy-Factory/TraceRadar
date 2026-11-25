@@ -1,0 +1,19 @@
+{
+  "case_id": "mcd_hk_nov2026_search_v1",
+  "topic": {
+    "topic_id": "search_benchmark_mcd_hk",
+    "title": "香港麥當勞近期優惠與活動",
+    "description": "追蹤香港麥當勞在2026年11月11日至24日公布或開始的限時食品、優惠和會員活動。排除純企業新聞、其他地區活動，以及窗口前已結束且沒有新變化的舊優惠。",
+    "exclusions": ["純企業新聞", "香港以外的麥當勞活動", "窗口前已結束且沒有新變化的舊優惠"]
+  },
+  "window": {
+    "start": "2026-11-11T00:00:00+08:00",
+    "end": "2026-11-24T23:59:59+08:00"
+  },
+  "baseline_query": "香港 麥當勞 優惠",
+  "language": "zh-HK",
+  "baseline_max_items": 20,
+  "ai_max_queries": 3,
+  "ai_max_items_per_query": 8,
+  "rss_max_items": 20
+}

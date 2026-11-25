@@ -1,0 +1,94 @@
+{
+  "reviewer": "user",
+  "case_id": "cedar_patch_v1",
+  "round_1_report": "cedar_patch_v1-c876750d/report.json",
+  "decisions": [
+    {
+      "item_id": "CP-01-C1",
+      "dimension": "claim_coverage",
+      "choice": "A",
+      "verdict": "supported",
+      "note": "User confirmed correct coverage and citation."
+    },
+    {
+      "item_id": "CP-02",
+      "dimension": "evidence_handling",
+      "choice": "A",
+      "verdict": "correct",
+      "note": "User confirmed relevant duplicate, no state update or new notification."
+    },
+    {
+      "item_id": "CP-03",
+      "dimension": "rumor_handling",
+      "choice": "B",
+      "verdict": "partially_correct",
+      "note": "Review handling is correct, but conflict classification is inaccurate; treat as an unverified claim."
+    },
+    {
+      "item_id": "CP-04-C1",
+      "dimension": "claim_coverage",
+      "choice": "A",
+      "verdict": "supported",
+      "note": "User confirmed affected version claim and CP-04 citation."
+    },
+    {
+      "item_id": "CP-04-C2",
+      "dimension": "claim_coverage",
+      "choice": "A",
+      "verdict": "supported",
+      "note": "User confirmed exploit requires opening a crafted document and CP-04 citation after clarification that prior history was retained."
+    },
+    {
+      "item_id": "CP-04-C3",
+      "dimension": "claim_coverage",
+      "choice": "A",
+      "verdict": "supported",
+      "note": "User confirmed 4.1.x and web version unaffected with CP-04 citation."
+    },
+    {
+      "item_id": "CP-04-C4",
+      "dimension": "claim_coverage",
+      "choice": "A",
+      "verdict": "supported",
+      "note": "User confirmed contemporaneous wild-exploitation and patch-in-development status, retained as history after later patch."
+    },
+    {"item_id": "CP-05", "dimension": "relevance", "choice": "A", "verdict": "correct", "note": "Unrelated MapleMail outage correctly excluded in all three rounds."},
+    {"item_id": "CP-06-C1", "dimension": "claim_coverage", "choice": "A", "verdict": "supported", "note": "Temporary mitigation correctly distinguished from a patch."},
+    {"item_id": "CP-07-C1", "dimension": "claim_coverage", "choice": "A", "verdict": "supported", "note": "Independent reproduction and required user action correctly recorded."},
+    {"item_id": "CP-08-C1", "dimension": "claim_coverage", "choice": "A", "verdict": "supported", "note": "Patch release and upgrade advice correctly recorded."},
+    {"item_id": "event_continuity", "dimension": "event_boundary", "choice": "A", "verdict": "correct", "note": "Single vulnerability Event and retained history approved across three rounds."},
+    {"item_id": "CP-01-notification", "dimension": "notification", "choice": "A", "verdict": "correct", "note": "Digest accepted in all three rounds."},
+    {"item_id": "CP-04-notification", "dimension": "notification", "choice": "B", "verdict": "acceptable_alternative", "note": "Round 1 immediate is also acceptable; rounds 2 and 3 digest accepted."},
+    {"item_id": "CP-06-notification", "dimension": "notification", "choice": "A", "verdict": "round_1_incorrect", "note": "Round 1 record_only rejected; rounds 2 and 3 digest accepted."},
+    {"item_id": "CP-07-notification", "dimension": "notification", "choice": "A", "verdict": "correct", "note": "Digest accepted in all three rounds."},
+    {"item_id": "CP-08-notification", "dimension": "notification", "choice": "A", "verdict": "correct", "note": "Immediate accepted in all three rounds."},
+    {"item_id": "CP-09", "dimension": "evidence_handling", "choice": "A", "verdict": "correct", "note": "User confirmed repeated patch report should not update Event or notify, matching all three rounds."}
+  ],
+  "dual_route_decisions": [
+    {"item_id": "DR-01-C1", "choice": "B", "verdict": "fact_correct_wording_error", "note": "Rounds 1 and 3 contain 不不停靠; dates and route are correct. Round 2 wording is clean."},
+    {"item_id": "DR-01-C2", "choice": "A", "verdict": "supported", "note": "Route 27 detour, cause and dates accepted in all rounds."},
+    {"item_id": "event_boundary", "choice": "A", "verdict": "correct", "note": "Two independent Events accepted in all rounds."},
+    {"item_id": "DR-02-C1", "choice": "A", "verdict": "supported", "note": "Route 12 restoration and unchanged Route 27 status accepted in all rounds."},
+    {"item_id": "DR-02-route27_processing", "choice": "A", "verdict": "acceptable_alternatives", "note": "Record_only unchanged fact in rounds 1 and 2, no_change in round 3 all accepted."},
+    {"item_id": "DR-01-notifications", "choice": "A", "verdict": "correct", "note": "Two digest notifications accepted in all rounds."},
+    {"item_id": "DR-02-route12-notification", "choice": "A", "verdict": "acceptable_alternative", "note": "Immediate restoration notification accepted in all rounds, despite ground truth digest."}
+  ],
+  "returning_offer_decisions": [
+    {"item_id": "RO-01-C1_and_notification", "choice": "A", "verdict": "correct", "note": "One Event for first-round 20-yuan offer, first-round-only condition and digest notification accepted."},
+    {"item_id": "s2_expired", "choice": "C", "verdict": "incorrect_output_cause_pending", "note": "User requires automatic status change when time expires even without new evidence; chose C. Technical attribution to model error versus missing time-driven functionality remains to be resolved."},
+    {"item_id": "RO-02-C1", "choice": "A", "verdict": "supported", "note": "Second-round price, dates and terms accepted."},
+    {"item_id": "event_continuity_and_title", "choice": "B", "verdict": "partially_correct", "note": "Same Event accepted; round 3 title remains first-round and is stale."},
+    {"item_id": "RO-02-notification", "choice": "A", "verdict": "acceptable_alternative", "note": "One immediate notification per independent run at s3 accepted, despite ground truth digest."}
+  ],
+  "mcd_cve_rounds_1_2_decisions": [
+    {"item_id": "MCD-03-boundary-round1", "choice": "A", "verdict": "incorrect", "note": "Voucher and tea offers should be separate Events."},
+    {"item_id": "MCD-03-attribution-round2", "choice": "A", "verdict": "partially_correct", "note": "Separate Events created, but voucher Event repeats tea-offer facts."},
+    {"item_id": "MCD-brand-transcription", "choice": "B", "verdict": "fact_accepted_wording_issue", "note": "大淳/大醇 and 淳茶舍/醇茶舍 are recorded as wording quality issues, not fact errors."},
+    {"item_id": "CVE3400-04-stage-round1", "choice": "A", "verdict": "stage_miss", "note": "s2 update missed; s3 recovery does not erase the s2 failure."},
+    {"item_id": "CVE3400-06-uncertainty", "choice": "B", "verdict": "round1_classification_issue", "note": "Review handling acceptable, but round 1 should not use conflicts for unverified page time/version; round 2 acceptable."},
+    {"item_id": "CVE3400-initial-notifications", "choice": "A", "verdict": "incorrect", "note": "Both rounds reversed expected vendor immediate and Volexity digest actions."},
+    {"item_id": "CVE3400-03-notification-round2", "choice": "A", "verdict": "incorrect", "note": "Patch availability should be immediate; round 2 digest is too low priority."},
+    {"item_id": "CVE3400-04-notification-round1", "choice": "A", "verdict": "incorrect", "note": "Guidance update was delayed to s3 and record_only is not an acceptable substitute for digest."},
+    {"item_id": "CVE3400-04-notification-round2", "choice": "A", "verdict": "correct", "note": "Guidance update digest accepted at s2."}
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "case_id": "mcd_hk_nov2026_search_v1",
+  "reference_not_agent_input": true,
+  "known_developments": [
+    {
+      "id": "K1_pokemon",
+      "summary": "香港麥當勞於2026-11-11公布Pokémon聯乘限時食品及活動",
+      "reference_url": "https://www.mcdonalds.com.hk/press-release/pokemon/"
+    },
+    {
+      "id": "K2_winter_offer",
+      "summary": "香港旅發局2026-11-18開始的冬日活動列出麥當勞巨無霸套餐買一送一優惠",
+      "reference_url": "https://www.discoverhongkong.com/tc/events/hong-kong-winterfest/deals-alipay.html"
+    },
+    {
+      "id": "K3_family_club",
+      "summary": "2026-11-23報道麥當勞2027親子會招募，2026-11-24開始登記；待核對官方原始公告",
+      "reference_urls": [
+        "https://inews.hket.com/article/4229651/mcdonalds-family-club-2027-frozen-offer",
+        "https://superpama.hk/posts/mcdonalds-family-club-2027"
+      ]
+    }
+  ]
+}

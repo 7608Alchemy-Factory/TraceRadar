@@ -1095,6 +1095,11 @@
             ],
             "title": "Provider"
           },
+          "agent_mode": {
+            "type": "boolean",
+            "title": "Agent Mode",
+            "default": false
+          },
           "as_of": {
             "anyOf": [
               {

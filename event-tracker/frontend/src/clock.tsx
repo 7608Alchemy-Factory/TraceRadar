@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { t } from "./i18n";
+import { locale, t } from "./i18n";
 
 const zones = [
   ["Asia/Hong_Kong", "香港", "Asia/Hong_Kong"],
@@ -23,13 +23,55 @@ const zones = [
   ["UTC", "UTC", "UTC"],
 ] as const;
 
-export function WorkspaceClock() {
-  const [zone, setZone] = useState(() => {
+export function useWorkspaceZone() {
+  const [zone, setZone] = useState<string>(() => {
     const saved = localStorage.getItem("traceradar-timezone");
     return zones.find(([id]) => id === saved)?.[0] ?? "Asia/Hong_Kong";
   });
+  return {
+    zone,
+    timeZone: zones.find(([id]) => id === zone)?.[2] ?? "Asia/Hong_Kong",
+    setZone: (value: string) => {
+      if (!zones.some(([id]) => id === value)) return;
+      setZone(value);
+      localStorage.setItem("traceradar-timezone", value);
+    },
+  };
+}
+
+export function formatScheduledTime(value: string, timeZone: string) {
+  return new Intl.DateTimeFormat(locale(), {
+    timeZone, year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "shortOffset",
+  }).format(new Date(value)).replace(/\bGMT/, "UTC");
+}
+
+export function zonedTimeInput(value: string | Date, timeZone: string) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(value)).map(({ type, value: part }) => [type, part]));
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+}
+
+export function toScheduledInstant(value: string, timeZone: string) {
+  const wall = Date.parse(`${value}Z`);
+  if (!Number.isFinite(wall)) throw Error(t("请选择有效的未来时间。"));
+  // Sample both sides of a possible daylight saving change, then round-trip each candidate.
+  const day = 86_400_000;
+  const candidates = new Set([-day, 0, day].map((delta) => {
+    const sample = wall + delta;
+    const offset = Date.parse(`${zonedTimeInput(new Date(sample), timeZone)}Z`) - sample;
+    return wall - offset;
+  }));
+  const matches = [...candidates].filter((candidate) => zonedTimeInput(new Date(candidate), timeZone) === value);
+  if (matches.length !== 1) throw Error(t("该时间受夏令时切换影响，请选择附近的其他时间。"));
+  if (matches[0] <= Date.now()) throw Error(t("请选择有效的未来时间。"));
+  return new Date(matches[0]).toISOString();
+}
+
+export function WorkspaceClock({ zone, timeZone, setZone }: ReturnType<typeof useWorkspaceZone>) {
   const [now, setNow] = useState(() => new Date());
-  const timeZone = zones.find(([id]) => id === zone)?.[2];
   const format = useMemo(() => new Intl.DateTimeFormat("en", {
     timeZone, year: "numeric", month: "2-digit", day: "2-digit",
     hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23", timeZoneName: "shortOffset",
@@ -48,12 +90,7 @@ export function WorkspaceClock() {
       </summary>
       <div className="clock-options">
         <label>{t("时区")}
-          <select value={zone} onChange={(event) => {
-            const next = zones.find(([id]) => id === event.target.value);
-            if (!next) return;
-            setZone(next[0]);
-            localStorage.setItem("traceradar-timezone", next[0]);
-          }}>
+          <select value={zone} onChange={(event) => setZone(event.target.value)}>
             {zones.map(([id, city]) => <option key={id} value={id}>{t(city)}</option>)}
           </select>
         </label>

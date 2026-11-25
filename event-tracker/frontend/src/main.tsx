@@ -2,8 +2,11 @@ import { SidebarHandle, useSidebarWidth } from "./sidebar-resize";
 import { SidebarTopics } from "./sidebar-topics";
 import { useTopicOrder } from "./topic-order";
 import { searchProviderLabel, SourceHealth } from "./source-health";
-import { MAX_TOPIC_TAGS, TopicTagPicker, tagLabel, tagOptions } from "./topic-tags";
-import { WorkspaceClock } from "./clock";
+import { tagLabel, tagOptions } from "./topic-tags";
+import type { TopicExample } from "./topic-example-catalog";
+import { formatScheduledTime, useWorkspaceZone, WorkspaceClock } from "./clock";
+import { ScheduleBadge, ScheduleEditor, type ScheduleInput } from "./schedule";
+import { InboxPanel, NoticeRows, useWorkspaceUpdates } from "./workspace-updates";
 import { TopicReport } from "./topic-report";
 import { TranslationContext, useWorkspaceTranslation } from "./reference-translation";
 import { applyTheme, initialTheme, locale, setLocale, t, type Locale } from "./i18n";
@@ -23,12 +26,14 @@ import type {
   EventDetail,
   EventSuggestion,
   EvidenceDecision,
+  InboxItem,
   ModelStatus,
   SearchStatus,
   Corpus,
 } from "./types";
 import {
-  GoalEditor,
+  TopicForm,
+  type TopicFields,
   RegisterSource,
   ManualEvidenceForm,
   ReviewPanel,
@@ -49,7 +54,6 @@ import {
   status,
   title as eventTitle,
   provider as providerLabel,
-  actionLabel,
   stepLabel,
   text,
   headline,
@@ -85,6 +89,8 @@ type Dialog =
   | "settings"
   | "search"
   | "replay"
+  | "schedule"
+  | "inbox"
   | "delete"
   | "delete-event"
   | null;
@@ -108,8 +114,30 @@ async function loadWorkspaceTopics() {
 
 document.documentElement.dataset.theme = initialTheme();
 
+const evidenceFilterLabels = {
+  processed: "已处理",
+  excluded: "已排除",
+  review: "待审核",
+  duplicate: "重复报道",
+  pending: "未处理",
+  failed: "失败",
+} as const;
+
+type EvidenceFilter = keyof typeof evidenceFilterLabels;
+
+function evidenceGroup(row: EvidenceDecision): EvidenceFilter {
+  if (row.status === "review") return "review";
+  if (row.status === "failed" || row.status === "failed_retryable") return "failed";
+  if (row.status !== "completed") return "pending";
+  if (row.assessment?.is_relevant === false || row.prefilter_excluded) return "excluded";
+  if (!row.assessment && row.evidence.canonical_evidence_id !== row.evidence.evidence_id) return "duplicate";
+  return "processed";
+}
+
 function App() {
   const sidebar = useSidebarWidth();
+  const clock = useWorkspaceZone();
+  const { timeZone } = clock;
   const [language, setLanguage] = useState(locale);
   const [theme, setTheme] = useState(initialTheme);
   const [translateContent, setTranslateContent] = useState(() => localStorage.getItem("traceradar-content-translation") === "on");
@@ -117,13 +145,20 @@ function App() {
     localStorage.setItem("traceradar-content-translation", value ? "on" : "off");
     setTranslateContent(value);
   }
-  const preferences = <><WorkspaceClock /><Preferences language={language} theme={theme}
+  const preferences = <><WorkspaceClock {...clock} /><Preferences language={language} theme={theme}
     onLanguage={(value: Locale) => { setLocale(value); setLanguage(value); toggleTranslation(true); }}
     onTheme={(value) => { applyTheme(value); setTheme(value); }} /></>;
 
   const [topics, setTopics] = useState<Topic[]>([]),
     [selected, setSelected] = useState(""),
     [tab, setTab] = useState<Tab>("overview");
+  const { updates, incoming, dismissIncoming, reload: reloadUpdates } = useWorkspaceUpdates(selected);
+  const schedules = updates?.schedules ?? [];
+  const schedule = schedules.find((plan) => plan.topic_id === selected);
+  const topicInbox = updates?.topicId === selected ? updates.topic_inbox : null;
+  const workspaceInbox = updates?.inbox;
+  const [inboxScope, setInboxScope] = useState(false);
+  const observedScheduleRun = useRef("");
   const { orderedTopics, pinned, togglePin, moveTopic, forgetTopic } = useTopicOrder(topics);
   const orderedTopicsRef = useRef(orderedTopics);
   orderedTopicsRef.current = orderedTopics;
@@ -149,8 +184,11 @@ function App() {
   const [provider, setProvider] = useState<"mock" | "qwen">("mock"),
     [batch, setBatch] = useState("1"),
     [asOf, setAsOf] = useState("");
+  const [agentMode, setAgentMode] = useState(false);
+  const [scheduledMode, setScheduledMode] = useState(false);
   const [replayCorpus, setReplayCorpus] = useState("lbj");
   const [showHistorySources, setShowHistorySources] = useState(false);
+  const [evidenceFilters, setEvidenceFilters] = useState<EvidenceFilter[]>([]);
   const [llmSummaryOn, setLlmSummaryOn] = useState(false);
   const [llmSummaryNote, setLlmSummaryNote] = useState<string | null>(null);
   const [llmMode, setLlmMode] = useState<string | null>(null);
@@ -178,9 +216,9 @@ function App() {
     registered: boolean;
     config: Record<string, unknown>;
   } | null>(null);
-  const [newTitle, setNewTitle] = useState(""),
-    [newDescription, setNewDescription] = useState("");
-  const [newTags, setNewTags] = useState<string[]>([]);
+  const [topicTemplate, setTopicTemplate] = useState<TopicExample>();
+  const [defaultTag, setDefaultTag] = useState("");
+  const topicDrafts = useRef(new Map<string, TopicFields>());
   const [deleteTarget, setDeleteTarget] = useState<Topic>();
   const [deleteEventTarget, setDeleteEventTarget] = useState<TrackedEvent>();
   const [deleteEventDisposition, setDeleteEventDisposition] = useState<"irrelevant" | "unwanted">("irrelevant");
@@ -196,6 +234,8 @@ function App() {
   const dashboardReady = Boolean(dashboard);
   const running = active(dashboard?.recent_runs[0]?.status);
   const replay = dashboard?.approved_sources.some((s) => s.type === "replay");
+  const hasLiveSource = dashboard?.approved_sources.some((source) =>
+    ["rss", "web_search", "webpage"].includes(source.type)) ?? false;
   const fixture = fixtureOnly(dashboard?.approved_sources ?? []);
   const replayCorpora = corpora.filter((c) =>
     dashboard?.approved_sources.some(
@@ -275,6 +315,9 @@ function App() {
     setNotices([]);
     setReplayCorpus("");
     setAsOf("");
+    setAgentMode(false);
+    setScheduledMode(false);
+    observedScheduleRun.current = "";
     setLlmSummaryOn(false);
     setLlmSummaryNote(null);
     setLlmMode(null);
@@ -289,6 +332,7 @@ function App() {
     setEvidenceId("");
     setQuery("");
     setShowHistorySources(false);
+    setEvidenceFilters([]);
     setTab("overview");
     setError("");
     requestAnimationFrame(() => {
@@ -603,10 +647,25 @@ function App() {
     };
   }, [watchId, selected]);
 
+  useEffect(() => {
+    const id = schedule?.last_run_id;
+    const state = schedule?.last_run_status;
+    if (!id || !state || !dashboard || watchId) return;
+    const observation = `${id}:${state}`;
+    if (observedScheduleRun.current === observation) return;
+    observedScheduleRun.current = observation;
+    if (active(state)) {
+      setWatchId(id);
+    } else if (dashboard.recent_runs[0]?.run_id !== id || active(dashboard.recent_runs[0]?.status)) {
+      void refresh(false, { includeRecommendations: false }).catch(() => {});
+    }
+  }, [schedule?.last_run_id, schedule?.last_run_status, dashboard, watchId]);
+
   async function startRun(
     options: {
       batch?: string;
       provider?: "mock" | "qwen";
+      agentMode?: boolean;
       manualItems?: Record<string, string>[];
     } = {},
   ) {
@@ -635,10 +694,12 @@ function App() {
             : (options.batch ?? batch),
         ...(sourceIds ? { source_ids: [...new Set(sourceIds)] } : {}),
         provider: engine,
+        ...(options.agentMode ? { agent_mode: true } : {}),
         ...(cutoff ? { as_of: new Date(cutoff).toISOString() } : {}),
         ...(options.manualItems ? { manual_items: options.manualItems } : {}),
       }),
     );
+    if (options.agentMode) setAgentMode(false);
     setEvent(null);
     viewedRun.current = result.run_id;
     setWatchId(result.run_id);
@@ -655,6 +716,44 @@ function App() {
     await action(async () => {
       const detail = await api<EventDetail>(`/events/${id}`);
       if (selectedRef.current === topicId) setEvent(detail);
+    });
+  }
+
+  function openInbox(topicOnly = false) {
+    setInboxScope(topicOnly);
+    showDialog("inbox");
+    void reloadUpdates().catch(() => {});
+  }
+
+  function openNotice(item: InboxItem) {
+    void action(async () => {
+      const detail = await api<EventDetail>(`/events/${item.event_id}`);
+      if (!item.read_at) await api(`/inbox/${item.notification_id}/read`, json("POST", {}));
+      if (incoming?.notification_id === item.notification_id) dismissIncoming();
+      setDialog(null);
+      selectTopic(item.topic_id);
+      setEvent(detail);
+      void reloadUpdates().catch(() => {});
+    });
+  }
+
+  function saveSchedule(input: ScheduleInput) {
+    void action(async () => {
+      await api(`/topics/${selected}/schedule`, json("PUT", input));
+      setDialog(null);
+      setScheduledMode(false);
+      setToast(t("定时更新计划已保存。"));
+      void reloadUpdates().catch(() => {});
+    });
+  }
+
+  function clearSchedule() {
+    void action(async () => {
+      await api(`/topics/${selected}/schedule`, { method: "DELETE" });
+      setDialog(null);
+      setScheduledMode(false);
+      setToast(t("已关闭后续定时更新。"));
+      void reloadUpdates().catch(() => {});
     });
   }
   async function removeExclusion(rule: string) {
@@ -755,9 +854,9 @@ function App() {
     setError("");
     setDialog(d);
   }
-  function openNewTopic(tag?: string, example?: string) {
-    if (tag) setNewTags((tags) => tags.includes(tag) || tags.length >= MAX_TOPIC_TAGS ? tags : [...tags, tag]);
-    if (example) setNewTitle(example);
+  function openNewTopic(tag?: string, example?: TopicExample) {
+    setTopicTemplate(example);
+    setDefaultTag(tag ?? "");
     showDialog("new");
   }
   function requestDelete(topic: Topic) {
@@ -852,12 +951,18 @@ function App() {
       .toLowerCase()
       .includes(search),
   );
-  const evidenceRows = (showHistorySources ? evidence : currentEvidence).filter(
-    (e) =>
-      `${e.evidence.title} ${headline(e.evidence.title)} ${e.evidence.source_id} ${e.evidence.content}`
-        .toLowerCase()
-        .includes(search),
+  const matchingEvidence = (showHistorySources ? evidence : currentEvidence)
+    .map((row) => ({ row, group: evidenceGroup(row) }))
+    .filter(({ row: { evidence: item } }) =>
+      `${item.title} ${tr(headline(item.title))} ${item.source_id} ${item.content}`.toLowerCase().includes(search),
+    );
+  const evidenceRows = matchingEvidence.filter(({ group }) =>
+    !evidenceFilters.length || evidenceFilters.includes(group),
   );
+  const evidenceCounts = matchingEvidence.reduce((counts, { group }) => {
+    counts[group] = (counts[group] ?? 0) + 1;
+    return counts;
+  }, {} as Partial<Record<EvidenceFilter, number>>);
   const latest = dashboard?.recent_runs[0];
   const unfinished =
     run?.evidence?.filter((item) =>
@@ -915,18 +1020,21 @@ function App() {
         <span className="kicker">TRACKING SESSION</span>
         <span className={`status-dot ${running ? "working" : ""}`} />
       </div>
-      <h3>{replay ? t("按时间回放") : t("检查新进展")}</h3>
+      <h3>{scheduledMode ? t("设置定时更新") : replay ? t("按时间回放") : t("检查新进展")}</h3>
       <p className="hint">
-        {replay
+        {replay && !scheduledMode
           ? t("每次只读取截止时间之前的新闻。")
           : t("读取已批准来源，判断是否有值得记录的变化。")}
       </p>
       <label>
         {t("分析方式")}
         <select
-          value={provider}
-          disabled={busy || running}
-          onChange={(e) => setProvider(e.target.value as "mock" | "qwen")}
+          value={scheduledMode ? "qwen" : provider}
+          disabled={busy || running || scheduledMode}
+          onChange={(e) => {
+            setProvider(e.target.value as "mock" | "qwen");
+            setAgentMode(false);
+          }}
         >
           <option
             value="mock"
@@ -937,19 +1045,31 @@ function App() {
           <option value="qwen">{t("真实模型分析")}</option>
         </select>
       </label>
-      {provider === "qwen" && (
-        <p className="model-note">
-          {model?.configured ? model.model : t("尚未配置模型")}{" "}
-          <button
-            className="text-button"
-            onClick={() => showDialog("settings")}
-          >
-            {model?.configured ? t("更改") : t("去配置")}{" "}
-            <Icon name="arrow" size={12} />
-          </button>
-        </p>
+      {(provider === "qwen" || scheduledMode) && (
+        <>
+          <p className="model-note">
+            {model?.configured ? model.model : t("尚未配置模型")}{" "}
+            <button
+              className="text-button"
+              onClick={() => showDialog("settings")}
+            >
+              {model?.configured ? t("更改") : t("去配置")}{" "}
+              <Icon name="arrow" size={12} />
+            </button>
+          </p>
+          <label className="check-row">
+            <input type="checkbox" checked={agentMode} disabled={busy || running}
+              onChange={(e) => setAgentMode(e.target.checked)} />
+            {t("本次使用 Agent 模式")}
+          </label>
+        </>
       )}
-      {fixture && (
+      <label className="check-row">
+        <input type="checkbox" checked={scheduledMode} disabled={busy}
+          onChange={(event) => setScheduledMode(event.target.checked)} />
+        {t("本次使用定时更新模式")}
+      </label>
+      {fixture && !scheduledMode && (
         <label>
           {t("新闻批次")}
           <select
@@ -963,7 +1083,7 @@ function App() {
           </select>
         </label>
       )}
-      {replay && (
+      {replay && !scheduledMode && (
         <>
           <label>
             {t("回放语料")}
@@ -1014,15 +1134,16 @@ function App() {
       )}
       <button
         className="primary full"
-        disabled={busy || running || !dashboard?.approved_sources.length}
+        disabled={busy || (!scheduledMode && (running || !dashboard?.approved_sources.length))}
         onClick={() =>
-          provider === "qwen" && !model?.configured
+          scheduledMode ? showDialog("schedule")
+            : provider === "qwen" && !model?.configured
             ? showDialog("settings")
-            : void action(() => startRun())
+            : void action(() => startRun({ agentMode: provider === "qwen" && agentMode }))
         }
       >
-        <Icon name="play" size={14} />
-        {running
+        <Icon name={scheduledMode ? "clock" : "play"} size={14} />
+        {scheduledMode ? t("设置定时更新") : running
           ? t("正在检查…")
           : provider === "qwen" && !model?.configured
             ? t("打开模型配置")
@@ -1040,6 +1161,9 @@ function App() {
       >
         <Icon name="plus" size={15} />{" "}
         {manualAvailable ? t("手动提交新闻") : t("管理手动来源")}
+      </button>
+      <button type="button" className="text-button full" disabled={busy} onClick={() => showDialog("schedule")}>
+        <Icon name="clock" size={15} /> {t("管理更新频率")}
       </button>
       <div className="run-footnote">
         {replaySources.length ? replaySources.length : (dashboard?.approved_sources.length ?? 0)}{" "}
@@ -1084,6 +1208,11 @@ function App() {
     </button>
   );
   const currentTopic = dashboard?.topic ?? topics.find((topic) => topic.topic_id === selected);
+  const bell = <button type="button" className="icon-button inbox-bell" onClick={() => openInbox()}
+    aria-label={workspaceInbox?.unread ? t("站内提醒，{0} 条未读", workspaceInbox.unread) : t("站内提醒")}>
+    <Icon name="bell" />
+    {!!workspaceInbox?.unread && <span aria-hidden="true">{workspaceInbox.unread > 99 ? "99+" : workspaceInbox.unread}</span>}
+  </button>;
   const workspaceView = (
     <>
       <aside className="sidebar">
@@ -1103,7 +1232,7 @@ function App() {
           onSelect={selectTopic} onPin={togglePin} onMove={moveTopic} />
         <button className="sidebar-replay" onClick={() => showDialog("replay")}>
           <Icon name="play" size={14} />
-          <span>{t("准备新闻回放")}</span>
+          <span>{t("测试离线回放")}</span>
         </button>
         <div className="sidebar-bottom">
           <button aria-label={t("模型配置")} onClick={() => showDialog("settings")}>
@@ -1134,9 +1263,10 @@ function App() {
           <div className="topbar-actions">
             {preferences}
             {translationToggle}
+            {bell}
             <button
               className="icon-button mobile-replay"
-              aria-label={t("准备语料回放")}
+              aria-label={t("测试离线回放")}
               onClick={() => showDialog("replay")}
             >
               <Icon name="play" />
@@ -1164,7 +1294,7 @@ function App() {
             {dashboard && (
               <div className="topic-heading-actions">
                 <button className="heading-edit" type="button" disabled={busy || running} onClick={() => showDialog("goal")}>
-                  <span>{t("编辑追踪目标")}</span><Icon name="arrow" size={15} />
+                  <span>{t("编辑标题")}</span><Icon name="arrow" size={15} />
                 </button>
                 <button className="heading-edit" type="button" disabled={busy || running}
                   onClick={() => requestDelete(dashboard.topic)}>
@@ -1189,6 +1319,7 @@ function App() {
                   {t("最近更新")}{" "}
                   {date(latest?.completed_at ?? dashboard.topic.updated_at)}
                 </span>
+                <ScheduleBadge schedule={schedule} timeZone={timeZone} onClick={() => showDialog("schedule")} />
               </div>
               <div
                 className="tabbar"
@@ -1296,44 +1427,23 @@ function App() {
                         </OverviewSection>
                         <OverviewSection
                           title={t("变化与提醒")}
-                          label={t("查看审核队列")}
-                          onOpen={() => openTab("review", true)}
+                          label={t("查看主题提醒")}
+                          onOpen={() => openInbox(true)}
                         >
                           {!!dashboard.reviews.length && (
-                            <p className="review-callout">
+                            <button type="button" className="review-callout review-inbox-link" onClick={() => openTab("review", true)}>
                               {dashboard.reviews.length} {t("条证据等待人工判断")}
-                            </p>
+                            </button>
                           )}
-                          {!notices.length ? (
+                          {!topicInbox?.items.length ? (
                             <p className="blank-line">
                               {t("有新的状态变化后，提醒会出现在这里。")}
                             </p>
                           ) : (
-                            notices.slice(0, 5).map((n) => (
-                              <button
-                                className="notification-row"
-                                key={n.notification_id}
-                                disabled={busy}
-                                onClick={() => void openEvent(n.event_id)}
-                              >
-                                <span
-                                  className={`notice-indicator ${n.action}`}
-                                />
-                                <span>
-                                  <strong>
-                                    {eventTitle(
-                                      dashboard.events.find(
-                                        (e) => e.event_id === n.event_id,
-                                      )?.title ?? t("事件更新"),
-                                    )}
-                                  </strong>
-                                  <small>{actionLabel(n.action)}</small>
-                                </span>
-                                <span className="meta">
-                                  {date(n.created_at)}
-                                </span>
-                              </button>
-                            ))
+                            <NoticeRows items={[...topicInbox.items]
+                              .sort((first, second) => Number(second.action === "immediate" && !second.read_at)
+                                - Number(first.action === "immediate" && !first.read_at)).slice(0, 5)}
+                              timeZone={timeZone} onOpen={openNotice} />
                           )}
                         </OverviewSection>
                       </div>
@@ -1415,45 +1525,39 @@ function App() {
                       <h2>{t("证据库")}</h2>
                       <span className="meta">{t("包括被排除、重复与待审的信息")}</span>
                     </div>
-                    <label className="check-row">
-                      <input
-                        type="checkbox"
-                        checked={showHistorySources}
-                        onChange={(e) =>
-                          setShowHistorySources(e.target.checked)
-                        }
-                      />
-                      {t("显示全部来源的历史记录")}
-                    </label>
+                    <div className="evidence-toolbar">
+                      <label className="check-row">
+                        <input type="checkbox" checked={showHistorySources}
+                          onChange={(e) => setShowHistorySources(e.target.checked)} />
+                        {t("显示全部来源的历史记录")}
+                      </label>
+                      <fieldset className="evidence-filters" aria-label={t("处理状态")}>
+                        {Object.entries(evidenceFilterLabels).map(([key, label]) => {
+                          const group = key as EvidenceFilter;
+                          return <label key={group} className="evidence-filter">
+                            <input type="checkbox" checked={evidenceFilters.includes(group)}
+                              onChange={(event) => setEvidenceFilters((previous) => event.target.checked
+                                ? [...previous, group] : previous.filter((item) => item !== group))} />
+                            {t(label)} <span aria-hidden="true">{evidenceCounts[group] ?? 0}</span>
+                          </label>;
+                        })}
+                      </fieldset>
+                    </div>
                     {!evidenceRows.length ? (
                       <Empty
                         title={
-                          search ? t("没有符合筛选条件的证据") : t("还没有读入的新闻")
+                          search || evidenceFilters.length ? t("没有符合筛选条件的证据") : t("还没有读入的新闻")
                         }
                         detail={
-                          search
-                            ? t("试试其他关键词，或查阅全部来源的历史记录。")
+                          search || evidenceFilters.length
+                            ? t("试试调整状态或关键词，也可以查看全部来源的历史记录。")
                             : t("运行一次检查，或手动提交一条新闻。")
                         }
                       />
                     ) : (
                       <div className="evidence-table">
-                        {evidenceRows.map((v, i) => {
-                          const duplicate =
-                            v.evidence.canonical_evidence_id !==
-                              v.evidence.evidence_id &&
-                            !v.assessment &&
-                            v.status === "completed";
-                          const label =
-                            v.status === "review"
-                              ? t("待审核")
-                              : ["failed", "failed_retryable", "pending"].includes(v.status)
-                                ? status(v.status)
-                                : duplicate
-                                  ? t("重复报道")
-                                  : v.assessment?.is_relevant === false
-                                    ? t("已排除")
-                                    : t("已处理");
+                        {evidenceRows.map(({ row: v, group }, i) => {
+                          const label = group === "failed" ? status(v.status) : t(evidenceFilterLabels[group]);
                           return (
                             <button
                               className="evidence-row"
@@ -2011,7 +2115,9 @@ function App() {
                           </select>
                         </label>
                         <p className="hint">
-                          {t("普通更新进入汇总，低优先级变化仅保留记录。目前提醒展示在工作台内。")}
+                          {dashboard.topic.notification_preferences === "digest_only"
+                            ? t("所有已记录的进展进入站内更新汇总。")
+                            : t("重大进展弹出站内提醒，普通进展进入汇总，次要变化保留在历史中。")}
                         </p>
                         <div className="context-divider" />
                         <h3>{t("想测试离线回放语料？")}</h3>
@@ -2053,7 +2159,7 @@ function App() {
                             className={`status-dot ${r.status === "completed" ? "online" : active(r.status) ? "working" : ""}`}
                           />
                           <span>
-                            <strong>{providerLabel(r.provider)}</strong>
+                            <strong>{r.trigger_type === "scheduled" ? t("定时检查") : r.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(r.provider)}</strong>
                             <small>
                               {date(r.started_at)} · {status(r.status)}
                             </small>
@@ -2067,11 +2173,12 @@ function App() {
                         <>
                           <div className="section-title">
                             <h2>
-                              {providerLabel(run.run.provider)}{" "}
+                              {run.run.trigger_type === "scheduled" ? t("定时检查") : run.run.snapshot.options?.agent_mode ? t("Agent 模式") : providerLabel(run.run.provider)}{" "}
                               <span className="tag">
                                 {status(run.run.status)}
                               </span>
                             </h2>
+                            {run.run.scheduled_for && <span className="meta">{t("计划时间 {0}", formatScheduledTime(run.run.scheduled_for, timeZone))}</span>}
                             <span className="meta">
                               {date(run.run.started_at)}
                             </span>
@@ -2151,7 +2258,8 @@ function App() {
                                       {date(s.started_at)} →{" "}
                                       {date(s.completed_at)}
                                     </small>
-                                    <pre>{pretty(s.error ?? s.decision)}</pre>
+                                    {Boolean(s.error) && <pre>{pretty(s.error)}</pre>}
+                                    {(!s.error || s.decision?.agent) && <pre>{pretty(s.decision)}</pre>}
                                   </div>
                                 </details>
                               </li>
@@ -2193,10 +2301,12 @@ function App() {
       {!selected ? (
         <ProjectHome
           topics={orderedTopics}
+          schedules={schedules}
+          timeZone={timeZone}
           loading={loading}
           busy={busy}
           feedback={feedback}
-          preferences={<>{preferences}{translationToggle}</>}
+          preferences={<>{preferences}{translationToggle}{bell}</>}
           onHome={() => navigateTopic("")}
           onTopic={navigateTopic}
           onNew={openNewTopic}
@@ -2205,17 +2315,28 @@ function App() {
       ) : (
         workspaceView
       )}
+      {incoming && (
+        <aside className="incoming-notice" role="status">
+          <Icon name="bell" />
+          <button type="button" onClick={() => openNotice(incoming)}>
+            <small>{t("重大进展")}</small><strong>{tr(eventTitle(incoming.event_title))}</strong>
+          </button>
+          <button type="button" className="icon-button" aria-label={t("关闭提醒")} onClick={dismissIncoming}><Icon name="close" /></button>
+        </aside>
+      )}
       {dialog && (
         <Modal
           title={
             {
               new: t("新建追踪主题"),
-              goal: t("编辑追踪目标"),
+              goal: t("编辑标题"),
               source: t("添加信息来源"),
               manual: t("提交一条新闻"),
               settings: t("配置真实模型"),
               search: t("配置联网搜索引擎"),
-              replay: t("准备新闻回放"),
+              replay: t("测试离线回放"),
+              schedule: t("管理更新频率"),
+              inbox: t(inboxScope ? "主题提醒" : "站内提醒"),
               delete: t("删除主题"),
               "delete-event": t("删除事件"),
             }[dialog]
@@ -2228,69 +2349,48 @@ function App() {
               {error}
             </div>
           )}
+          {dialog === "schedule" && <ScheduleEditor schedule={schedule} timeZone={timeZone}
+            defaultAgent={agentMode} hasLiveSource={hasLiveSource} modelReady={!!model?.configured} busy={busy}
+            onModel={() => showDialog("settings")} onSave={saveSchedule} onClear={clearSchedule} />}
+          {dialog === "inbox" && <InboxPanel inbox={inboxScope ? topicInbox : workspaceInbox} timeZone={timeZone}
+            showTopic={!inboxScope} busy={busy} onOpen={openNotice} onReadAll={() => void action(async () => {
+              await api("/inbox/read-all", json("POST", {}));
+              dismissIncoming();
+              await reloadUpdates();
+            })} />}
           {dialog === "new" && (
-            <form
-              className="form-stack"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void action(async () => {
-                  const t = await api<Topic>(
-                    "/topics",
-                    json("POST", {
-                      title: newTitle,
-                      description: newDescription,
-                      tags: newTags,
-                    }),
-                  );
-                  setTopics(await loadWorkspaceTopics());
-                  selectTopic(t.topic_id);
-                  setDialog(null);
-                  setTab("sources");
-                  setNewTitle("");
-                  setNewDescription("");
-                  setNewTags([]);
-                });
-              }}
-            >
-              <label>
-                {t("主题名称")}
-                <input
-                  autoFocus
-                  required
-                  maxLength={200}
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  placeholder={t("例如：某公司的收购进展")}
-                />
-              </label>
-              <label>
-                {t("你想持续了解什么？")}
-                <textarea
-                  required
-                  maxLength={4000}
-                  value={newDescription}
-                  onChange={(e) => setNewDescription(e.target.value)}
-                  placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
-                />
-              </label>
-              <TopicTagPicker value={newTags} options={tagOptions(topics)} onChange={setNewTags} />
-              <button className="primary" disabled={busy}>
-                {t("创建主题")} <Icon name="arrow" size={16} />
-              </button>
-            </form>
+            <TopicForm
+              key={topicTemplate?.id ?? defaultTag}
+              mode="create"
+              initial={topicTemplate ?? topicDrafts.current.get(defaultTag) ?? { tags: defaultTag ? [defaultTag] : [] }}
+              notes={topicTemplate?.notes}
+              onDraftChange={topicTemplate ? undefined : (fields) => topicDrafts.current.set(defaultTag, fields)}
+              availableTags={tagOptions(topics)}
+              disabled={busy}
+              onSubmit={(fields) => void action(async () => {
+                const created = await api<Topic>("/topics", json("POST", fields));
+                if (!topicTemplate) topicDrafts.current.delete(defaultTag);
+                setTopics((previous) => [...previous, created]);
+                selectTopic(created.topic_id);
+                setDialog(null);
+                setTab("sources");
+              })}
+            />
           )}
           {dialog === "goal" && dashboard && (
-            <GoalEditor
-              topic={dashboard.topic}
+            <TopicForm
+              key={dashboard.topic.topic_id}
+              mode="edit"
+              initial={dashboard.topic}
               availableTags={tagOptions(topics)}
               disabled={busy || running}
-              action={action}
-              onSaved={async () => {
+              onSubmit={(fields) => void action(async () => {
+                await api(`/topics/${dashboard.topic.topic_id}`, json("PATCH", fields));
                 await refresh();
                 setTopics(await loadWorkspaceTopics());
                 setDialog(null);
-                setToast(t("追踪目标已更新。"));
-              }}
+                setToast(t("主题已更新。"));
+              })}
             />
           )}
           {dialog === "source" && (

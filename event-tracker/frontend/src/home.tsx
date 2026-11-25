@@ -4,11 +4,13 @@ import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { CoverImage } from "./covers";
 import { t } from "./i18n";
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { formatScheduledTime } from "./clock";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { Icon } from "./ui";
 import { status, longDate, topicTitle, topicDescription } from "./display";
-import type { Topic } from "./types";
-import { tagExamples, tagLabel, tagOptions } from "./topic-tags";
+import type { Schedule, Topic } from "./types";
+import { isCategory, tagLabel, tagOptions } from "./topic-tags";
+import type { TopicExample } from "./topic-example-catalog";
 
 export function topicUrl(id: string) {
   const url = new URL(location.href);
@@ -45,61 +47,84 @@ gsap.registerPlugin(ScrollTrigger);
 
 type HomeProps = {
   topics: Topic[];
+  schedules: Schedule[];
+  timeZone: string;
   loading: boolean;
   busy: boolean;
   feedback: ReactNode;
   preferences: ReactNode;
   onHome: () => void;
   onTopic: (id: string) => void;
-  onNew: (tag?: string, example?: string) => void;
+  onNew: (tag?: string, example?: TopicExample) => void;
   onSettings: () => void;
 };
 
 export function ProjectHome({
-  topics, loading, busy, feedback, preferences, onHome, onTopic, onNew, onSettings,
+  topics, schedules, timeZone, loading, busy, feedback, preferences, onHome, onTopic, onNew, onSettings,
 }: HomeProps) {
   const tr = useTranslation();
   const stage = useRef<HTMLDivElement>(null);
   const reel = useRef<HTMLDivElement>(null);
+  const hover = useRef<{ x: number; y: number; id: string; timer?: number } | undefined>(undefined);
+  const [spotlight, setSpotlight] = useState("");
   const [edges, setEdges] = useState({ start: true, end: true });
   const [category, setCategory] = useState("");
+  const [catalog, setCatalog] = useState<TopicExample[] | null>();
   const tags = tagOptions(topics);
   const activeCategory = tags.includes(category) ? category : "";
   const items = topics.filter((topic) =>
     !activeCategory || topic.tags?.some((tag) => tag.toLocaleLowerCase() === activeCategory.toLocaleLowerCase()));
-  const examples = tagExamples(activeCategory);
+  const examples = catalog?.filter((example) => example.tags[0] === activeCategory) ?? [];
+
+  useEffect(() => {
+    if (!isCategory(activeCategory) || catalog !== undefined) return;
+    let current = true;
+    void import("virtual:topic-examples").then(
+      ({ default: entries }) => { if (current) setCatalog(entries); },
+      () => { if (current) setCatalog(null); },
+    );
+    return () => { current = false; };
+  }, [activeCategory, catalog]);
 
   useLayoutEffect(() => {
+    window.clearTimeout(hover.current?.timer);
+    hover.current = undefined;
+    setSpotlight("");
     if (reel.current) reel.current.scrollLeft = 0;
   }, [activeCategory]);
 
   useEffect(() => {
     const element = reel.current;
     if (!element) return;
+    const frames = [...element.querySelectorAll("li")];
+    let scheduled = 0;
     function update() {
+      scheduled = 0;
       if (!element) return;
       const midpoint = element.scrollLeft + element.clientWidth / 2;
-      element.querySelectorAll("li").forEach((frame) => {
+      frames.forEach((frame) => {
         const position = (frame.offsetLeft + frame.offsetWidth / 2 - midpoint) / Math.max(1, element.clientWidth / 2);
         const relative = Math.max(-1.1, Math.min(1.1, position));
-        frame.style.setProperty("--reel-angle", `${relative * -21}deg`);
-        frame.style.setProperty("--reel-shift", `${relative * 42}px`);
+        frame.style.setProperty("--reel-angle", `${relative * -27}deg`);
+        frame.style.setProperty("--reel-shift", `${relative * 27}px`);
       });
-      setEdges({
-        start: element.scrollLeft <= 2,
-        end: element.scrollLeft + element.clientWidth >= element.scrollWidth - 2,
-      });
+      const start = element.scrollLeft <= 2;
+      const end = element.scrollLeft + element.clientWidth >= element.scrollWidth - 2;
+      setEdges((previous) => previous.start === start && previous.end === end ? previous : { start, end });
     }
-    const resize = new ResizeObserver(update);
+    const schedule = () => { if (!scheduled) scheduled = requestAnimationFrame(update); };
+    const resize = new ResizeObserver(schedule);
     resize.observe(element);
     if (element.firstElementChild) resize.observe(element.firstElementChild);
-    element.addEventListener("scroll", update, { passive: true });
+    element.addEventListener("scroll", schedule, { passive: true });
     update();
     return () => {
       resize.disconnect();
-      element.removeEventListener("scroll", update);
+      element.removeEventListener("scroll", schedule);
+      cancelAnimationFrame(scheduled);
+      window.clearTimeout(hover.current?.timer);
     };
-  }, [items.length, activeCategory]);
+  }, [topics, loading, activeCategory]);
 
   useLayoutEffect(() => {
     const motion = gsap.matchMedia(stage);
@@ -115,8 +140,8 @@ export function ProjectHome({
       const scroller = reel.current;
       if (!scroller || scroller.scrollWidth <= scroller.clientWidth) return;
       gsap.utils.toArray<HTMLElement>(".frame-cover .cover-print").forEach((print) => {
-        gsap.fromTo(print, { xPercent: -2, scale: 1.04 }, {
-          xPercent: 2, scale: 1.04, ease: "none",
+        gsap.fromTo(print, { xPercent: -4 }, {
+          xPercent: 4, ease: "none",
           scrollTrigger: { trigger: print.closest("li"), scroller, horizontal: true,
             start: "left right", end: "right left", scrub: true },
         });
@@ -128,10 +153,33 @@ export function ProjectHome({
   function roll(direction: number) {
     const frame = reel.current?.querySelector("li");
     if (!frame) return;
+    const next = frame.nextElementSibling as HTMLLIElement | null;
+    const stride = next ? next.offsetLeft - frame.offsetLeft : frame.offsetWidth;
     reel.current?.scrollBy({
-      left: direction * (frame.offsetWidth + 16),
+      left: direction * stride,
       behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
     });
+  }
+
+  function centerFrame(frame: HTMLLIElement) {
+    const scroller = reel.current;
+    scroller?.scrollTo({
+      left: frame.offsetLeft + (frame.offsetWidth - scroller.clientWidth) / 2,
+      behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+    });
+  }
+
+  function previewFrame(event: PointerEvent<HTMLLIElement>, id: string) {
+    if (event.pointerType !== "mouse") return;
+    const { clientX: x, clientY: y, currentTarget: frame } = event;
+    const previous = hover.current;
+    if (previous && (previous.id === id || Math.hypot(previous.x - x, previous.y - y) < 5)) return;
+    window.clearTimeout(previous?.timer);
+    setSpotlight(id);
+    const timer = window.setTimeout(() => {
+      if (frame.matches(":hover") && !matchMedia("(prefers-reduced-motion: reduce)").matches) centerFrame(frame);
+    }, 160);
+    hover.current = { x, y, id, timer };
   }
 
   return (
@@ -157,7 +205,7 @@ export function ProjectHome({
             <p className="home-description">{t("按主题追踪新闻，按时间查看事件进展和证据。")}</p>
             <a className="browse-topics" href="#projects-title">{t("浏览主题")}</a>
           </div>
-          <EventRadar topics={topics} onTopic={onTopic} />
+          <EventRadar topics={topics} schedules={schedules} timeZone={timeZone} onTopic={onTopic} />
         </section>
 
         <section className="projects-section" aria-labelledby="projects-title">
@@ -185,12 +233,22 @@ export function ProjectHome({
           {loading ? (
             <p className="reel-empty" role="status">{t("正在读取追踪主题…")}</p>
           ) : items.length ? (
-            <div className="reel" id="topic-reel" ref={reel}>
+            <div className="reel" id="topic-reel" ref={reel} onPointerLeave={() => {
+              window.clearTimeout(hover.current?.timer);
+              hover.current = undefined;
+              setSpotlight("");
+            }}>
               <ul className="reel-track">
                 {items.map((topic) => {
+                  const nextRun = schedules.find((plan) => plan.topic_id === topic.topic_id)?.next_at;
                   return (
-                    <li key={topic.topic_id}>
+                    <li key={topic.topic_id} className={spotlight === topic.topic_id ? "is-spotlit" : undefined}
+                      onPointerMove={(event) => previewFrame(event, topic.topic_id)}>
                       <a className="project-frame" href={topicUrl(topic.topic_id)}
+                        onFocus={(event) => {
+                          const frame = event.currentTarget.closest("li");
+                          if (frame && event.currentTarget.matches(":focus-visible")) centerFrame(frame);
+                        }}
                         onClick={(event) => follow(event, () => onTopic(topic.topic_id))}>
                         <CoverImage topic={topic} className="frame-cover" />
                         <div className="frame-copy">
@@ -198,7 +256,12 @@ export function ProjectHome({
                           <h3>{tr(topicTitle(topic.title))}</h3>
                           <p>{tr(topicDescription(topic.description))}</p>
                           {!!topic.tags?.length && <div className="frame-tags">{topic.tags.map((tag) => <span key={tag}>{tagLabel(tag)}</span>)}</div>}
-                          <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
+                          <div className="frame-dates">
+                            {nextRun && <time className="frame-next-check" dateTime={nextRun}>
+                              <Icon name="clock" size={13} />{t("下次检查 {0}", formatScheduledTime(nextRun, timeZone))}
+                            </time>}
+                            <time dateTime={topic.updated_at}>{t("更新于")} {longDate(topic.updated_at)}</time>
+                          </div>
                         </div>
                       </a>
                     </li>
@@ -212,11 +275,13 @@ export function ProjectHome({
               <p>{t("新建一个主题开始追踪。")}</p>
             </div>
           )}
-          {!!examples.length && <div className="topic-examples">
+          {isCategory(activeCategory) && <div className="topic-examples">
             <h3>{t("主题示例")}</h3>
-            <ul>{examples.map((example) => <li key={example}>
-              <button type="button" disabled={busy} onClick={() => onNew(activeCategory, example)}>{example}</button>
-            </li>)}</ul>
+            {catalog ? <ul>{examples.map((example) => <li key={example.id}>
+              <button type="button" disabled={busy} onClick={() => onNew(activeCategory, example)}>{example.title}</button>
+            </li>)}</ul> : <p className="hint" role="status">
+              {t(catalog === null ? "无法读取主题示例，请刷新后重试。" : "正在读取主题示例…")}
+            </p>}
           </div>}
         </section>
       </main>

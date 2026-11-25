@@ -2,11 +2,13 @@
 WebpageMonitorConnector (same-URL in-place diff revisions), RSS full-text enrichment, and search settings API.
 """
 import json
+import sys
 import time
 from unittest.mock import patch
 
 import httpx
 import pytest
+from dotenv import dotenv_values
 from fastapi.testclient import TestClient
 
 import app.connectors as conn_mod
@@ -309,7 +311,8 @@ def test_webpage_monitor_inplace_same_url_update_advances_state(tmp_path):
         assert dash['events'][0]['version'] == 2
 
 
-def test_search_settings_api_privacy_and_origin_guard(tmp_path):
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows DPAPI')
+def test_search_settings_api_privacy_and_origin_guard(tmp_path, monkeypatch):
     env_p = tmp_path / '.env'
     st = Settings(
         database_path=str(tmp_path / 's.db'),
@@ -332,9 +335,10 @@ def test_search_settings_api_privacy_and_origin_guard(tmp_path):
         ).status_code == 403
 
         # Local PUT saves to .env and never echoes secret
+        keys = {'bocha_api_key': 'sk-secret-bocha', 'tavily_api_key': 'sk-secret-tavily', 'jina_api_key': 'sk-secret-jina'}
         r1 = client.put(
             '/api/settings/search',
-            json={'provider': 'auto', 'bocha_api_key': 'sk-secret-value-12345'},
+            json={'provider': 'auto', **keys},
             headers={'Origin': 'http://127.0.0.1:5173'},
         )
         assert r1.status_code == 200
@@ -342,6 +346,17 @@ def test_search_settings_api_privacy_and_origin_guard(tmp_path):
         assert body['bocha_configured'] is True
         assert body['active_provider'] == 'bocha'
         assert 'sk-secret' not in json.dumps(body)
+        assert 'sk-secret' not in env_p.read_text()
+        saved = dotenv_values(env_p)
+        for name in keys:
+            assert saved[name.upper()].startswith('aes256gcm:dpapi:')
+            monkeypatch.setenv(name.upper(), saved[name.upper()])
+        reloaded = Settings()
+        assert {name: getattr(reloaded, name) for name in keys} == keys
+        assert client.put('/api/settings/search', json={'provider': 'auto', 'jina_api_key': ''}).status_code == 200
+        assert 'sk-secret' not in env_p.read_text()
+        assert dotenv_values(env_p)['JINA_API_KEY'] == ''
+        assert dotenv_values(env_p)['BOCHA_API_KEY'] == saved['BOCHA_API_KEY']
         # Non-ASCII key rejected 422 WITHOUT mutating in-memory settings (P1-5 atomicity)
         r_bad = client.put(
             '/api/settings/search',

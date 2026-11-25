@@ -1,12 +1,19 @@
 """All SQL lives here. Connections are short-lived and never shared across threads."""
 import json
 import sqlite3
+from collections import deque
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from .core import AppError
 from .domain import uid, now, unique_topic_tags
 from .llm import PROMPT_VERSION
+
+LIVE_SOURCE_TYPES = {'rss', 'web_search', 'webpage'}
+
+
+def utc_stamp(value):
+    return value.astimezone(timezone.utc).isoformat(timespec='microseconds')
 
 
 def dump(value):
@@ -93,10 +100,21 @@ class Repository:
               run_id TEXT REFERENCES runs(id), position INTEGER, evidence TEXT NOT NULL, outcome TEXT,
               PRIMARY KEY(run_id,position));
             INSERT OR IGNORE INTO schema_versions VALUES(3);
+            CREATE TABLE IF NOT EXISTS topic_schedules(
+              topic_id TEXT PRIMARY KEY REFERENCES topics(id) ON DELETE CASCADE,
+              next_at TEXT, last_run_id TEXT REFERENCES runs(id) ON DELETE SET NULL,
+              error TEXT, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS schedules_due ON topic_schedules(next_at);
+            CREATE TABLE IF NOT EXISTS notification_reads(
+              notification_id TEXT PRIMARY KEY REFERENCES notifications(id) ON DELETE CASCADE,
+              read_at TEXT NOT NULL);
+            INSERT OR IGNORE INTO schema_versions VALUES(4);
             ''')
             for source in sources:
                 db.execute('INSERT OR IGNORE INTO sources VALUES(?,?)', (source['source_id'], dump(source)))
         for run in self.active_runs():
+            if run['trigger_type'] == 'scheduled' and run['status'] == 'pending':
+                continue
             self.update_run(run['run_id'], status='failed', completed_at=now(),
                             error={'code': 'interrupted', 'message': 'Process stopped; run again safely.'})
 
@@ -182,38 +200,122 @@ class Repository:
 
     def create_run(self, topic_id, request, key, model, options=None):
         with self.connection(True) as db:
-            effective_request = dict(request)
-            if options:
-                effective_request['options'] = options
-            if key:
-                row = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?', (topic_id, key)).fetchone()
-                if row:
-                    if row[0] != dump(effective_request):
-                        raise AppError('IDEMPOTENCY_CONFLICT', 'This key was used with a different request.')
-                    return json.loads(row[1]), False
-            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
-                raise AppError('TOPIC_RUN_ACTIVE', 'This topic already has an active run.')
-            topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
-            if not topic_row:
-                raise AppError('NOT_FOUND', 'Topic not found.', 404)
-            topic = json.loads(topic_row[0])
-            sources = [json.loads(r[0]) for r in db.execute('''SELECT s.data FROM sources s JOIN topic_sources ts
-                ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
-            if not sources:
-                raise AppError('NO_APPROVED_SOURCE', 'Approve a source before running.')
-            if options and options.get('source_ids') is not None:
-                selected=set(options['source_ids'])
-                if not selected or not selected<={s['source_id'] for s in sources}:
-                    raise AppError('INVALID_RUN_SOURCES','本次运行只能选择该主题已批准的来源。',422)
-                sources=[s for s in sources if s['source_id'] in selected]
-            snapshot = {'topic': topic, 'sources': sources}
-            if options:
-                snapshot['options'] = options
-            run = dict(run_id=uid(), topic_id=topic_id, trigger_type='manual', status='pending',
-                       **request, model=model, prompt_version=PROMPT_VERSION if request['provider'] == 'qwen' else 'mock-demo-v1', started_at=None,
-                       completed_at=None, counts={}, error=None, snapshot=snapshot)
-            db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(effective_request), dump(run)))
+            return self._create_run(db, topic_id, request, key, model, options)
+
+    def _create_run(self, db, topic_id, request, key, model, options=None, *, scheduled_for=None):
+        effective_request = dict(request)
+        if options:
+            effective_request['options'] = options
+        if key:
+            row = db.execute('SELECT request_body,data FROM runs WHERE topic_id=? AND request_key=?', (topic_id, key)).fetchone()
+            if row:
+                if row[0] != dump(effective_request):
+                    raise AppError('IDEMPOTENCY_CONFLICT', 'This key was used with a different request.')
+                return json.loads(row[1]), False
+        if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+            raise AppError('TOPIC_RUN_ACTIVE', 'This topic already has an active run.')
+        topic_row = db.execute('SELECT data FROM topics WHERE id=?', (topic_id,)).fetchone()
+        if not topic_row:
+            raise AppError('NOT_FOUND', 'Topic not found.', 404)
+        topic = json.loads(topic_row[0])
+        sources = [json.loads(r[0]) for r in db.execute('''SELECT s.data FROM sources s JOIN topic_sources ts
+            ON s.id=ts.source_id WHERE ts.topic_id=? ORDER BY s.id''', (topic_id,))]
+        if not sources:
+            raise AppError('NO_APPROVED_SOURCE', 'Approve a source before running.')
+        if options and options.get('source_ids') is not None:
+            selected=set(options['source_ids'])
+            if not selected or not selected<={s['source_id'] for s in sources}:
+                raise AppError('INVALID_RUN_SOURCES','本次运行只能选择该主题已批准的来源。',422)
+            sources=[s for s in sources if s['source_id'] in selected]
+        snapshot = {'topic': topic, 'sources': sources}
+        if options:
+            snapshot['options'] = options
+        run = dict(run_id=uid(), topic_id=topic_id, trigger_type='scheduled' if scheduled_for else 'manual', status='pending',
+                   **request, model=model, prompt_version=PROMPT_VERSION if request['provider'] == 'qwen' else 'mock-demo-v1', started_at=None,
+                   completed_at=None, counts={}, error=None, snapshot=snapshot)
+        if scheduled_for:
+            run['scheduled_for'] = scheduled_for
+        db.execute('INSERT INTO runs VALUES(?,?,?,?,?,?)', (run['run_id'], topic_id, 'pending', key, dump(effective_request), dump(run)))
         return run, True
+
+    def save_schedule(self, topic_id, body, current):
+        stamp = utc_stamp(current)
+        times = sorted(utc_stamp(value) for value in body.times)
+        starts_at = utc_stamp(body.starts_at) if body.starts_at else stamp
+        if (times and times[0] <= stamp) or (body.starts_at and starts_at <= stamp):
+            raise AppError('SCHEDULE_DATE_PAST', 'Choose future dates, or select start now.', 422)
+        with self.connection(True) as db:
+            if not db.execute('SELECT 1 FROM topics WHERE id=?', (topic_id,)).fetchone():
+                raise AppError('NOT_FOUND', 'Topic not found.', 404)
+            if not self._live_source_ids(db, topic_id):
+                raise AppError('NO_LIVE_SOURCE', 'Approve an RSS, web search, or monitored webpage source.', 422)
+            plan = dict(mode=body.mode, times=times, agent_mode=body.agent_mode,
+                        interval_minutes=body.interval_minutes, starts_at=starts_at if body.mode == 'interval' else None)
+            db.execute('''INSERT INTO topic_schedules(topic_id,next_at,data) VALUES(?,?,?)
+                ON CONFLICT(topic_id) DO UPDATE SET next_at=excluded.next_at, data=excluded.data, error=NULL''',
+                (topic_id, times[0] if times else starts_at, dump(plan)))
+
+    def clear_schedule(self, topic_id):
+        with self.connection(True) as db:
+            db.execute('DELETE FROM topic_schedules WHERE topic_id=?', (topic_id,))
+
+    def schedules(self):
+        with self.connection() as db:
+            rows = db.execute('''SELECT s.*, r.status AS last_run_status
+                FROM topic_schedules s LEFT JOIN runs r ON r.id=s.last_run_id
+                ORDER BY s.next_at IS NULL, s.next_at, s.topic_id''')
+            return [
+                dict(json.loads(row['data']), topic_id=row['topic_id'], next_at=row['next_at'],
+                     last_run_id=row['last_run_id'], last_run_status=row['last_run_status'], error=row['error'])
+                for row in rows
+            ]
+
+    def due_schedule_ids(self, current):
+        with self.connection() as db:
+            return [row[0] for row in db.execute(
+                'SELECT topic_id FROM topic_schedules WHERE next_at<=? ORDER BY next_at', (utc_stamp(current),))]
+
+    @staticmethod
+    def _live_source_ids(db, topic_id):
+        return [row['id'] for row in db.execute('''SELECT s.id, json_extract(s.data, '$.type') AS type
+            FROM sources s JOIN topic_sources t ON t.source_id=s.id WHERE t.topic_id=? ORDER BY s.id''',
+            (topic_id,)) if row['type'] in LIVE_SOURCE_TYPES]
+
+    def enqueue_due_schedule(self, topic_id, current, *, model, model_ready):
+        stamp = utc_stamp(current)
+        with self.connection(True) as db:
+            row = db.execute('SELECT * FROM topic_schedules WHERE topic_id=? AND next_at<=?', (topic_id, stamp)).fetchone()
+            if not row:
+                return None
+            if db.execute("SELECT 1 FROM runs WHERE topic_id=? AND status IN ('pending','running')", (topic_id,)).fetchone():
+                return None
+            source_ids = self._live_source_ids(db, topic_id)
+            error = 'NO_LIVE_SOURCE' if not source_ids else 'QWEN_NOT_CONFIGURED' if not model_ready else None
+            if error:
+                if error != row['error']:
+                    db.execute('UPDATE topic_schedules SET error=? WHERE topic_id=?', (error, topic_id))
+                return None
+            plan = json.loads(row['data'])
+            due = row['next_at']
+            if plan['mode'] == 'interval':
+                interval = timedelta(minutes=plan['interval_minutes'])
+                original = datetime.fromisoformat(due)
+                offset = (current - original) // interval
+                scheduled_for = utc_stamp(original + offset * interval)
+                next_at = utc_stamp(original + (offset + 1) * interval)
+            else:
+                scheduled_for = max(value for value in plan['times'] if value <= stamp)
+                next_at = next((value for value in plan['times'] if value > stamp), None)
+            options = {'source_ids': source_ids}
+            if plan['agent_mode']:
+                options['agent_mode'] = True
+            run, _ = self._create_run(
+                db, topic_id, {'fixture_batch_id': 'all', 'provider': 'qwen'}, None, model, options,
+                scheduled_for=scheduled_for,
+            )
+            db.execute('UPDATE topic_schedules SET next_at=?, last_run_id=?, error=NULL WHERE topic_id=?',
+                       (next_at, run['run_id'], topic_id))
+            return run['run_id']
 
     def resume_run(self, original, model, key=None):
         topic_id, original_id = original['topic_id'], original['run_id']
@@ -324,8 +426,16 @@ class Repository:
     def evidence_decisions(self, topic_id):
         with self.connection() as db:
             return [dict(evidence=json.loads(r[0]),status=r[1],assessment=json.loads(r[2]) if r[2] else None,
-                         error=json.loads(r[3]) if r[3] else None) for r in db.execute('''SELECT e.data,t.status,t.assessment,t.error
-                FROM evidence e JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''',(topic_id,))]
+                         error=json.loads(r[3]) if r[3] else None, prefilter_excluded=bool(r[4])) for r in db.execute('''
+                WITH excluded_inputs AS (
+                    SELECT DISTINCT json_extract(i.outcome, '$.evidence_id') AS evidence_id
+                    FROM run_inputs i JOIN runs r ON r.id=i.run_id
+                    WHERE r.topic_id=? AND json_extract(i.outcome, '$.status')='irrelevant'
+                )
+                SELECT e.data,t.status,t.assessment,t.error,
+                       t.assessment IS NULL AND e.id IN (SELECT evidence_id FROM excluded_inputs)
+                FROM evidence e JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=? ORDER BY e.rowid''',
+                (topic_id, topic_id))]
 
     def review_item(self, topic_id, evidence_id):
         with self.connection() as db:
@@ -415,6 +525,49 @@ class Repository:
             return {r[0]: json.loads(r[1]) for r in db.execute('''SELECT e.id,e.data FROM evidence e
                 JOIN topic_evidence t ON t.evidence_id=e.id WHERE t.topic_id=?''', (topic_id,))}
 
+    def event_evidence_as_of(self, topic_id, event_id, published_at):
+        with self.connection() as db:
+            rows = db.execute('''SELECT e.data, ee.relation FROM evidence e
+                JOIN event_evidence ee ON ee.evidence_id=e.id
+                JOIN events ev ON ev.id=ee.event_id
+                JOIN topic_evidence te ON te.evidence_id=e.id AND te.topic_id=ev.topic_id
+                WHERE ev.topic_id=? AND ev.id=? AND julianday(json_extract(e.data, '$.published_at')) <= julianday(?)
+                ORDER BY julianday(json_extract(e.data, '$.published_at')) DESC, e.rowid DESC LIMIT 5''',
+                (topic_id, event_id, published_at))
+            return [dict(json.loads(row[0]), relation=row[1]) for row in rows]
+
+    def get_event_history(self, topic_id, event_id, published_at, keyword=None):
+        changes = deque(maxlen=3)
+        records = 0
+        keyword = keyword.casefold().strip() if keyword else ''
+        with self.connection() as db:
+            rows = db.execute('''
+                SELECT json_extract(t.data, '$.before_state.current_status') AS before_status,
+                       json_extract(t.data, '$.after_state.current_status') AS after_status,
+                       json_extract(t.data, '$.evidence_ids') AS evidence_ids,
+                       strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(json_extract(e.data, '$.published_at')))) AS published_at,
+                       COUNT(*) = COUNT(julianday(json_extract(e.data, '$.published_at')))
+                           AND MAX(julianday(json_extract(e.data, '$.published_at'))) <= julianday(?) AS visible
+                FROM transitions t
+                JOIN events ev ON ev.id=t.event_id
+                LEFT JOIN json_each(t.data, '$.evidence_ids') ref ON 1
+                LEFT JOIN evidence e ON e.id=ref.value
+                WHERE ev.topic_id=? AND ev.id=?
+                GROUP BY t.rowid ORDER BY t.rowid
+            ''', (published_at, topic_id, event_id))
+            for row in rows:
+                # Later changes may carry a future transition's state in their before_status.
+                if not row['visible']:
+                    break
+                records += 1
+                before, after = row['before_status'], row['after_status']
+                if before == after or (keyword and keyword not in (before or '').casefold() and keyword not in after.casefold()):
+                    continue
+                changes.append(dict(before_status=before[:240] if before is not None else None,
+                                    after_status=after[:240], published_at=row['published_at'],
+                                    evidence_ids=json.loads(row['evidence_ids'])))
+        return {'event_id': event_id, 'record_count': records, 'changes': list(changes)}
+
     def commit_assessment(self, topic_id, evidence_id, assessment, changes, run_id, position, attempts, fault=None):
         results = []
         with self.connection(True) as db:
@@ -458,6 +611,40 @@ class Repository:
         with self.connection() as db:
             items = [json.loads(r[0]) for r in db.execute('SELECT data FROM notifications WHERE topic_id=? ORDER BY rowid DESC', (topic_id,))]
         return [n for n in items if not action or n['action'] == action]
+
+    def inbox(self, topic_id=None, limit=60):
+        with self.connection() as db:
+            eligible = "json_extract(n.data, '$.action') IN ('immediate', 'digest')"
+            params = ()
+            if topic_id is not None:
+                eligible += ' AND n.topic_id=?'
+                params = (topic_id,)
+            rows = list(db.execute(f'''SELECT n.data, r.read_at, json_extract(t.data, '$.title') AS topic_title,
+                    json_extract(e.data, '$.title') AS event_title,
+                    json_extract(x.data, '$.after_state.current_status') AS summary
+                FROM notifications n JOIN topics t ON t.id=n.topic_id JOIN events e ON e.id=n.event_id
+                JOIN transitions x ON x.id=n.transition_id
+                LEFT JOIN notification_reads r ON r.notification_id=n.id
+                WHERE {eligible} ORDER BY n.rowid DESC LIMIT ?''', (*params, limit)))
+            unread = db.execute(f'''SELECT count(*) FROM notifications n
+                WHERE {eligible} AND NOT EXISTS(SELECT 1 FROM notification_reads r WHERE r.notification_id=n.id)''',
+                params).fetchone()[0]
+            newest = db.execute(f'''SELECT n.id FROM notifications n WHERE {eligible}
+                AND json_extract(n.data, '$.action')='immediate' ORDER BY n.rowid DESC LIMIT 1''', params).fetchone()
+            items = [dict(json.loads(row['data']), read_at=row['read_at'], topic_title=row['topic_title'],
+                          event_title=row['event_title'], summary=row['summary']) for row in rows]
+            return dict(items=items, unread=unread, latest_immediate_id=newest[0] if newest else None)
+
+    def read_inbox(self, notification_id=None):
+        with self.connection(True) as db:
+            eligible = "json_extract(data, '$.action') IN ('immediate', 'digest')"
+            if notification_id is None:
+                db.execute(f'''INSERT OR IGNORE INTO notification_reads
+                    SELECT id, ? FROM notifications WHERE {eligible}''', (now(),))
+            else:
+                if not db.execute(f'SELECT 1 FROM notifications WHERE id=? AND {eligible}', (notification_id,)).fetchone():
+                    raise AppError('NOT_FOUND', 'Notification not found.', 404)
+                db.execute('INSERT OR IGNORE INTO notification_reads VALUES(?,?)', (notification_id, now()))
 
     def radar(self):
         with self.connection() as db:

@@ -15,26 +15,37 @@ import type {
 import { date, text, title as eventTitle, headline } from "./display";
 import { searchProviderLabel } from "./source-health";
 import { Icon, Empty } from "./ui";
+import type { TopicExample } from "./topic-example-catalog";
 export type Act = (task: () => Promise<void>) => Promise<void>;
 
-export function GoalEditor({
-  topic,
+export type TopicFields = { title: string; description: string; tags: string[]; exclusions: string[] };
+
+export function TopicForm({
+  initial,
   availableTags,
   disabled,
-  action,
-  onSaved,
+  mode,
+  notes,
+  onDraftChange,
+  onSubmit,
 }: {
-  topic: Topic;
+  initial?: Partial<TopicFields>;
   availableTags: string[];
   disabled: boolean;
-  action: Act;
-  onSaved: () => Promise<void>;
+  mode: "create" | "edit";
+  notes?: TopicExample["notes"];
+  onDraftChange?: (fields: TopicFields) => void;
+  onSubmit: (fields: TopicFields) => void;
 }) {
-  const [title, setTitle] = useState(topic.title),
-    [description, setDescription] = useState(topic.description);
-  const [tags, setTags] = useState(topic.tags ?? []);
-  const [exclusions, setExclusions] = useState<string[]>(topic.exclusions ?? []);
+  const [title, setTitle] = useState(initial?.title ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [tags, setTags] = useState(initial?.tags ?? []);
+  const [exclusions, setExclusions] = useState(initial?.exclusions ?? []);
   const [newExclusion, setNewExclusion] = useState("");
+  const canSave = !disabled && !!title.trim() && !!description.trim() && tags.length <= MAX_TOPIC_TAGS;
+  useEffect(() => {
+    onDraftChange?.({ title, description, tags, exclusions });
+  }, [title, description, tags, exclusions, onDraftChange]);
   const addExclusion = () => {
     const clean = newExclusion.trim();
     if (!clean || exclusions.length >= 20) return;
@@ -48,21 +59,17 @@ export function GoalEditor({
       className="form-stack"
       onSubmit={(e) => {
         e.preventDefault();
-        void action(async () => {
-          await api(
-            `/topics/${topic.topic_id}`,
-            json("PATCH", { title, description, tags, exclusions }),
-          );
-          await onSaved();
-        });
+        if (canSave) onSubmit({ title: title.trim(), description: description.trim(), tags, exclusions });
       }}
     >
       <label>
         {t("主题名称")}
         <input
+          autoFocus={mode === "create"}
           required
           maxLength={200}
           value={title}
+          placeholder={t("例如：某公司的收购进展")}
           onChange={(e) => setTitle(e.target.value)}
         />
       </label>
@@ -73,6 +80,7 @@ export function GoalEditor({
           aria-label={t("追踪目标")}
           maxLength={4000}
           value={description}
+          placeholder={t("说明关注的事项、重要变化和需要区分的情况。")}
           onChange={(e) => setDescription(e.target.value)}
         />
       </label>
@@ -120,11 +128,19 @@ export function GoalEditor({
           </button>
         </div>
       </fieldset>
-      <p className="hint">
+      {notes && <details className="topic-example-notes">
+        <summary>{t("示例备注")}</summary>
+        <dl>
+          <dt>{t("推荐检查")}</dt><dd>{notes.recommendedCheck}</dd>
+          <dt>{t("通过标准")}</dt><dd>{notes.passCriteria}</dd>
+          <dt>{t("验收样例")}</dt><dd>{notes.testCase}</dd>
+        </dl>
+      </details>}
+      {mode === "edit" && <p className="hint">
         {t("新目标用于后续检查。已有状态和历史保留；需要从头重跑时，可创建新主题。")}
-      </p>
-      <button className="primary" disabled={disabled || tags.length > MAX_TOPIC_TAGS}>
-        {t("保存追踪目标")} <Icon name="arrow" size={16} />
+      </p>}
+      <button className="primary" disabled={!canSave}>
+        {t(mode === "create" ? "创建主题" : "保存修改")} <Icon name="arrow" size={16} />
       </button>
     </form>
   );
@@ -438,16 +454,14 @@ function ReviewItem({
   action: Act;
   onSaved: () => Promise<void>;
 }) {
-  const [mode, setMode] = useState<"dismiss" | "accept">("dismiss");
-  const [note, setNote] = useState(""),
-    [eventId, setEventId] = useState(
-      review.assessment.association.event_id ?? events[0]?.event_id ?? "",
-    );
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState("");
   const [selected, setSelected] = useState(
-    events.find((e) => e.event_id === eventId),
+    () => events.find((e) => e.event_id === review.assessment.association.event_id) ?? events[0],
   );
-  const stale =
-    events.find((e) => e.event_id === eventId)?.version !== selected?.version;
+  const eventId = selected?.event_id ?? "";
+  const liveEvent = events.find((e) => e.event_id === eventId);
+  const stale = liveEvent?.version !== selected?.version;
   const [fact, setFact] = useState(""),
     [currentStatus, setCurrentStatus] = useState(
       selected?.state.current_status ?? "",
@@ -455,6 +469,15 @@ function ReviewItem({
     [removed, setRemoved] = useState<number[]>([]),
     [major, setMajor] = useState(false),
     [confirmed, setConfirmed] = useState(false);
+  const resolveUrl = `/topics/${topicId}/reviews/${review.evidence.evidence_id}/resolve`;
+
+  function loadEvent(next: Event) {
+    setSelected(next);
+    setCurrentStatus(next.state.current_status);
+    setRemoved([]);
+    setConfirmed(false);
+  }
+
   return (
     <article className="review-item">
       <div className="row-between">
@@ -476,171 +499,141 @@ function ReviewItem({
         <p className="raw-text">{review.evidence.content}</p>
         <small>{review.evidence.url}</small>
       </details>
-      <div className="segmented">
-        <button
-          type="button"
-          className={mode === "dismiss" ? "chosen" : ""}
-          onClick={() => setMode("dismiss")}
+      {editing && selected ? (
+        <form
+          className="form-stack"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void action(async () => {
+              if (!confirmed)
+                throw Error(t("请先确认已核对这条证据。"));
+              await api(
+                resolveUrl,
+                json("POST", {
+                  decision: "accept",
+                  note,
+                  event_id: eventId,
+                  expected_version: selected.version,
+                  current_status: currentStatus,
+                  fact,
+                  superseded_facts: removed.map((i) => selected.state.key_facts[i]),
+                  update_kind: major ? "major_milestone" : "fact_added",
+                }),
+              );
+              await onSaved();
+            });
+          }}
         >
-          {t("保留原状态")}
-        </button>
-        <button
-          type="button"
-          className={mode === "accept" ? "chosen" : ""}
-          disabled={!events.length}
-          onClick={() => setMode("accept")}
-        >
-          {t("采纳并修正")}
-        </button>
-      </div>
-      <form
-        className="form-stack"
-        onSubmit={(e) => {
-          e.preventDefault();
-          void action(async () => {
-            if (mode === "accept" && !confirmed)
-              throw Error(t("请先确认已核对这条证据。"));
-            await api(
-              `/topics/${topicId}/reviews/${review.evidence.evidence_id}/resolve`,
-              json(
-                "POST",
-                mode === "dismiss"
-                  ? { decision: "dismiss" }
-                  : {
-                      decision: "accept",
-                      note,
-                      event_id: eventId,
-                      expected_version: selected!.version,
-                      current_status: currentStatus,
-                      fact,
-                      superseded_facts: removed.map(
-                        (i) => selected!.state.key_facts[i],
-                      ),
-                      update_kind: major ? "major_milestone" : "fact_added",
-                    },
-              ),
-            );
-            await onSaved();
-          });
-        }}
-      >
-        {mode === "accept" && selected && (
-          <>
-            <label>
-              {t("关联事件")}
-              <select
-                value={eventId}
-                onChange={(e) => {
-                  const next = events.find(
-                    (v) => v.event_id === e.target.value,
-                  )!;
-                  setEventId(e.target.value);
-                  setSelected(next);
-                  setCurrentStatus(next.state.current_status);
-                  setRemoved([]);
-                  setConfirmed(false);
-                }}
-              >
-                {events.map((v) => (
-                  <option key={v.event_id} value={v.event_id}>
-                    {eventTitle(v.title)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {stale && (
-              <div className="error">
-                {t("事件在你审核时已有新版本。")}
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = events.find((v) => v.event_id === eventId)!;
-                    setSelected(next);
-                    setCurrentStatus(next.state.current_status);
-                    setRemoved([]);
-                    setConfirmed(false);
-                  }}
-                >
-                  {t("重新载入当前状态")}
-                </button>
-              </div>
-            )}
-            <label>
-              {t("采纳后的事实")}
-              <textarea
-                required
-                value={fact}
-                onChange={(e) => setFact(e.target.value)}
-                placeholder={t("写明核实后的事实；系统会引用当前这条证据。")}
-              />
-            </label>
-            <label>
-              {t("事件当前状态")}
-              <input
-                required
-                value={currentStatus}
-                onChange={(e) => setCurrentStatus(e.target.value)}
-              />
-            </label>
-            <fieldset>
-              <legend>{t("需要替换的旧事实（可选）")}</legend>
-              {selected.state.key_facts.map((f, i) => (
-                <label className="check-row" key={i}>
-                  <input
-                    type="checkbox"
-                    checked={removed.includes(i)}
-                    onChange={(e) =>
-                      setRemoved(
-                        e.target.checked
-                          ? [...removed, i]
-                          : removed.filter((v) => v !== i),
-                      )
-                    }
-                  />
-                  <span>{text(f.fact)}</span>
-                </label>
+          <label>
+            {t("关联事件")}
+            <select
+              autoFocus
+              value={eventId}
+              onChange={(e) => {
+                const next = events.find((v) => v.event_id === e.target.value);
+                if (next) loadEvent(next);
+              }}
+            >
+              {events.map((v) => (
+                <option key={v.event_id} value={v.event_id}>
+                  {eventTitle(v.title)}
+                </option>
               ))}
-              <p className="hint">
-                {t("旧事实将从当前事实中移出，但完整保留在状态历史中。")}
-              </p>
-            </fieldset>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={major}
-                onChange={(e) => setMajor(e.target.checked)}
-              />
-              <span>{t("属于重大进展，按主题偏好提醒（需改变当前状态）")}</span>
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                required
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-              />
-              <span>{t("我已核对证据，确认上述修改。")}</span>
-            </label>
-          </>
-        )}
-        {mode === "accept" && <label>
-          {t("处理依据")}
-          <textarea
-            required
-            maxLength={2000}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder={t("为什么采纳这条证据？")}
-          />
-        </label>}
-        <button
-          className={mode === "accept" ? "primary" : ""}
-          disabled={disabled || (mode === "accept" && (!note.trim() || !selected || stale))}
-        >
-          {mode === "accept" ? t("采纳并更新事件") : t("保留原状态并关闭")}{" "}
-          <Icon name="check" size={16} />
-        </button>
-      </form>
+            </select>
+          </label>
+          {stale && (
+            <div className="error">
+              {t("事件在你审核时已有新版本。")}
+              {liveEvent && <button type="button" onClick={() => loadEvent(liveEvent)}>
+                {t("重新载入当前状态")}
+              </button>}
+            </div>
+          )}
+          <label>
+            {t("采纳后的事实")}
+            <textarea
+              required
+              value={fact}
+              onChange={(e) => setFact(e.target.value)}
+              placeholder={t("写明核实后的事实；系统会引用当前这条证据。")}
+            />
+          </label>
+          <label>
+            {t("事件当前状态")}
+            <input
+              required
+              value={currentStatus}
+              onChange={(e) => setCurrentStatus(e.target.value)}
+            />
+          </label>
+          <fieldset>
+            <legend>{t("需要替换的旧事实（可选）")}</legend>
+            {selected.state.key_facts.map((f, i) => (
+              <label className="check-row" key={i}>
+                <input
+                  type="checkbox"
+                  checked={removed.includes(i)}
+                  onChange={(e) =>
+                    setRemoved(
+                      e.target.checked
+                        ? [...removed, i]
+                        : removed.filter((v) => v !== i),
+                    )
+                  }
+                />
+                <span>{text(f.fact)}</span>
+              </label>
+            ))}
+            <p className="hint">
+              {t("旧事实将从当前事实中移出，但完整保留在状态历史中。")}
+            </p>
+          </fieldset>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              checked={major}
+              onChange={(e) => setMajor(e.target.checked)}
+            />
+            <span>{t("属于重大进展，按主题偏好提醒（需改变当前状态）")}</span>
+          </label>
+          <label className="check-row">
+            <input
+              type="checkbox"
+              required
+              checked={confirmed}
+              onChange={(e) => setConfirmed(e.target.checked)}
+            />
+            <span>{t("我已核对证据，确认上述修改。")}</span>
+          </label>
+          <label>
+            {t("采纳依据")}
+            <textarea
+              required
+              maxLength={2000}
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={t("为什么采纳这条证据？")}
+            />
+          </label>
+          <div className="review-actions">
+            <button type="button" disabled={disabled} onClick={() => setEditing(false)}>{t("取消")}</button>
+            <button className="primary" disabled={disabled || !note.trim() || stale}>
+              {t("采纳并更新事件")} <Icon name="check" size={16} />
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="review-actions">
+          <button type="button" disabled={disabled} onClick={() => void action(async () => {
+            await api(resolveUrl, json("POST", { decision: "dismiss" }));
+            await onSaved();
+          })}>{t("关闭审核")}</button>
+          <button type="button" disabled={disabled || !events.length} onClick={() => {
+            if (!liveEvent && events[0]) loadEvent(events[0]);
+            setEditing(true);
+          }}>{t("采纳并修正")} <Icon name="arrow" size={15} /></button>
+        </div>
+      )}
     </article>
   );
 }
@@ -731,7 +724,7 @@ export function ModelSettingsPanel({
           <strong>
             {value?.configured ? t("配置已保存") : t("尚未配置真实模型")}
           </strong>
-          <p>{t("规则演示不需要模型。分析 LBJ、NBA 或其他主题时，需要真实模型。")}</p>
+          <p>{t("规则演示不需要模型。分析各类主题时，需要真实模型。")}</p>
         </div>
       </div>
       <ol className="config-instructions">

@@ -70,6 +70,12 @@
 .topic-examples h3 { margin-block: 0 7px; font-size: .94rem; color: var(--muted); }
 .topic-examples ul { display: flex; flex-wrap: wrap; gap: 8px; padding: 0; margin: 0; list-style: none; }
 .topic-examples button { background: var(--white); color: var(--accent); border-color: var(--line); }
+.topic-example-notes { padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.topic-example-notes summary { color: var(--accent); cursor: pointer; }
+.topic-example-notes dl { display: grid; gap: 4px; margin: 10px 0 0; }
+.topic-example-notes dt { color: var(--ink); font-weight: 600; }
+.topic-example-notes dd { margin: 0 0 7px; color: var(--muted); }
+.topic-example-notes dd:last-child { margin-bottom: 0; }
 .dialog.compact { width: 660px; max-width: calc(100vw - 32px); }
 .event-list-item { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: stretch; border-bottom: 1px solid var(--line); }
 .event-list-item .event-row { border: 0; }

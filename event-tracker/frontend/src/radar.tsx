@@ -1,9 +1,11 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { api } from "./api";
-import { date, title, topicTitle } from "./display";
+import { title, topicTitle } from "./display";
+import { formatScheduledTime } from "./clock";
 import { t } from "./i18n";
+import { Icon } from "./ui";
 import { useTranslation } from "./reference-translation";
-import type { Topic } from "./types";
+import type { Schedule, Topic } from "./types";
 
 type Signal = { event_id: string; topic_id: string; title: string; updated_at: string };
 
@@ -24,7 +26,9 @@ const radarGlyphs = Array.from({ length: 33 }, (_, row) => Array.from({ length: 
 
 const signalSlots = [[66, 38], [32, 63], [56, 23], [69, 71]];
 
-export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id: string) => void }) {
+export function EventRadar({ topics, schedules, timeZone, onTopic }: {
+  topics: Topic[]; schedules: Schedule[]; timeZone: string; onTopic: (id: string) => void;
+}) {
   const [signals, setSignals] = useState<Signal[]>();
   const [selected, setSelected] = useState("");
   const tr = useTranslation();
@@ -53,9 +57,13 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
   const bearing = Math.atan2(y - 50, x - 50) * 180 / Math.PI;
   const range = Math.hypot(x - 50, y - 50);
   const topic = topics.find((item) => item.topic_id === current?.topic_id);
+  const upcoming = schedules.flatMap((plan) => {
+    const matchingTopic = topics.find((item) => item.topic_id === plan.topic_id);
+    return plan.next_at && matchingTopic ? [{ plan, topic: matchingTopic, at: plan.next_at }] : [];
+  });
   return (
     <section className="live-radar" aria-label={t("事件雷达")}>
-      <div className="radar-header"><h2>{t("事件雷达")}</h2><span>{known.length} {t("条近期信号")}</span></div>
+      <div className="radar-header"><h2>{t("事件雷达")}</h2></div>
       <div className="radar-field">
         <div className="radar-feed">
           {recent.length > 0 && <><h3 className="radar-feed-label">{t("近期事件")}</h3><ol>
@@ -68,12 +76,23 @@ export function EventRadar({ topics, onTopic }: { topics: Topic[]; onTopic: (id:
                 </button>
               </li>
             ))}
-          </ol></>}
+          </ol>
+            {topic && <button type="button" className="radar-event-topic" onClick={() => onTopic(topic.topic_id)}>
+              {t("查看事件主题")} <Icon name="arrow" size={13} />
+            </button>}
+          </>}
           <div className="radar-readout">
-            {current && topic ? (
-              <><small><strong>{t("最近更新")}</strong>{" "}{tr(topicTitle(topic.title))} · {date(current.updated_at)}</small>
-                <button type="button" onClick={() => onTopic(topic.topic_id)}>{t("查看主题")}</button></>
-            ) : <small>{t(signals ? "暂无事件信号" : "正在读取事件信号…")}</small>}
+            <h3 className="radar-feed-label"><Icon name="clock" size={14} /> {t("待定时更新")} {!!upcoming.length && <span>{upcoming.length}</span>}</h3>
+            {upcoming.length ? <ul className="radar-upcoming">
+              {upcoming.slice(0, 3).map(({ plan, topic: item, at }) => <li key={plan.topic_id}>
+                <button type="button" onClick={() => onTopic(item.topic_id)}>
+                  <span><strong>{tr(topicTitle(item.title))}</strong>
+                    <time dateTime={at}>{formatScheduledTime(at, timeZone)}</time>
+                    {plan.error && <small>{t("定时更新待处理")}</small>}</span>
+                  <Icon name="arrow" size={14} />
+                </button>
+              </li>)}
+            </ul> : <small>{t("暂无待执行的定时计划")}</small>}
           </div>
         </div>
         <div className="radar-disc" aria-hidden="true">

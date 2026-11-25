@@ -118,14 +118,15 @@ export type Run = {
     | "failed"
     | "cancelled";
   provider: "mock" | "qwen" | "human";
-  trigger_type: "manual" | "resume" | "human_review";
+  trigger_type: "manual" | "resume" | "human_review" | "human_edit" | "human_merge" | "scheduled";
+  scheduled_for?: string;
   fixture_batch_id: string;
   model?: string;
   started_at: string | null;
   completed_at: string | null;
   counts: Record<string, number>;
   error: unknown;
-  snapshot: { options?: { as_of?: string }; resume_of?: string; sources?: Source[] };
+  snapshot: { options?: { as_of?: string; agent_mode?: boolean }; resume_of?: string; sources?: Source[] };
 };
 export type Step = {
   step_id: string;
@@ -136,7 +137,7 @@ export type Step = {
   attempt: number;
   input_refs: string[];
   output_refs: string[];
-  decision: unknown;
+  decision: { agent?: { model_calls: number; calls: { name: string; status: string }[] } } & Record<string, unknown>;
   error: unknown;
   started_at: string;
   completed_at: string | null;
@@ -153,12 +154,33 @@ export type RunEvidence = {
 export type RunDetail = { run: Run; steps: Step[]; evidence: RunEvidence[] };
 export type Notification = {
   notification_id: string;
+  topic_id: string;
   event_id: string;
   transition_id: string;
   action: "immediate" | "digest" | "record_only";
   priority: string;
   reason_codes: string[];
   created_at: string;
+};
+export type InboxItem = Notification & {
+  action: "immediate" | "digest";
+  read_at: string | null;
+  topic_title: string;
+  event_title: string;
+  summary: string | null;
+};
+export type Inbox = { items: InboxItem[]; unread: number; latest_immediate_id: string | null };
+export type Schedule = {
+  topic_id: string;
+  mode: "dates" | "interval";
+  times: string[];
+  interval_minutes: number | null;
+  starts_at: string | null;
+  agent_mode: boolean;
+  next_at: string | null;
+  last_run_id: string | null;
+  last_run_status: Run["status"] | null;
+  error: string | null;
 };
 export type Transition = {
   transition_id: string;
@@ -194,6 +216,7 @@ export type EvidenceDecision = {
   status: string;
   assessment: Assessment | EvidenceAssessment | null;
   error: unknown;
+  prefilter_excluded?: boolean;
 };
 export type ModelStatus = {
   configured: boolean;

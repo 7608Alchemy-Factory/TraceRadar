@@ -11,7 +11,7 @@ Responses directly contain domain data, except composite views below.
 | POST | /api/topics/{id}/source-recommendations | {recommendation_mode: topic_aware_v1, sources}; registers validated candidates |
 | POST | /api/sources | Register fixture/replay/RSS/manual source; 201 Source (existing ID updates configuration) |
 | PUT | /api/topics/{id}/sources | approved_source_ids → {approved_sources} |
-| POST | /api/topics/{id}/runs | fixture_batch_id, provider, optional as_of/prefilter_enabled/near_duplicate_enabled/manual_items → 202 {run_id, status} |
+| POST | /api/topics/{id}/runs | fixture_batch_id, provider, optional as_of/prefilter_enabled/near_duplicate_enabled/manual_items/agent_mode → 202 {run_id, status} |
 | GET | /api/topics/{id}/runs | newest first, latest 30 Run records |
 | GET | /api/runs/{id} | {run, steps, evidence}, with steps and fetched inputs in processing order |
 | POST | /api/runs/{id}/resume | Resume a finished run with errors from its saved inputs, returning 202 {run_id, status} |
@@ -19,7 +19,7 @@ Responses directly contain domain data, except composite views below.
 | POST | /api/topics/{id}/reviews/{evidence_id}/resolve | decision=dismiss or accept; required note; accept also requires event_id, expected_version, current_status, fact; optional superseded_facts and update_kind |
 | GET | /api/topics/{id}/evidence | All ingested evidence with processing status, assessment and error, including excluded/duplicate inputs |
 | GET | /api/replay/corpora | Bundled runtime input corpus counts and three suggested publication-time cutoffs; no labels |
-| GET / PUT | /api/settings/model | Read non-secret model status / save base_url, model and optional api_key to local .env |
+| GET / PUT | /api/settings/model | Read model status / save the model settings with the API key encrypted in local `.env` |
 | POST | /api/settings/model/models | Discover actual model IDs using draft base_url and optional api_key; does not save credentials or call completions |
 | POST | /api/settings/model/check | Explicit one-request model/schema check; no Topic/Event changes |
 
@@ -28,6 +28,15 @@ The subset is validated before queuing and persisted in the Run snapshot/idempot
 Replay UI chooses one source for the selected corpus, excluding unrelated RSS/fixtures and
 duplicate registrations. All historical runs/evidence remain available; the evidence library
 defaults to currently approved sources and can include inactive sources explicitly.
+
+Set `agent_mode: true` to enable tools during evidence assessment for one `qwen` run.
+It defaults to `false`. Mock requests that enable it return `AGENT_REQUIRES_MODEL` (422).
+The model may call `load_skill("evidence-assessment")`, `get_event_evidence(event_id)` and
+`get_event_history(event_id, keyword?)` once each per evidence item. Both lookup tools are scoped to the current Topic
+and the input's publication time. `get_event_evidence` returns up to five linked article excerpts. `get_event_history`
+returns up to three status changes with evidence IDs, optionally filtered by a status keyword.
+Each tool exchange adds at most one model request beyond the normal retry budget. The `assess_evidence` step records
+`decision.agent.model_calls` and `decision.agent.calls` on success or failure. A resumed run inherits the option.
 
 Model discovery, connection checks and assessment use the same provider error codes.
 `PROVIDER_TIMEOUT` covers request timeouts, `PROVIDER_NETWORK` covers network errors,

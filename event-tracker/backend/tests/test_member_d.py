@@ -78,6 +78,14 @@ def test_domain_independent_lifecycle(client, monkeypatch, subject, start, finis
     milestone=next(n for n in notices if 'major_milestone' in n['reason_codes'])
     assert milestone['action']==expected_action
     assert milestone['transition_id'] in {h['transition_id'] for h in detail['history']}
+    inbox = client.get('/api/inbox', params={'topic_id': identity}).json()
+    assert inbox['unread'] == 2
+    assert inbox['items'][0]['summary'] == finish
+    assert inbox['latest_immediate_id'] == (milestone['notification_id'] if preference == 'standard' else None)
+    read = client.post(f"/api/inbox/{milestone['notification_id']}/read").json()
+    assert read['unread'] == 1 and read['items'][0]['read_at']
+    assert client.post('/api/inbox/read-all').json()['unread'] == 0
+    assert client.get('/api/inbox').json()['unread'] == 0
 
 
 def test_review_closure_audit_replay_and_topic_scope(client):
@@ -181,7 +189,7 @@ def test_unsupported_updates_preserve_confirmed_state(client,monkeypatch,corrupt
                                                ('minor_update','low','record_only'),('major_milestone','breaking','immediate')])
 @pytest.mark.parametrize('preference',['standard','digest_only'])
 def test_notification_policy(kind,priority,action,preference):
-    expected='digest' if preference=='digest_only' and action=='immediate' else action
+    expected='digest' if preference=='digest_only' else action
     p,a,reasons=decide_notification(kind,preference)
     assert (p,a)==(priority,expected)
     assert kind in reasons

@@ -14,7 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / 'backend'))
+sys.path[:0] = [str(ROOT / 'scripts'), str(ROOT / 'backend')]
 
 from fastapi.testclient import TestClient  # noqa: E402
 from app.core import Settings  # noqa: E402
